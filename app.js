@@ -454,8 +454,9 @@ function boot(fromCache) {
   }, (err) => {
     S.pending--;
     if (err.signin) { signedOut(err.message); return; }
-    if (S.started) { snack(cleanErr(err.message) + ' Showing what was last saved on this device.', { error: true }); renderAll(); return; }
-    if (S.engineer) { engSnack(cleanErr(err.message) + ' Showing what was last saved on this phone.', true); startOutbox(); return; }
+    const why = err.network ? 'No signal right now.' : cleanErr(err.message);
+    if (S.started) { snack(why + ' Showing what was last saved on this device.', { error: !err.network }); renderAll(); return; }
+    if (S.engineer) { engSnack(why + ' Showing what was saved on this phone. Anything you send waits and goes by itself.', !err.network); startOutbox(); return; }
     showGate('O F Turnkey', cleanErr(err.message), { error: true, button: TRY_AGAIN });
   });
 }
@@ -1852,7 +1853,7 @@ function photoPanelHtml() {
   return full +
     '<div class="ph-info"><b>' + esc(p.area || 'Site photo') + '</b><span class="muted">' + esc(nameOf(p.by)) + ' · ' + esc(niceDay(photoDay(p.at)) + ' ' + p.at.slice(11, 16)) +
     (p.caption ? ' · ' + esc(p.caption) : '') + '</span></div>' +
-    comments.map((x) => '<div class="ph-comment"><b>' + esc(nameOf(x.by)) + '</b> <span class="muted">' + esc(x.at.slice(5, 16)) + '</span><div>' + esc(x.text) + '</div>' +
+    comments.map((x) => '<div class="ph-comment"><b>' + esc(nameOf(x.by)) + '</b> <span class="muted">' + esc(niceDay(x.at.slice(0, 10)) + ' ' + x.at.slice(11, 16)) + '</span><div>' + esc(x.text) + '</div>' +
       (x.taskId ? '<span class="ph-task">Task for the site engineer</span>' : '') + '</div>').join('') +
     '<div class="ph-form"><label for="phComment">Comment on this photo</label><textarea id="phComment" data-pc="text" rows="2">' + esc(c.text) + '</textarea>' +
     (owner ? '<label class="ph-due">Task due <input type="date" data-pc="due" value="' + esc(c.due) + '"></label>' : '') +
