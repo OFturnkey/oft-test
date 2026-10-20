@@ -396,7 +396,7 @@ h2, h3 { margin: 0; }
 @page {
   size: A4 portrait;
   margin: 14mm 12mm 16mm 12mm;
-  @bottom-left { content: "OF Turnkey \00B7 Site ledger"; font-family: 'IBM Plex Sans', sans-serif; font-size: 9pt; color: #5C615D; }
+  @bottom-left { content: "O F Turnkey \00B7 Site ledger"; font-family: 'IBM Plex Sans', sans-serif; font-size: 9pt; color: #5C615D; }
   @bottom-right { content: "Page " counter(page) " of " counter(pages); font-family: 'IBM Plex Sans', sans-serif; font-size: 9pt; color: #5C615D; }
 }
 @media print {
@@ -410,7 +410,7 @@ h2, h3 { margin: 0; }
 }
 
 /* ---------- O F Turnkey site: opening / sign-in screens, test strip, signed-in devices ---------- */
-.env-strip { background: #FFEDB3; color: #5E4500; font-size: 13px; text-align: center; padding: 6px 12px; line-height: 1.4; }
+.env-strip { background: #FFEDB3; color: #5E4500; font-size: 12px; text-align: center; padding: 6px 12px; line-height: 1.4; }
 .env-strip b { font-weight: 700; letter-spacing: 0.04em; }
 .env-strip button { font: inherit; color: inherit; background: none; border: 0; padding: 0 2px; text-decoration: underline; cursor: pointer; }
 .gate { min-height: 80vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
@@ -427,3 +427,36 @@ h2, h3 { margin: 0; }
 .btn-big { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border-radius: 10px; border: 0; background: #1C1E1D; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
 .link-btn { font: inherit; font-size: inherit; color: #455B28; background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
 .dev-here { font-size: 12px; font-weight: 600; color: #2F4019; background: #E2EAD6; border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
+@media (max-width: 699px) { .env-strip { font-size: 11px; padding: 4px 10px; } }
+
+/* ---------- Projects view (Phase 2) ---------- */
+.view-title { margin: 0; font-size: 26px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ptabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid #DEDED8; margin-bottom: 4px; }
+.ptab { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 12px 14px; min-height: 44px; font: inherit; font-size: 15px; color: #5E605C; border-bottom: 3px solid transparent; white-space: nowrap; cursor: pointer; }
+.ptab.on { color: #1C1E1D; font-weight: 600; border-bottom-color: #1C1E1D; }
+.stage-pill { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: #ECECE7; color: #3A3C39; }
+.stage-pill.st-design { background: #DCE7F3; color: #1F3A5F; }
+.stage-pill.st-execution { background: #E2EAD6; color: #2F4019; }
+.stage-pill.st-handover { background: #FFEDB3; color: #5E4500; }
+.phead { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.psub { color: #5E605C; font-size: 15px; }
+.psecs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #DEDED8; margin: 6px 0 4px; }
+.psec { border: 0; background: transparent; font: inherit; padding: 10px 14px; min-height: 44px; color: #5E605C; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.psec.on { color: #1C1E1D; font-weight: 600; border-bottom-color: #455B28; }
+.psec.off { color: #B4B6AF; cursor: default; display: inline-flex; align-items: center; }
+.pgrid { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; margin-top: 12px; }
+.pmain { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.pside { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.big-num { font-size: 24px; font-weight: 600; margin: 4px 0; }
+.big-num .muted { font-size: 15px; font-weight: 400; }
+.muted { color: #5E605C; }
+.small { font-size: 13px; margin: 0; }
+.pdl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 8px 0 12px; font-size: 14px; }
+.pdl dt { color: #5E605C; }
+.pdl dd { margin: 0; }
+.pchecks { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 4px; }
+.pcheck { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; font-size: 14px; cursor: pointer; }
+.pcheck input { width: 18px; height: 18px; accent-color: #455B28; }
+.lbl { display: block; font-size: 12px; color: #5C615D; margin-bottom: 2px; }
+.drow.pinfo { background: #F7F7F4; border-radius: 8px; padding: 6px 8px; }
+@media (max-width: 699px) { .view-title { font-size: 22px; } .ptab { padding: 10px 10px; } }
