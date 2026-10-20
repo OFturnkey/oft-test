@@ -24,23 +24,24 @@ const blankPf = () => ({ project: '', who: '', period: 'month', from: '', to: ''
 const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#FFFFFF" stroke-width="2" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg>';
 const ARROW_L = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>';
 const ARROW_R = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3l5 5-5 5"></path></svg>';
-const blankForm = () => ({ code: '', name: '', detail: '' });
+const blankForm = () => ({ code: '', name: '', detail: '', trade: '' });
+function tradeOf(code) { const p = ((S.data && S.data.people) || []).find((x) => x.code === code); return p ? p.trade || '' : ''; }
 
 const PANELS = {
   project: {
     title: 'Projects & clients', desc: 'One code per site. In codes, CL always means this project’s client.',
     nameLabel: 'Site name', namePh: 'Site D', detailLabel: 'Client name', detailPh: 'Client name', codePh: 'SD',
-    detailOf: (r) => 'Client: ' + (r.client || '—')
+    detailOf: (r, k) => projectDetailOf(Object.assign({ code: k }, r))
   },
   labour: {
     title: 'Labour', desc: 'Team heads you pay for work. Payments to them count as labour.',
-    nameLabel: 'Name', namePh: 'Name', detailLabel: 'Trade', detailPh: 'Electrical', codePh: 'ELE',
-    detailOf: (r) => r.detail || 'Labour'
+    nameLabel: 'Name', namePh: 'Name', detailLabel: 'Details', detailPh: 'Electrical, false ceiling', codePh: 'ELE', trade: true,
+    detailOf: (r, k) => [tradeOf(k), r.detail].filter(Boolean).join(' · ') || 'Labour'
   },
   vendor: {
     title: 'Vendors', desc: 'Shops and suppliers. Payments to them count as material.',
-    nameLabel: 'Name', namePh: 'Vendor name', detailLabel: 'Supplies', detailPh: 'Tiles, sanitaryware', codePh: 'TIL',
-    detailOf: (r) => r.detail || 'Material'
+    nameLabel: 'Name', namePh: 'Vendor name', detailLabel: 'Supplies', detailPh: 'Tiles, sanitaryware', codePh: 'TIL', trade: true,
+    detailOf: (r, k) => [tradeOf(k), r.detail].filter(Boolean).join(' · ') || 'Material'
   },
   mode: {
     title: 'Payment modes', desc: 'Used at the end of P and R codes.',
@@ -61,6 +62,7 @@ const S = {
   pf: blankPf(),
   paper: 'A4', orient: 'portrait',
   pending: 0, snackMsg: null,
+  projTab: '', projSec: 'overview', projEdit: null, memberEdit: null, memberAdd: { email: '', name: '', code: '', projects: [], err: '' },
   me: null, sheetUrl: '', devices: null, devicesErr: '', timing: null, readyMs: 0, started: false
 };
 
@@ -111,8 +113,8 @@ function mainOpen(e) { return isOwner() ? '<button type="button" class="item-mai
 function mainClose() { return isOwner() ? '</button>' : '</div>'; }
 function usage(kind, code) { const f = KIND_FIELD[kind]; return S.entries.filter((e) => e[f] === code).length; }
 function logoHtml() {
-  if (LOGO_URL) return '<div class="brand"><img class="brand-logo" src="' + esc(LOGO_URL) + '" alt="" width="40" height="40"><span class="brand-name">OF Turnkey</span></div>';
-  return '<div class="logo" role="img" aria-label="OF Turnkey logo placeholder"><span class="logo-name">OF TURNKEY</span><span class="logo-tag">Logo</span></div>';
+  if (LOGO_URL) return '<div class="brand"><img class="brand-logo" src="' + esc(LOGO_URL) + '" alt="" width="40" height="40"><span class="brand-name">O F Turnkey</span></div>';
+  return '<div class="logo" role="img" aria-label="O F Turnkey logo placeholder"><span class="logo-name">O F TURNKEY</span><span class="logo-tag">Logo</span></div>';
 }
 /* ---------- paper size & orientation ---------- */
 const PAPERS = ['A4', 'A3'];
@@ -314,7 +316,7 @@ function firstRender() {
     S.y = now.getFullYear();
     S.m = now.getMonth();
     const tab = new URLSearchParams(location.search).get('tab');
-    S.tab = ['ledger', 'tasks', 'dir'].indexOf(tab) >= 0 ? tab : 'ledger';
+    S.tab = ['ledger', 'projects', 'tasks', 'dir'].indexOf(tab) >= 0 ? tab : 'ledger';
     $('logoSlot').innerHTML = logoHtml();
     loadPrintChoices();
     applyPageSize();
@@ -412,7 +414,7 @@ function renderTabs() {
   const open = live().filter((e) => isTask(e) && !e.done).length;
   const t = (key, label, count) => '<button type="button" class="tab' + (S.tab === key ? ' on' : '') + '" data-act="tab" data-tab="' + key +
     '" aria-pressed="' + (S.tab === key) + '">' + label + (count != null ? '<span class="tab-count">' + count + '</span>' : '') + '</button>';
-  $('tabs').innerHTML = t('ledger', 'Calendar &amp; payments') + t('tasks', 'Tasks', open) + t('dir', 'Directory');
+  $('tabs').innerHTML = t('ledger', 'Ledger') + t('projects', 'Projects') + t('tasks', 'Tasks', open) + t('dir', 'Directory');
 }
 
 /* ---------- code bar ---------- */
@@ -841,6 +843,7 @@ function editRowHtml(kind) {
     '<div class="fld code"><label for="edit-code">Code</label><input id="edit-code" data-edit="newCode" value="' + esc(ed.newCode) + '" maxlength="' + (kind === 'mode' ? 2 : 4) + '" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>' +
     '<div class="fld"><label for="edit-name">' + esc(P.nameLabel) + '</label><input id="edit-name" data-edit="name" value="' + esc(ed.name) + '" autocomplete="off"></div>' +
     (P.detailLabel ? '<div class="fld"><label for="edit-detail">' + esc(P.detailLabel) + '</label><input id="edit-detail" data-edit="detail" value="' + esc(ed.detail) + '" autocomplete="off"></div>' : '') +
+    (P.trade ? '<div class="fld"><label for="edit-trade">Trade</label>' + tradeSelect('edit-trade', 'data-edit="trade"', ed.trade) + '</div>' : '') +
     '<button type="button" class="btn-accent" data-act="dir-save">Save</button>' +
     '<button type="button" class="btn-outline" data-act="dir-cancel">Cancel</button>' +
     '<div id="editMsg" class="dmsg" style="flex:1 1 100%">' + editMsgHtml() + '</div></div></div>';
@@ -848,11 +851,12 @@ function editRowHtml(kind) {
 
 function rowHtml(kind, k, rec) {
   const n = usage(kind, k), conf = S.confirmDel === kind + ':' + k;
-  const label = n > 0 ? 'Archive' : conf ? 'Confirm delete?' : 'Delete';
+  const label = !canDelete(kind, k) ? 'Archive' : conf ? 'Confirm delete?' : 'Delete';
   return '<div class="drow"><div class="drow-view"><span class="code-tag">' + esc(k) + '</span>' +
-    '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, rec))) + '</b><span>' + esc(PANELS[kind].detailOf(rec)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
+    '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, rec))) + '</b><span>' + esc(PANELS[kind].detailOf(rec, k)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
     (isOwner()
       ? '<button type="button" class="btn-sm" data-act="dir-edit" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="Edit ' + esc(k) + '">Edit</button>' +
+        (kind === 'project' ? '<button type="button" class="btn-sm" data-act="pi-edit" data-code="' + esc(k) + '">Stage &amp; dates</button>' : '') +
         '<button type="button" class="btn-sm' + (conf ? ' btn-danger' : '') + '" data-act="dir-remove" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="' + label + ' ' + esc(k) + '">' + label + '</button>'
       : '') +
     '</div></div>';
@@ -873,9 +877,11 @@ function panelHtml(kind) {
     '" placeholder="' + esc(P.namePh) + '" autocomplete="off"></div>' +
     (P.detailLabel ? '<div class="fld"><label for="dir-' + kind + '-detail">' + esc(P.detailLabel) + '</label><input id="dir-' + kind + '-detail" data-form="' + kind + '" data-field="detail" value="' + esc(f.detail) +
       '" placeholder="' + esc(P.detailPh) + '" autocomplete="off"></div>' : '') +
+    (P.trade ? '<div class="fld"><label for="dir-' + kind + '-trade">Trade</label>' + tradeSelect('dir-' + kind + '-trade', 'data-form="' + kind + '" data-field="trade"', f.trade) + '</div>' : '') +
     '<button type="button" class="btn-accent" data-act="dir-add" data-kind="' + kind + '">Add</button></div>' +
     '<div class="dmsg" id="dmsg-' + kind + '">' + dirMsgHtml(kind) + '</div>';
-  h += '<div>' + act.map((k) => (S.dirEdit && S.dirEdit.kind === kind && S.dirEdit.code === k ? editRowHtml(kind) : rowHtml(kind, k, store[k]))).join('') + '</div>';
+  h += '<div>' + act.map((k) => (S.dirEdit && S.dirEdit.kind === kind && S.dirEdit.code === k ? editRowHtml(kind) : rowHtml(kind, k, store[k])) +
+    (kind === 'project' && S.projEdit && S.projEdit.code === k ? projInfoFormHtml(k) : '')).join('') + '</div>';
   if (!act.length) h += '<p class="empty">Nothing here yet.</p>';
   if (arch.length) {
     h += '<div style="border-top:1px solid #E6E7E2;display:flex;flex-direction:column">' +
@@ -884,7 +890,7 @@ function panelHtml(kind) {
       h += arch.map((k) => {
         const r = store[k], n = usage(kind, k);
         return '<div class="drow arch"><div class="drow-view"><span class="code-tag arch">' + esc(k) + '</span>' +
-          '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, r))) + '</b><span>' + esc(PANELS[kind].detailOf(r)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
+          '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, r))) + '</b><span>' + esc(PANELS[kind].detailOf(r, k)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
           (isOwner() ? '<button type="button" class="btn-sm" data-act="dir-restore" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="Restore ' + esc(k) + '">Restore</button>' : '') + '</div></div>';
       }).join('');
     }
@@ -902,7 +908,7 @@ function renderDir() {
   $('view-dir').innerHTML =
     '<div style="display:flex;flex-direction:column;gap:4px"><h2 id="dir-h" style="font-size:22px">Directory</h2>' +
     '<p class="dir-intro">' + esc(intro) + '</p></div>' +
-    '<div class="panels">' + KINDS.map(panelHtml).join('') + (canWrite() && CONFIG.alerts ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>';
+    '<div class="panels">' + KINDS.map(panelHtml).join('') + teamPanelHtml() + (canWrite() && CONFIG.alerts ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>';
 }
 
 /* ---------- morning alerts (owners: everything; contributors: their own devices) ---------- */
@@ -936,11 +942,11 @@ function alertsPanelHtml() {
 
 function addCodeFromForm(kind) {
   const f = S.forms[kind];
-  const code = f.code.trim().toUpperCase(), name = f.name.trim(), detail = f.detail.trim();
+  const code = f.code.trim().toUpperCase(), name = f.name.trim(), detail = f.detail.trim(), trade = PANELS[kind].trade ? f.trade : '';
   const issue = LC.codeIssue(kind, code, S.dir, null);
   if (issue) { S.errs[kind] = issue; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
   if (!name) { S.errs[kind] = kind === 'mode' ? 'Give the mode a label.' : 'Give it a name.'; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
-  call('addCode', [kind, code, name, detail], () => {
+  call('addCode', [kind, code, name, detail, trade], () => {
     S.forms[kind] = blankForm();
     S.errs[kind] = '';
     snack(code + ' added. It works in the code box now.');
@@ -952,7 +958,7 @@ function startDirEdit(kind, code) {
   if (!r) return;
   S.dirEdit = {
     kind: kind, code: code, newCode: code, name: recName(kind, r) || '',
-    detail: kind === 'project' ? (r.client || '') : kind === 'mode' ? '' : (r.detail || ''), err: ''
+    detail: kind === 'project' ? (r.client || '') : kind === 'mode' ? '' : (r.detail || ''), trade: tradeOf(code), err: ''
   };
 }
 
@@ -968,7 +974,7 @@ function saveDirEdit() {
   }
   const old = ed.code, kind = ed.kind;
   const hadFilter = kind === 'project' && S.project === old;
-  call('editCode', [kind, old, nu, name, detail], (res) => {
+  call('editCode', [kind, old, nu, name, detail, PANELS[kind].trade ? ed.trade : undefined], (res) => {
     S.dirEdit = null;
     if (nu !== old) {
       if (hadFilter) S.project = nu;
@@ -981,8 +987,12 @@ function saveDirEdit() {
   }, (msg) => { if (S.dirEdit) S.dirEdit.err = msg; });
 }
 
+// A code no entry uses can be deleted; projects only by Shruthi (others archive them).
+function canDelete(kind, code) {
+  return usage(kind, code) === 0 && (kind !== 'project' || !!(S.data && S.data.canDeleteProjects));
+}
 function removeCode(kind, code, prevDel) {
-  if (usage(kind, code) > 0) {
+  if (!canDelete(kind, code)) {
     if (S.dirEdit && S.dirEdit.code === code) S.dirEdit = null;
     call('archiveCode', [kind, code], () => {
       if (kind === 'project' && S.project === code) S.project = null;
@@ -1143,7 +1153,7 @@ function sheetHtml(list) {
     '<td><span class="sh-badge t-' + e.type + '">' + e.type + '</span>' + esc(LC.describe(S.dir, e)) + (pf.project ? '' : ' · ' + esc(projName(e.project))) + '</td>' +
     (wide ? '<td class="m">' + (isTask(e) ? '' : esc(modeFull(e.mode))) + '</td>' : '') +
     '<td class="num">' + (isTask(e) ? '—' : esc(LC.inr(e.amount))) + '</td></tr>').join('');
-  return '<div class="sh-head">' + (LOGO_URL ? '<img class="sh-logo" src="' + esc(LOGO_URL) + '" alt="OF Turnkey">' : '') +
+  return '<div class="sh-head">' + (LOGO_URL ? '<img class="sh-logo" src="' + esc(LOGO_URL) + '" alt="O F Turnkey">' : '') +
     '<div class="sh-titles"><span class="sh-title">' + esc(pf.project ? projName(pf.project) : 'All projects') +
     (pf.project && S.dir.projects[pf.project].client ? '<span class="sh-client"> · Client: ' + esc(S.dir.projects[pf.project].client) + '</span>' : '') +
     '</span><span class="sh-sub">' + esc(sub) + '</span></div>' +
@@ -1220,17 +1230,209 @@ function renderPrint() {
     (pages === 1 ? '1 page' : 'about ' + pages + ' pages') + '</span></div>' +
     '<div class="pv-page paper-' + S.paper + ' ' + S.orient + '" role="img" aria-label="Preview of the first printed page">' +
     '<div class="sheet">' + sheetHtml(list) + '</div>' +
-    '<div class="pv-foot"><span>OF Turnkey · Site ledger</span><span>Page 1 of ' + pages + '</span></div></div></div></div>';
+    '<div class="pv-foot"><span>O F Turnkey · Site ledger</span><span>Page 1 of ' + pages + '</span></div></div></div></div>';
 
   $('printSheet').className = 'print-sheet sheet paper-' + S.paper + ' ' + S.orient;
   $('printSheet').innerHTML = sheetHtml(list);
+}
+
+/* ---------- projects (Phase 2): stages, project tabs, overview ---------- */
+const STAGE_LABEL = { design: 'Design', execution: 'Execution', handover: 'Handover', archive: 'Archive' };
+const SCHEDULE_LABEL = { full: 'Full schedule', light: 'Light schedule', none: 'No schedule yet' };
+// Sections per stage. [key, label, ready in this version]. Later steps switch the others on.
+const SECTIONS = {
+  design: [['overview', 'Overview', true], ['drawings', 'Drawings', false], ['queries', 'Queries', false]],
+  execution: [['overview', 'Overview', true], ['schedule', 'Schedule', false], ['site', 'Site', false], ['queries', 'Queries', false],
+    ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', false], ['visits', 'Site visits', false]],
+  handover: [['overview', 'Overview', true]],
+  archive: [['overview', 'Overview', true]]
+};
+const TRADES = ['POP', 'Carpentry', 'Painting', 'Specialist finishes', 'Flooring', 'Aluminium & glass', 'Lighting', 'Metal ceiling',
+  'Signage', 'Tiling', 'Plumbing', 'Furniture', 'Others'];
+
+function projInfo(code) { return ((S.data && S.data.projects) || []).find((p) => p.code === code) || null; }
+// Day 1 is the real site start once set, else the planned start. Plan days count from it.
+function day1Of(p) { return p.day1 || p.plannedStart || ''; }
+function dayDate(p, n) { const d1 = day1Of(p); return d1 && n ? addDays(d1, n - 1) : ''; }
+function dayNumber(p, iso) {
+  const d1 = day1Of(p);
+  if (!d1) return null;
+  return Math.round((LC.fromIso(iso) - LC.fromIso(d1)) / 86400000) + 1;
+}
+function niceDay(s) { const d = LC.fromIso(s); return WDS[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()]; }
+function engineersOf(code) { return ((S.data && S.data.users) || []).filter((u) => u.role === 'site_engineer' && (u.projects || []).indexOf(code) >= 0); }
+function liveProjects() {
+  const order = { execution: 0, design: 1, handover: 2 };
+  return ((S.data && S.data.projects) || []).filter((p) => p.active && p.stage !== 'archive')
+    .sort((a, b) => (order[a.stage] - order[b.stage]) || (a.code < b.code ? -1 : 1));
+}
+function stagePill(stage) { return '<span class="stage-pill st-' + esc(stage) + '">' + esc(STAGE_LABEL[stage] || stage) + '</span>'; }
+// "Execution · Day 38 of 113 · Handover Sun 7 Feb · Site engineer Venky"
+function projectLine(p) {
+  const bits = [STAGE_LABEL[p.stage]];
+  const t = todayIso(), n = dayNumber(p, t);
+  if (p.stage === 'execution' && n !== null) {
+    if (n < 1) bits.push((p.day1 ? 'Site starts ' : 'Planned start ') + niceDay(day1Of(p)));
+    else bits.push('Day ' + n + (p.handoverDay ? ' of ' + p.handoverDay : ''));
+  }
+  if (p.handoverDay && day1Of(p)) bits.push('Handover ' + niceDay(dayDate(p, p.handoverDay)));
+  const eng = engineersOf(p.code);
+  if (eng.length) bits.push('Site engineer ' + eng.map((u) => u.name).join(', '));
+  return bits.join(' · ');
+}
+
+function renderProjectsView() {
+  const list = liveProjects();
+  if (!S.projTab || !list.some((p) => p.code === S.projTab)) S.projTab = list.length ? list[0].code : '';
+  const p = projInfo(S.projTab);
+  const tabs = list.map((x) => '<button type="button" class="ptab' + (x.code === S.projTab ? ' on' : '') + '" data-act="proj-tab" data-code="' + esc(x.code) +
+    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.name || x.code) + '</span>' + stagePill(x.stage) + '</button>').join('');
+  if (!p) {
+    $('view-projects').innerHTML = '<h2 id="proj-h" class="view-title">Projects</h2><p class="empty">No live projects. Add one in Directory → Projects.</p>';
+    return;
+  }
+  const secs = SECTIONS[p.stage] || SECTIONS.execution;
+  if (!S.projSec || !secs.some((s) => s[0] === S.projSec && s[2])) S.projSec = 'overview';
+  const nav = secs.map((s) => s[2]
+    ? '<button type="button" class="psec' + (S.projSec === s[0] ? ' on' : '') + '" data-act="proj-sec" data-sec="' + s[0] + '" aria-pressed="' + (S.projSec === s[0]) + '">' + esc(s[1]) + '</button>'
+    : '<span class="psec off" title="Comes in a later step">' + esc(s[1]) + '</span>').join('');
+  $('view-projects').innerHTML =
+    '<nav class="ptabs" aria-label="Projects">' + tabs + '</nav>' +
+    '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.name || p.code) + ' <span class="code-tag">' + esc(p.code) + '</span></h2>' +
+    '<div class="psub">' + esc(projectLine(p)) + '</div></div>' +
+    '<nav class="psecs" aria-label="Project sections">' + nav + '</nav>' +
+    projectOverviewHtml(p);
+}
+
+function projectOverviewHtml(p) {
+  const needs = '<section class="card needs" aria-labelledby="needs-h"><div class="sec-head"><h3 id="needs-h">Needs you</h3></div>' +
+    '<p class="empty">Nothing needs you on this project right now. Site queries, photos and tasks will show up here.</p></section>';
+  let money = '';
+  if (isOwner()) {
+    const got = live().filter((e) => e.type === 'R' && e.project === p.code && e.who === LC.CLIENT).reduce((s, e) => s + e.amount, 0);
+    money = '<section class="card" aria-labelledby="cp-h"><div class="label-caps" id="cp-h">Client payments</div>' +
+      '<div class="big-num">' + esc(LC.inr(got)) + ' <span class="muted">received from the client</span></div>' +
+      '<p class="muted small">From R entries with CL in the ledger. Instalments and what’s due next come with the schedule.</p></section>';
+  }
+  const d1 = day1Of(p);
+  const rows = [
+    ['Stage', STAGE_LABEL[p.stage]],
+    [p.day1 ? 'Site start (Day 1)' : 'Planned start', d1 ? niceY(d1) : 'Not set'],
+    ['Target handover', p.handoverDay && d1 ? niceY(dayDate(p, p.handoverDay)) + ' · Day ' + p.handoverDay : 'Not set'],
+    ['Schedule', SCHEDULE_LABEL[p.scheduleType] || SCHEDULE_LABEL.none],
+    ['Site engineer', engineersOf(p.code).map((u) => u.name).join(', ') || 'None assigned']
+  ];
+  const details = '<section class="card" aria-labelledby="pd-h"><div class="label-caps" id="pd-h">Project</div><dl class="pdl">' +
+    rows.map((r) => '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>').join('') + '</dl>' +
+    (isOwner() ? '<button type="button" class="btn-outline" data-act="proj-edit-dir" data-code="' + esc(p.code) + '">Change in Directory</button>' : '') + '</section>';
+  return '<div class="pgrid"><div class="pmain">' + needs + '</div><div class="pside">' + money + details + '</div></div>';
+}
+
+/* ---------- Directory additions: project stage & dates, trade, team ---------- */
+function projectDetailOf(r) {
+  const p = projInfo(r.code || '') || {};
+  return 'Client: ' + (r.client || '—') + (p.stage ? ' · ' + STAGE_LABEL[p.stage] : '');
+}
+function projInfoFormHtml(code) {
+  const p = projInfo(code) || {}, f = S.projEdit;
+  const opt = (v, l, cur) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(l) + '</option>';
+  return '<div class="drow pinfo"><div class="dform">' +
+    '<div class="fld"><label for="pi-stage">Stage</label><select id="pi-stage" data-pi="stage">' +
+    Object.keys(STAGE_LABEL).map((k) => opt(k, STAGE_LABEL[k], f.stage)).join('') + '</select></div>' +
+    '<div class="fld"><label for="pi-start">' + (p.day1 ? 'Planned start (site started ' + esc(niceY(p.day1)) + ')' : 'Planned start (Day 1)') + '</label>' +
+    '<input type="date" id="pi-start" data-pi="plannedStart" value="' + esc(f.plannedStart) + '"></div>' +
+    '<div class="fld"><label for="pi-hand">Target handover</label><input type="date" id="pi-hand" data-pi="handover" value="' + esc(f.handover) + '"></div>' +
+    '<div class="fld"><label for="pi-type">Schedule</label><select id="pi-type" data-pi="scheduleType">' +
+    Object.keys(SCHEDULE_LABEL).map((k) => opt(k, SCHEDULE_LABEL[k], f.scheduleType)).join('') + '</select></div>' +
+    '<button type="button" class="btn-accent" data-act="pi-save">Save</button>' +
+    '<button type="button" class="btn-outline" data-act="pi-cancel">Cancel</button>' +
+    (f.err ? '<p class="err" role="alert" style="flex:1 1 100%">' + esc(f.err) + '</p>' : '') + '</div></div>';
+}
+function startProjInfo(code) {
+  const p = projInfo(code) || {};
+  S.projEdit = {
+    code: code, stage: p.stage || 'execution', plannedStart: p.plannedStart || '', scheduleType: p.scheduleType || 'none', err: '',
+    handover: p.handoverDay && day1Of(p) ? dayDate(p, p.handoverDay) : ''
+  };
+}
+function saveProjInfo() {
+  const f = S.projEdit;
+  if (!f) return;
+  call('saveProjectInfo', [f.code, { stage: f.stage, plannedStart: f.plannedStart, handover: f.handover, scheduleType: f.scheduleType }], () => {
+    S.projEdit = null;
+    snack(f.code + ' saved.');
+  }, (msg) => { if (S.projEdit) S.projEdit.err = msg; });
+}
+function tradeSelect(id, attrs, cur) {
+  return '<select id="' + id + '" ' + attrs + '><option value="">—</option>' +
+    TRADES.map((t) => '<option' + (t === cur ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select>';
+}
+
+// Team: everyone who uses the app. Owners add and change site engineers; owners' own rows: name and code.
+const ROLE_LABEL = { owner: 'Owner', contributor: 'Contributor', viewer: 'Viewer', site_engineer: 'Site engineer' };
+const blankMember = () => ({ email: '', name: '', code: '', projects: [], err: '' });
+function teamPanelHtml() {
+  const users = ((S.data && S.data.users) || []).slice().sort((a, b) => (a.role === b.role ? (a.name < b.name ? -1 : 1) : a.role === 'owner' ? -1 : b.role === 'owner' ? 1 : a.role < b.role ? -1 : 1));
+  const owner = isOwner();
+  const projBoxes = (sel, prefix) => '<div class="pchecks" role="group" aria-label="Projects">' + LC.activeCodes(S.dir.projects).map((c) =>
+    '<label class="pcheck"><input type="checkbox" data-' + prefix + '-proj="' + esc(c) + '"' + (sel.indexOf(c) >= 0 ? ' checked' : '') + '> ' + esc(c) + '</label>').join('') + '</div>';
+  const row = (u) => {
+    if (S.memberEdit && S.memberEdit.email === u.email) {
+      const m = S.memberEdit;
+      return '<div class="drow"><div class="dform">' +
+        '<div class="fld"><label for="me-name">Name</label><input id="me-name" data-me="name" value="' + esc(m.name) + '" autocomplete="off"></div>' +
+        '<div class="fld code"><label for="me-code">Code</label><input id="me-code" data-me="code" value="' + esc(m.code) + '" maxlength="4" autocapitalize="characters" autocomplete="off"></div>' +
+        (u.role === 'site_engineer' ? '<div class="fld" style="flex:1 1 100%"><span class="lbl">Projects</span>' + projBoxes(m.projects, 'me') + '</div>' : '') +
+        '<button type="button" class="btn-accent" data-act="me-save">Save</button><button type="button" class="btn-outline" data-act="me-cancel">Cancel</button>' +
+        (m.err ? '<p class="err" role="alert" style="flex:1 1 100%">' + esc(m.err) + '</p>' : '') + '</div></div>';
+    }
+    const conf = S.confirmDel === 'member:' + u.email;
+    return '<div class="drow"><div class="drow-view">' + (u.code ? '<span class="code-tag">' + esc(u.code) + '</span>' : '<span class="code-tag arch">—</span>') +
+      '<div class="drow-text"><b>' + esc(u.name || u.email) + '</b><span>' + esc(ROLE_LABEL[u.role] || u.role) + ' · ' + esc(u.email) +
+      (u.role === 'site_engineer' ? ' · ' + esc((u.projects || []).join(', ') || 'no projects yet') : '') + '</span></div>' +
+      (owner ? '<button type="button" class="btn-sm" data-act="me-edit" data-email="' + esc(u.email) + '">Edit</button>' +
+        (u.role === 'site_engineer' ? '<button type="button" class="btn-sm' + (conf ? ' btn-danger' : '') + '" data-act="me-remove" data-email="' + esc(u.email) + '">' + (conf ? 'Confirm remove?' : 'Remove') + '</button>' : '') : '') +
+      '</div></div>';
+  };
+  const a = S.memberAdd;
+  const addForm = owner
+    ? '<div class="dform">' +
+      '<div class="fld"><label for="ma-name">Name</label><input id="ma-name" data-ma="name" value="' + esc(a.name) + '" placeholder="Venky" autocomplete="off"></div>' +
+      '<div class="fld code"><label for="ma-code">Code</label><input id="ma-code" data-ma="code" value="' + esc(a.code) + '" placeholder="VNK" maxlength="4" autocapitalize="characters" autocomplete="off"></div>' +
+      '<div class="fld"><label for="ma-email">Google account</label><input id="ma-email" data-ma="email" type="email" value="' + esc(a.email) + '" placeholder="name@gmail.com" autocomplete="off"></div>' +
+      '<div class="fld" style="flex:1 1 100%"><span class="lbl">Projects</span>' + projBoxes(a.projects, 'ma') + '</div>' +
+      '<button type="button" class="btn-accent" data-act="ma-add">Add site engineer</button>' +
+      (a.err ? '<p class="err" role="alert" style="flex:1 1 100%">' + esc(a.err) + '</p>' : '') + '</div>'
+    : '';
+  return '<div class="panel"><div class="panel-head"><h3>Team</h3><span class="mono">' + users.length + '</span></div>' +
+    '<p class="panel-desc">' + (owner
+      ? 'Everyone who can sign in. Site engineers see projects, never the ledger. Adding someone sends them nothing: tell them yourself, then they sign in with that Google account. Codes are used for tasks, like MT NST @VNK.'
+      : 'Everyone who can sign in to O F Turnkey.') + '</p>' + addForm + users.map(row).join('') + '</div>';
+}
+function memberProjects(prefix) { return Array.from(document.querySelectorAll('[data-' + prefix + '-proj]:checked')).map((el) => el.getAttribute('data-' + prefix + '-proj')); }
+function addMember() {
+  const a = S.memberAdd;
+  a.projects = memberProjects('ma');
+  call('saveMember', [{ email: a.email, name: a.name, code: a.code.toUpperCase(), projects: a.projects }], () => {
+    snack(a.name + ' added as a site engineer. Nothing was sent to them.');
+    S.memberAdd = blankMember();
+  }, (msg) => { S.memberAdd.err = msg; });
+}
+function saveMemberEdit() {
+  const m = S.memberEdit;
+  if (!m) return;
+  m.projects = memberProjects('me');
+  call('saveMember', [{ email: m.email, name: m.name, code: m.code.toUpperCase(), projects: m.projects }], () => {
+    S.memberEdit = null;
+    snack(m.name + ' saved.');
+  }, (msg) => { if (S.memberEdit) S.memberEdit.err = msg; });
 }
 
 /* ---------- layout & render ---------- */
 const phone = window.matchMedia('(max-width: 699px)');
 function placeCodebar() {
   const bar = $('codebar');
-  bar.hidden = !canWrite(); // viewers have nothing to type
+  bar.hidden = !canWrite() || S.tab === 'projects'; // viewers have nothing to type; projects have their own screens
   $('viewOnly').hidden = canWrite();
   const want = phone.matches && S.tab === 'ledger' ? $('codebarPhoneSlot') : $('codebarHome');
   if (bar.parentNode !== want) want.appendChild(bar);
@@ -1246,9 +1448,11 @@ function renderAll() {
   renderPrint();
   renderSnack();
   $('view-ledger').hidden = S.tab !== 'ledger';
+  $('view-projects').hidden = S.tab !== 'projects';
   $('view-tasks').hidden = S.tab !== 'tasks';
   $('view-dir').hidden = S.tab !== 'dir';
   if (S.tab === 'ledger') { renderCalendar(); renderDay(); renderReminders(); renderProjects(); }
+  else if (S.tab === 'projects') renderProjectsView();
   else if (S.tab === 'tasks') renderTasks();
   else renderDir();
   placeCodebar();
@@ -1295,6 +1499,29 @@ document.addEventListener('click', (ev) => {
     case 'sess-out':
       if (prevDel === 'sess:' + id) signOutDevice(id); else S.confirmDel = 'sess:' + id;
       break;
+    case 'proj-tab': S.projTab = code; S.projSec = 'overview'; break;
+    case 'proj-sec': S.projSec = el.dataset.sec; break;
+    case 'proj-edit-dir':
+      S.tab = 'dir'; startProjInfo(code); loadDevices();
+      renderAll();
+      { const row = document.querySelector('.pinfo'); if (row) row.scrollIntoView({ block: 'center' }); }
+      return;
+    case 'pi-edit': startProjInfo(code); break;
+    case 'pi-save': saveProjInfo(); return;
+    case 'pi-cancel': S.projEdit = null; break;
+    case 'me-edit': {
+      const u = (S.data.users || []).find((x) => x.email === el.dataset.email);
+      if (u) S.memberEdit = { email: u.email, name: u.name, code: u.code || '', projects: (u.projects || []).slice(), err: '' };
+      break;
+    }
+    case 'me-save': saveMemberEdit(); return;
+    case 'me-cancel': S.memberEdit = null; break;
+    case 'me-remove':
+      if (prevDel === 'member:' + el.dataset.email) {
+        call('removeMember', [el.dataset.email], () => snack('Removed. Every device they used is signed out.'));
+      } else S.confirmDel = 'member:' + el.dataset.email;
+      break;
+    case 'ma-add': addMember(); return;
     case 'kind': S.kind = kind || ''; break;
     case 'guide': S.guide = !S.guide; break;
     case 'refresh': refresh(false); break;
@@ -1372,6 +1599,16 @@ document.addEventListener('input', (ev) => {
     S.dirEdit[t.dataset.edit] = t.value;
     S.dirEdit.err = '';
     $('editMsg').innerHTML = editMsgHtml();
+  } else if (t.dataset.pi && S.projEdit) {
+    S.projEdit[t.dataset.pi] = t.value;
+  } else if (t.dataset.me && S.memberEdit) {
+    S.memberEdit[t.dataset.me] = t.value;
+  } else if (t.dataset.ma) {
+    S.memberAdd[t.dataset.ma] = t.value;
+  } else if (t.matches('[data-ma-proj]')) {
+    S.memberAdd.projects = memberProjects('ma');
+  } else if (t.matches('[data-me-proj]') && S.memberEdit) {
+    S.memberEdit.projects = memberProjects('me');
   }
 });
 
@@ -1404,6 +1641,12 @@ document.addEventListener('keydown', (ev) => {
   } else if (t.dataset.edit) {
     if (ev.key === 'Enter') { ev.preventDefault(); saveDirEdit(); }
     else if (ev.key === 'Escape') { S.dirEdit = null; renderAll(); }
+  } else if (t.dataset.ma && ev.key === 'Enter') {
+    ev.preventDefault();
+    addMember();
+  } else if (t.dataset.me && ev.key === 'Enter') {
+    ev.preventDefault();
+    saveMemberEdit();
   }
 });
 
