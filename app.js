@@ -1,0 +1,1436 @@
+/* O F Turnkey: the app's screens. Served from GitHub Pages; all data comes from the Apps Script server
+ * through api() (CONFIG.api in config.js). core.js is the same code language file the server uses. */
+(function () {
+'use strict';
+
+const LC = LedgerCore();
+const LOGO_URL = 'logo.png';
+// Kept on this device: the sign-in key, who it belongs to, and the last ledger data (so the app opens at once).
+const SESSION_KEY = 'oft.session.' + CONFIG.env;
+const ME_KEY = 'oft.me.' + CONFIG.env;
+const CACHE_KEY = 'oft.cache.' + CONFIG.env;
+const MON = LC.MON;
+const MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WDS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WDL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const TYPE_ORDER = ['P', 'R', 'F', 'MT'];
+const TFG = { P: '#7A3414', R: '#2F4019', F: '#5E4500', MT: '#1F3A5F' };
+const KINDS = ['project', 'labour', 'vendor', 'mode'];
+const KIND_FIELD = { project: 'project', labour: 'who', vendor: 'who', mode: 'mode' };
+const PRINT_TYPE_LABELS = { P: 'Paid', R: 'Received', F: 'Follow-ups', MT: 'My tasks' };
+// Print choices. Modes apply to P and R only (tasks have no mode). A mode missing from pf.modes counts as
+// on, so modes added later are included by default. from/to are used only when period is 'custom'.
+const blankPf = () => ({ project: '', who: '', period: 'month', from: '', to: '', types: { P: true, R: true, F: false, MT: false }, modes: {}, noMode: true });
+const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#FFFFFF" stroke-width="2" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg>';
+const ARROW_L = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>';
+const ARROW_R = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3l5 5-5 5"></path></svg>';
+const blankForm = () => ({ code: '', name: '', detail: '' });
+
+const PANELS = {
+  project: {
+    title: 'Projects & clients', desc: 'One code per site. In codes, CL always means this project’s client.',
+    nameLabel: 'Site name', namePh: 'Site D', detailLabel: 'Client name', detailPh: 'Client name', codePh: 'SD',
+    detailOf: (r) => 'Client: ' + (r.client || '—')
+  },
+  labour: {
+    title: 'Labour', desc: 'Team heads you pay for work. Payments to them count as labour.',
+    nameLabel: 'Name', namePh: 'Name', detailLabel: 'Trade', detailPh: 'Electrical', codePh: 'ELE',
+    detailOf: (r) => r.detail || 'Labour'
+  },
+  vendor: {
+    title: 'Vendors', desc: 'Shops and suppliers. Payments to them count as material.',
+    nameLabel: 'Name', namePh: 'Vendor name', detailLabel: 'Supplies', detailPh: 'Tiles, sanitaryware', codePh: 'TIL',
+    detailOf: (r) => r.detail || 'Material'
+  },
+  mode: {
+    title: 'Payment modes', desc: 'Used at the end of P and R codes.',
+    nameLabel: 'Label', namePh: 'UPI', detailLabel: '', detailPh: '', codePh: 'U',
+    detailOf: () => 'Mode'
+  }
+};
+
+const S = {
+  data: null, dir: null, entries: [], loadedAt: '', lastLoad: 0,
+  sel: '', y: 0, m: 0, tab: 'ledger', kind: '', project: null,
+  code: '', parsed: null, warns: [], armed: '', saving: false, saveErr: '', editId: null,
+  guide: false, print: false, showVoided: false, confirmVoid: null,
+  forms: { project: blankForm(), labour: blankForm(), vendor: blankForm(), mode: blankForm() },
+  errs: { project: '', labour: '', vendor: '', mode: '' },
+  showArch: {}, dirEdit: null, confirmDel: null,
+  editDate: '',
+  pf: blankPf(),
+  paper: 'A4', orient: 'portrait',
+  pending: 0, snackMsg: null,
+  me: null, sheetUrl: '', devices: null, devicesErr: '', timing: null, readyMs: 0, started: false
+};
+
+/* ---------- helpers ---------- */
+const $ = (id) => document.getElementById(id);
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function todayIso() { return LC.iso(new Date()); }
+function addDays(s, n) { const d = LC.fromIso(s); d.setDate(d.getDate() + n); return LC.iso(d); }
+function niceY(s) { const d = LC.fromIso(s); return d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear(); }
+function isTask(e) { return e.type === 'F' || e.type === 'MT'; }
+function sitsOn(e) { return isTask(e) ? e.due : e.date; }
+function live() { return S.entries.filter((e) => e.status !== 'void'); }
+function inFilter(e) { return !S.project || e.project === S.project; }
+function norm(s) { return String(s || '').trim().split(/\s+/).filter(Boolean).join(' '); }
+function byDue(a, b) { return a.due < b.due ? -1 : a.due > b.due ? 1 : 0; }
+function findEntry(id) { return S.entries.find((e) => e.id === id); }
+function editing() { const e = S.editId ? findEntry(S.editId) : null; return e && e.status !== 'void' ? e : null; }
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+function cleanErr(m) { return String(m || 'Something went wrong.').replace(/^(Exception|Error|ScriptError):\s*/i, ''); }
+function chev(open) {
+  return '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="transform:rotate(' + (open ? 90 : 0) + 'deg)"><path d="M4 2.5L7.5 6 4 9.5"></path></svg>';
+}
+function badge(t, sm) { return '<span class="badge' + (sm ? ' sm' : '') + ' t-' + t + '">' + t + '</span>'; }
+function projName(c) { return LC.projName(S.dir, c); }
+function shortLine(e) {
+  const who = LC.whoName(S.dir, e.who, e.project);
+  if (e.type === 'P') return 'Paid ' + who + ' ' + LC.inr(e.amount);
+  if (e.type === 'R') return 'Received ' + LC.inr(e.amount) + ' from ' + who;
+  return LC.taskTitle(S.dir, e);
+}
+function isOwner() { return !!S.data && S.data.role === 'owner'; }
+// Owners and contributors can add entries and tick tasks; viewers only see and print.
+function canWrite() { return !!S.data && (S.data.role === 'owner' || S.data.role === 'contributor'); }
+function userName(email) { const u = ((S.data && S.data.users) || []).find((x) => x.email === email); return u && u.name ? u.name : email; }
+function initials(email) {
+  const w = String(userName(email) || '').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean);
+  return ((w[0] || '').charAt(0) + (w[1] || '').charAt(0)).toUpperCase() || String(email).slice(0, 2).toUpperCase();
+}
+function byTag(e) {
+  if (!e.added_by) return '';
+  return ' · <span class="by" title="Added by ' + esc(userName(e.added_by)) + '">' + esc(initials(e.added_by)) + '</span>';
+}
+// Owners can open any entry for editing: a visible Edit button, and the sentence itself.
+function editBtn(e) { return isOwner() ? '<button type="button" class="btn-sm edit-btn" data-act="edit" data-id="' + esc(e.id) + '" aria-label="Edit: ' + esc(shortLine(e)) + '">Edit</button>' : ''; }
+function mainOpen(e) { return isOwner() ? '<button type="button" class="item-main" data-act="edit" data-id="' + esc(e.id) + '">' : '<div class="item-main">'; }
+function mainClose() { return isOwner() ? '</button>' : '</div>'; }
+function usage(kind, code) { const f = KIND_FIELD[kind]; return S.entries.filter((e) => e[f] === code).length; }
+function logoHtml() {
+  if (LOGO_URL) return '<div class="brand"><img class="brand-logo" src="' + esc(LOGO_URL) + '" alt="" width="40" height="40"><span class="brand-name">OF Turnkey</span></div>';
+  return '<div class="logo" role="img" aria-label="OF Turnkey logo placeholder"><span class="logo-name">OF TURNKEY</span><span class="logo-tag">Logo</span></div>';
+}
+/* ---------- paper size & orientation ---------- */
+const PAPERS = ['A4', 'A3'];
+const ORIENTS = ['portrait', 'landscape'];
+function applyPageSize() {
+  let el = $('pageSizeRule');
+  if (!el) { el = document.createElement('style'); el.id = 'pageSizeRule'; document.head.appendChild(el); }
+  el.textContent = '@page { size: ' + S.paper + ' ' + S.orient + '; }';
+}
+
+/* ---------- server ---------- */
+function setData(d) {
+  S.data = d;
+  S.dir = LC.buildDir(d);
+  S.entries = d.entries || [];
+  S.loadedAt = d.loadedAt || '';
+  S.lastLoad = Date.now();
+  if (S.project && !S.dir.projects[S.project]) S.project = null;
+  if (S.editId && !editing()) S.editId = null;
+}
+
+function store(key, val) { try { if (val == null) localStorage.removeItem(key); else localStorage.setItem(key, val); } catch (_) { /* storage blocked */ } }
+function stored(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+function sessionToken() { return stored(SESSION_KEY) || ''; }
+const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
+
+// One request to the server: { a, s, args } goes in as plain text (no cookies, so the phone's Google
+// accounts play no part); { ok, result } or { ok: false, error, signin } comes back.
+function api(action, args) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90000);
+  const t0 = performance.now();
+  return fetch(CONFIG.api, {
+    method: 'POST', body: JSON.stringify({ a: action, s: sessionToken(), args: args || [] }),
+    credentials: 'omit', redirect: 'follow', cache: 'no-store', signal: ctrl.signal
+  }).then((r) => {
+    if (!r.ok) throw new Error('The server answered ' + r.status + '. Please try again.');
+    return r.json().catch(() => { throw new Error('The server sent something unexpected. Please try again.'); });
+  }, (err) => {
+    throw new Error(err && err.name === 'AbortError' ? 'No answer from the server after 90 seconds. Check your signal and try again.'
+      : navigator.onLine === false ? 'No signal. Nothing was sent.' : 'Couldn’t reach the server. Check your connection and try again.');
+  }).then((res) => {
+    S.timing = { action: action, server: res.ms, total: Math.round(performance.now() - t0) };
+    renderEnvStrip();
+    if (!res.ok) { const e = new Error(res.error || 'Something went wrong.'); e.signin = !!res.signin; throw e; }
+    return res.result;
+  }).finally(() => clearTimeout(timer));
+}
+
+// Ledger actions: show "Syncing…", then fresh data (every write answers with it) or the error.
+function call(fn, args, onOk, onFail) {
+  S.pending++;
+  renderStatus();
+  api(fn, args).then((res) => {
+    S.pending--;
+    if (res && res.data) { setData(res.data); saveCache(); }
+    if (onOk) onOk(res);
+    renderAll();
+  }, (err) => {
+    S.pending--;
+    if (err.signin) { signedOut(err.message); return; }
+    const msg = cleanErr(err.message);
+    if (onFail) onFail(msg); else snack(msg, { error: true });
+    renderAll();
+  });
+}
+function refresh(quiet) { call('getData', [], quiet ? null : () => snack('Up to date.')); }
+
+function saveCache() {
+  if (S.data && S.me) store(CACHE_KEY, JSON.stringify({ email: S.me.email, sheetUrl: S.sheetUrl, data: S.data }));
+}
+function loadCache() {
+  try { const c = JSON.parse(stored(CACHE_KEY) || 'null'); return c && c.data ? c : null; } catch (_) { return null; }
+}
+
+/* ---------- opening, sign-in and signed-in devices ---------- */
+// The screen before the ledger: opening, sign in, no access, site engineer.
+function showGate(title, text, opts) {
+  opts = opts || {};
+  $('appScreen').hidden = true;
+  $('gate').hidden = false;
+  $('gateTitle').textContent = title;
+  const t = $('gateText');
+  t.textContent = text;
+  t.className = 'gate-text' + (opts.error ? ' err' : '');
+  $('gateButton').innerHTML = opts.button || '';
+  $('gateExtra').innerHTML = opts.extra || '';
+}
+const TRY_AGAIN = '<button type="button" class="btn-big" data-act="reload">Try again</button>';
+
+let gisLoading = null;
+function loadGis() {
+  if (window.google && google.accounts && google.accounts.id) return Promise.resolve();
+  if (!gisLoading) {
+    gisLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = () => { gisLoading = null; reject(new Error('Couldn’t reach Google to sign in. Check your connection, then try again.')); };
+      document.head.appendChild(s);
+    });
+  }
+  return gisLoading;
+}
+// chooseAccount: show Google's account list instead of signing straight back in to the last account.
+function showSignIn(message, opts) {
+  opts = opts || {};
+  showGate('O F Turnkey', message || 'Sign in with the Google account you use for O F Turnkey.', { error: opts.error });
+  loadGis().then(() => {
+    google.accounts.id.initialize({
+      client_id: CONFIG.clientId, callback: (res) => signInWith(res.credential),
+      auto_select: !opts.chooseAccount, cancel_on_tap_outside: false, context: 'signin', itp_support: true,
+      use_fedcm_for_prompt: true, use_fedcm_for_button: true
+    });
+    if (opts.chooseAccount) google.accounts.id.disableAutoSelect();
+    google.accounts.id.renderButton($('gateButton'), {
+      type: 'standard', theme: 'filled_black', size: 'large', shape: 'pill', text: 'signin_with', logo_alignment: 'left', width: 280
+    });
+    if (!opts.chooseAccount) google.accounts.id.prompt();
+  }, (err) => showGate('O F Turnkey', err.message, { error: true, button: TRY_AGAIN }));
+}
+function signInWith(credential) {
+  showGate('O F Turnkey', 'Signing you in…');
+  api('signIn', [credential, deviceName()]).then((res) => {
+    if (res.noAccess) { showNoAccess(res.me.email); return; }
+    store(SESSION_KEY, res.session);
+    store(ME_KEY, JSON.stringify(res.me));
+    S.me = res.me;
+    boot(false);
+  }, (err) => showSignIn(cleanErr(err.message), { error: true, chooseAccount: true }));
+}
+function showNoAccess(email) {
+  try { google.accounts.id.disableAutoSelect(); } catch (_) { /* Google sign-in not loaded */ }
+  showGate('No access', 'This Google account isn’t on O F Turnkey’s list of users. Ask Shruthi to add it.', {
+    extra: '<span>You signed in as <b>' + esc(email) + '</b>.</span>',
+    button: '<button type="button" class="btn-big" data-act="choose-account">Use another account</button>'
+  });
+}
+function showEngineer(me) {
+  showGate('Signed in', 'You’re signed in as ' + me.email + ' · site engineer.', {
+    extra: '<span>Site engineer screens are on their way. No ledger or payment information is sent to this device.</span>' +
+      '<button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button>'
+  });
+}
+function isStandalone() { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
+// How this device is listed under "Signed-in devices".
+function deviceName() {
+  const ua = navigator.userAgent;
+  const os = /Android/i.test(ua) ? (/Mobile/i.test(ua) ? 'Android phone' : 'Android tablet') : /iPhone/i.test(ua) ? 'iPhone' : /iPad/i.test(ua) ? 'iPad'
+    : /Windows/i.test(ua) ? 'Windows computer' : /Macintosh/i.test(ua) ? 'Mac' : 'Device';
+  const br = /Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '';
+  return os + (br ? ' · ' + br : '') + (isStandalone() ? ' (installed app)' : '');
+}
+function forgetDevice() {
+  store(SESSION_KEY, null); store(ME_KEY, null); store(CACHE_KEY, null);
+  S.me = null; S.devices = null;
+}
+// The server says this device is no longer signed in (signed out from another device, or unused for months).
+function signedOut(message) {
+  forgetDevice();
+  showSignIn(message || 'This device has been signed out. Please sign in again.', { chooseAccount: true });
+}
+function signOutHere() {
+  try { google.accounts.id.disableAutoSelect(); } catch (_) { /* Google sign-in not loaded */ }
+  showGate('O F Turnkey', 'Signing out…');
+  api('signOut', ['']).catch(() => { /* offline: forget it here anyway; an owner can remove it from the list */ })
+    .finally(() => { forgetDevice(); showSignIn('Signed out of this device.', { chooseAccount: true }); });
+}
+
+// fromCache: the ledger is already on screen from this device's copy; this just brings it up to date.
+function boot(fromCache) {
+  if (!fromCache) showGate('O F Turnkey', 'Opening…');
+  S.pending++;
+  renderStatus();
+  api('boot', []).then((res) => {
+    S.pending--;
+    S.me = res.me;
+    store(ME_KEY, JSON.stringify(res.me));
+    if (res.noAccess) { forgetDevice(); showNoAccess(res.me.email); return; }
+    if (res.engineer) { store(CACHE_KEY, null); showEngineer(res.me); renderEnvStrip(); return; }
+    S.sheetUrl = res.sheetUrl || '';
+    setData(res.data);
+    saveCache();
+    firstRender();
+  }, (err) => {
+    S.pending--;
+    if (err.signin) { signedOut(err.message); return; }
+    if (S.started) { snack(cleanErr(err.message) + ' Showing what was last saved on this device.', { error: true }); renderAll(); return; }
+    showGate('O F Turnkey', cleanErr(err.message), { error: true, button: TRY_AGAIN });
+  });
+}
+
+function firstRender() {
+  if (!S.started) {
+    S.started = true;
+    const now = new Date();
+    S.sel = LC.iso(now);
+    S.y = now.getFullYear();
+    S.m = now.getMonth();
+    const tab = new URLSearchParams(location.search).get('tab');
+    S.tab = ['ledger', 'tasks', 'dir'].indexOf(tab) >= 0 ? tab : 'ledger';
+    $('logoSlot').innerHTML = logoHtml();
+    loadPrintChoices();
+    applyPageSize();
+    S.readyMs = Math.round(performance.now());
+  }
+  $('gate').hidden = true;
+  $('appScreen').hidden = false;
+  renderAll();
+  renderEnvStrip();
+  if (S.tab === 'dir' && !S.devices) loadDevices();
+}
+
+function loadDevices() {
+  api('devices', []).then((res) => {
+    S.devices = res.devices;
+    S.devicesErr = '';
+    if (S.tab === 'dir') renderAll();
+  }, (err) => {
+    if (err.signin) { signedOut(err.message); return; }
+    S.devicesErr = cleanErr(err.message);
+    if (S.tab === 'dir') renderAll();
+  });
+}
+function devicesPanelHtml() {
+  const owner = isOwner(), list = S.devices;
+  const rows = !list
+    ? '<p class="empty">' + esc(S.devicesErr || 'Loading…') + '</p>'
+    : list.map((d) => {
+      const conf = S.confirmDel === 'sess:' + d.id;
+      return '<div class="drow"><div class="drow-view"><div class="drow-text"><b>' + esc(d.device) + (d.here ? '<span class="dev-here">this device</span>' : '') + '</b><span>' +
+        (owner ? esc(d.name && d.name !== d.email ? d.name + ' · ' + d.email : d.email) + ' · ' : '') +
+        'signed in ' + esc(d.signedIn) + ' · last used ' + esc(d.lastUsed) + '</span></div>' +
+        '<button type="button" class="btn-sm' + (conf ? ' btn-danger' : '') + '" data-act="sess-out" data-id="' + esc(d.id) + '">' + (conf ? 'Confirm sign out?' : 'Sign out') + '</button></div></div>';
+    }).join('') || '<p class="empty">No signed-in devices.</p>';
+  return '<div class="panel"><div class="panel-head"><h3>Signed-in devices</h3><span class="mono">' + (list ? list.length : '') + '</span></div>' +
+    '<p class="panel-desc">' + (owner
+      ? 'Every phone and computer signed in to O F Turnkey. Lost a phone? Sign it out here: it can’t open anything until someone signs in on it with Google again.'
+      : 'Your phones and computers signed in to O F Turnkey.') + '</p>' + rows + '</div>';
+}
+function signOutDevice(id) {
+  api('signOut', [id]).then((res) => {
+    if (res.here) { forgetDevice(); showSignIn('Signed out of this device.', { chooseAccount: true }); return; }
+    snack(res.signedOut ? 'Signed out. That device needs Google sign-in again before it can open anything.' : 'That device was already signed out.');
+    loadDevices();
+  }, (err) => {
+    if (err.signin) { signedOut(err.message); return; }
+    snack(cleanErr(err.message), { error: true });
+  });
+}
+
+// Test app only: a strip saying so, who is signed in, and how long the last request took.
+function renderEnvStrip() {
+  const el = $('envStrip');
+  if (CONFIG.env !== 'test') { el.hidden = true; return; }
+  el.hidden = false;
+  const bits = [];
+  if (S.me) bits.push('Signed in as ' + esc(S.me.email) + ' (' + esc(S.me.role || 'no access') + ')');
+  if (S.readyMs) bits.push('screen ready ' + secs(S.readyMs));
+  if (S.timing) bits.push('last request “' + esc(S.timing.action) + '”: server ' + secs(S.timing.server || 0) + ', total ' + secs(S.timing.total));
+  bits.push('version ' + esc(CONFIG.version));
+  el.innerHTML = '<b>TEST APP</b> · works on a test copy of the sheet · nothing here changes the real ledger<br>' + bits.join(' · ');
+}
+
+/* ---------- snack bar ---------- */
+let snackTimer = null;
+function snack(text, opts) {
+  opts = opts || {};
+  S.snackMsg = { text: text, error: !!opts.error, undoId: opts.undoId || null };
+  renderSnack();
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(() => { S.snackMsg = null; renderSnack(); }, opts.undoId ? 10000 : opts.error ? 9000 : 4500);
+}
+function renderSnack() {
+  const el = $('snack'), m = S.snackMsg;
+  el.hidden = !m;
+  if (!m) { el.innerHTML = ''; return; }
+  el.className = 'snack' + (m.error ? ' error' : '');
+  el.setAttribute('role', m.error ? 'alert' : 'status');
+  el.innerHTML = '<span class="snack-text">' + esc(m.text) + '</span>' +
+    (m.undoId ? '<button type="button" class="undo" data-act="undo" data-id="' + esc(m.undoId) + '">Undo</button>' : '') +
+    '<button type="button" class="close" data-act="snack-close" aria-label="Dismiss">×</button>';
+}
+
+/* ---------- header, tabs ---------- */
+function renderStatus() {
+  const el = $('status');
+  el.textContent = S.pending ? 'Syncing…' : (S.loadedAt ? 'Updated ' + S.loadedAt.slice(11) : '');
+  $('backupNote').textContent = (S.data && S.data.user ? 'Signed in as ' + S.data.user + '. ' : '') +
+    (S.data && S.data.lastBackup ? 'Last weekly backup: ' + S.data.lastBackup + '.' : 'A backup copy is made in Drive every Sunday night.');
+  const link = $('sheetLink');
+  link.href = S.sheetUrl || '#';
+  link.textContent = CONFIG.env === 'test' ? 'TEST copy of the sheet' : 'O F Turnkey sheet';
+}
+function renderTabs() {
+  const open = live().filter((e) => isTask(e) && !e.done).length;
+  const t = (key, label, count) => '<button type="button" class="tab' + (S.tab === key ? ' on' : '') + '" data-act="tab" data-tab="' + key +
+    '" aria-pressed="' + (S.tab === key) + '">' + label + (count != null ? '<span class="tab-count">' + count + '</span>' : '') + '</button>';
+  $('tabs').innerHTML = t('ledger', 'Calendar &amp; payments') + t('tasks', 'Tasks', open) + t('dir', 'Directory');
+}
+
+/* ---------- code bar ---------- */
+// Editing parses on the entry's (possibly changed) date and keeps its own codes valid even if archived since.
+function parseCtx() {
+  const ed = editing();
+  return ed
+    ? { dir: S.dir, sel: S.editDate || ed.date, keep: { project: ed.project, who: ed.who, mode: ed.mode } }
+    : { dir: S.dir, sel: S.sel };
+}
+function editUnchanged(ed) { return !!ed && norm(S.code) === norm(ed.raw_code) && (S.editDate || ed.date) === ed.date; }
+
+function warningsFor(en) {
+  const out = [], ed = editing();
+  const others = live().filter((e) => !ed || e.id !== ed.id);
+  const who = LC.whoName(S.dir, en.who, en.project);
+  if (en.type === 'P') {
+    const past = others.filter((e) => e.type === 'P' && e.who === en.who && e.amount > 0).map((e) => e.amount).sort((a, b) => a - b);
+    if (past.length >= 3) {
+      const h = past.length / 2;
+      const med = past.length % 2 ? past[Math.floor(h)] : (past[h - 1] + past[h]) / 2;
+      if (en.amount > 3 * med || en.amount < med / 10) {
+        const lo = past[Math.floor((past.length - 1) * 0.25)], hi = past[Math.ceil((past.length - 1) * 0.75)];
+        out.push({ title: 'Unusual amount', text: who + ' is usually paid ' + (lo === hi ? LC.inr(lo) : LC.inr(lo) + '–' + LC.inr(hi)) + '. This is ' + LC.inr(en.amount) + '.' });
+      }
+    }
+    const same = ed && ed.type === 'P' && ed.who === en.who && ed.project === en.project;
+    if (!same && !others.some((e) => e.type === 'P' && e.who === en.who && e.project === en.project)) {
+      out.push({ title: 'New to this project', text: 'First payment to ' + who + ' on ' + projName(en.project) + '.' });
+    }
+  }
+  if (en.type === 'P' || en.type === 'R') {
+    const dup = others.find((e) => e.type === en.type && e.project === en.project && e.who === en.who && e.amount === en.amount && e.date === en.date);
+    if (dup) out.push({ title: 'Possible double entry', text: '“' + dup.raw_code + '” is already saved on ' + LC.nice(en.date) + '.' });
+  } else {
+    const t = todayIso();
+    if (en.due < t) out.push({ title: 'Odd due date', text: 'Due ' + niceY(en.due) + ', which is in the past.' });
+    else if (en.due > addDays(t, 90)) out.push({ title: 'Odd due date', text: 'Due ' + niceY(en.due) + ', more than 90 days away.' });
+  }
+  return out;
+}
+
+function pvLine(e, tag) {
+  return '<div class="pv-line' + (tag === 'was' ? ' was' : '') + '">' + (tag ? '<span class="pv-tag">' + tag + '</span>' : '') + badge(e.type) +
+    '<span class="pv-sent">' + esc(LC.describe(S.dir, e)) + '</span><span class="pv-proj">' + esc(projName(e.project)) + '</span></div>';
+}
+
+function renderCodebar() {
+  const ed = editing();
+  const r = LC.parse(S.code, parseCtx());
+  S.parsed = r;
+  const day = LC.fromIso(ed ? (S.editDate || ed.date) : S.sel);
+  const dayTxt = WDS[day.getDay()] + ' ' + day.getDate() + ' ' + MON[day.getMonth()];
+  const lab = $('cbLabel');
+  lab.textContent = ed ? 'Editing entry · ' + (isTask(ed) ? 'noted ' : '') + dayTxt : 'New entry · ' + dayTxt;
+  lab.classList.toggle('editing', !!ed);
+  $('code').classList.toggle('editing', !!ed);
+
+  let chips = r.tokens.map((t) => '<div class="tk ' + (t.ok ? 'ok' : 'bad') + '"><b>' + esc(t.txt) + '</b><span>' + esc(t.ok ? t.meaning : '? ' + t.meaning) + '</span></div>').join('');
+  if (r.hint) chips += '<div class="hint">Next: ' + esc(r.hint) + '</div>';
+  $('cbChips').innerHTML = chips;
+
+  let pv = '';
+  if (ed) pv += pvLine(ed, 'was');
+  if (r.entry) pv += pvLine(r.entry, ed ? 'now' : '');
+  else if (!ed) pv += '<span class="muted" style="font-size:14px">The plain-English line appears here as you type.</span>';
+  if (r.entry && LC.TYPES[r.entry.type].money) pv += '<div class="words">' + esc(LC.amountWords(r.entry.amount)) + '</div>';
+  $('cbPreview').innerHTML = pv;
+
+  const warns = r.ready ? warningsFor(r.entry) : [];
+  S.warns = warns;
+  let w = warns.map((x) => '<p class="warn" role="status"><b>' + esc(x.title) + '.</b> ' + esc(x.text) + '</p>').join('');
+  if (warns.length && S.armed === norm(S.code)) w += '<div class="warn-note">Press Enter again to save anyway.</div>';
+  if (S.saveErr) w += '<p class="err" role="alert">' + esc(S.saveErr) + '</p>';
+  $('cbWarn').innerHTML = w;
+
+  const unchanged = editUnchanged(ed);
+  const btn = $('saveBtn');
+  btn.disabled = !r.ready || S.saving || unchanged;
+  btn.textContent = S.saving ? 'Saving…' : warns.length ? 'Save anyway' : ed ? 'Save changes' : 'Save entry';
+  btn.classList.toggle('anyway', warns.length > 0 && !S.saving);
+
+  const ce = $('cbEdit');
+  ce.hidden = !ed;
+  // Rebuilt only when the entry or the void confirmation changes, so the date field keeps focus while typing.
+  const key = ed ? ed.id + '|' + (S.confirmVoid === ed.id) : '';
+  if (ce.dataset.key !== key) {
+    ce.dataset.key = key;
+    if (ed) {
+      const conf = S.confirmVoid === ed.id;
+      ce.innerHTML =
+        '<label class="edit-date" for="editDate">' + (isTask(ed) ? 'Noted on' : 'Date') + '<input type="date" id="editDate" value="' + esc(S.editDate || ed.date) + '"></label>' +
+        '<button type="button" class="btn-sm" data-act="cancel-edit">Cancel</button>' +
+        '<button type="button" class="btn-sm' + (conf ? ' btn-danger' : '') + '" data-act="void" data-id="' + esc(ed.id) + '">' + (conf ? 'Void this entry?' : 'Void entry') + '</button>' +
+        '<span class="edit-help">Change the code or the date, check the “now” line, then save. The change is logged.' +
+        (isTask(ed) ? ' The due date is the dd/mm in the code, or this date if the code has none.' : '') + '</span>';
+    } else {
+      ce.innerHTML = '';
+    }
+  }
+  $('guideBtn').textContent = S.guide ? 'Hide code guide' : 'Code guide';
+  $('cbGuide').hidden = !S.guide;
+  if (S.guide) renderGuide();
+}
+
+function renderGuide() {
+  const d = S.dir;
+  const groups = [
+    ['Type (first)', TYPE_ORDER.map((k) => [k, LC.TYPES[k].label])],
+    ['Projects', LC.activeCodes(d.projects).map((k) => [k, d.projects[k].name])],
+    ['People & vendors', LC.whoCodes(d).map((k) => [k, k === LC.CLIENT ? 'Client of the project' : d.people[k].name + (d.people[k].detail ? ' · ' + d.people[k].detail : '')])],
+    ['Mode (P / R only)', LC.activeCodes(d.modes).map((k) => [k, d.modes[k].label])],
+    ['Amounts', [['18000', LC.inr(18000)], ['25k', LC.inr(25000)], ['2.5L', LC.inr(250000)], ['1Cr', LC.inr(10000000)]]]
+  ];
+  $('cbGuide').innerHTML =
+    '<div class="guide-formats">' +
+    '<span><b>P / R</b>   TYPE PROJECT WHO AMOUNT MODE note       e.g. P SA BAB 25k C</span>' +
+    '<span><b>F</b>       TYPE PROJECT WHO dd/mm note             e.g. F SA ZAM 18/10 gate drawings</span>' +
+    '<span><b>MT</b>      TYPE PROJECT dd/mm what-to-do           e.g. MT SA 15/10 send revised BOQ</span>' +
+    '<p>No date on F or MT means the task is due on the day you picked. CL always means the client of that project. Add or change codes in the Directory tab.</p>' +
+    '</div><div class="guide-groups">' +
+    groups.map((g) => '<div class="guide-group"><h4>' + esc(g[0]) + '</h4>' +
+      (g[1].length ? g[1].map((it) => '<div class="guide-item"><b>' + esc(it[0]) + '</b><span>' + esc(it[1]) + '</span></div>').join('') : '<div class="guide-item muted">None yet. Add in Directory.</div>') +
+      '</div>').join('') +
+    '</div>';
+}
+
+function setCode(v) { S.code = v; S.armed = ''; $('code').value = v; }
+
+function onEnter() {
+  const r = S.parsed;
+  if (!r || !r.ready || S.saving) return;
+  const ed = editing();
+  if (editUnchanged(ed)) return;
+  if (S.warns.length && S.armed !== norm(S.code)) { S.armed = norm(S.code); renderCodebar(); return; }
+  saveCode();
+}
+
+function saveCode() {
+  const r = S.parsed;
+  if (!r || !r.ready || S.saving) return;
+  const ed = editing(), raw = norm(S.code);
+  S.saving = true;
+  S.saveErr = '';
+  renderCodebar();
+  const fail = (msg) => { S.saving = false; S.saveErr = msg; };
+  if (ed) {
+    const date = S.editDate || ed.date;
+    call('editEntry', [ed.id, raw, date], () => {
+      S.saving = false; S.editId = null; S.editDate = ''; setCode('');
+      const e = findEntry(ed.id);
+      if (e) { S.sel = sitsOn(e); const d = LC.fromIso(S.sel); S.y = d.getFullYear(); S.m = d.getMonth(); }
+      snack('Entry updated. Before and after are in the Changes tab.');
+    }, fail);
+  } else {
+    call('addEntry', [raw, S.sel], (res) => {
+      S.saving = false; setCode('');
+      const e = findEntry(res.id);
+      snack('Saved: ' + (e ? shortLine(e) : raw), { undoId: res.id });
+    }, fail);
+  }
+}
+
+function startEdit(id) {
+  const e = findEntry(id);
+  if (!e || e.status === 'void' || !isOwner()) return;
+  S.editId = id;
+  S.editDate = e.date;
+  S.saveErr = '';
+  setCode(e.raw_code);
+  renderAll();
+  $('codebar').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const input = $('code');
+  input.focus({ preventScroll: true });
+  try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) { /* ignore */ }
+}
+function cancelEdit() { S.editId = null; S.editDate = ''; S.saveErr = ''; setCode(''); renderAll(); }
+
+/* ---------- entry actions ---------- */
+function toggleDone(id) {
+  const e = findEntry(id);
+  if (!e) return;
+  e.done = !e.done;
+  call('setDone', [id, e.done], null, (msg) => { snack(msg, { error: true }); refresh(true); });
+}
+function doVoid(id) {
+  const e = findEntry(id);
+  if (!e) return;
+  if (S.editId === id) { S.editId = null; setCode(''); }
+  e.status = 'void';
+  call('setEntryStatus', [id, 'void'], () => snack('Entry voided. Its day’s “Show voided” list has Unvoid.'), (msg) => { snack(msg, { error: true }); refresh(true); });
+}
+
+/* ---------- calendar & payments tab ---------- */
+function renderCalendar() {
+  const t = todayIso();
+  const first = new Date(S.y, S.m, 1);
+  const offset = (first.getDay() + 6) % 7;
+  const dim = new Date(S.y, S.m + 1, 0).getDate();
+  const cellsN = Math.ceil((offset + dim) / 7) * 7;
+  const money = {}, tasks = {};
+  live().filter(inFilter).forEach((e) => {
+    if (isTask(e)) (tasks[e.due] = tasks[e.due] || []).push(e);
+    else (money[e.date] = money[e.date] || []).push(e);
+  });
+  let cells = '';
+  for (let k = 0; k < cellsN; k++) {
+    const d = new Date(S.y, S.m, 1 - offset + k), di = LC.iso(d);
+    const mo = money[di] || [], tk = tasks[di] || [];
+    const cls = ['cal-day'];
+    if (di === S.sel) cls.push('sel');
+    if (di === t) cls.push('today');
+    if (d.getMonth() !== S.m) cls.push('out');
+    let h = '<span class="cal-num">' + d.getDate() + '</span>';
+    h += mo.slice(0, 2).map((e) => '<span class="cal-chip t-' + e.type + '">' + esc(e.type + ' ' + LC.short(e.amount) + ' ' + e.who) + '</span>').join('');
+    if (mo.length > 2) h += '<span class="cal-more">+' + (mo.length - 2) + ' more</span>';
+    if (tk.length) {
+      h += '<span class="cal-tasks">' + tk.slice(0, 2).map((e) => '<span class="cal-task t-' + e.type + (e.done ? ' done' : '') + '"><span class="cal-box"></span><span class="cal-tt">' + e.type +
+        '</span><span class="cal-tl">' + esc(e.type === 'F' ? LC.whoName(S.dir, e.who, e.project) : LC.cap(e.note)) + '</span></span>').join('') +
+        (tk.length > 2 ? '<span class="cal-more">+' + (tk.length - 2) + ' more</span>' : '') + '</span>';
+    }
+    const types = TYPE_ORDER.filter((ty) => mo.some((e) => e.type === ty) || tk.some((e) => e.type === ty));
+    if (types.length) h += '<span class="cal-dots" aria-hidden="true">' + types.map((ty) => '<i class="dot d-' + ty + '"></i>').join('') + '</span>';
+    const aria = d.getDate() + ' ' + MONL[d.getMonth()] + ', ' + plural(mo.length, 'payment', 'payments') + ', ' + plural(tk.length, 'task', 'tasks') + ' due';
+    cells += '<button type="button" class="' + cls.join(' ') + '" data-act="pick" data-date="' + di + '" aria-label="' + esc(aria) + '" aria-pressed="' + (di === S.sel) + '">' + h + '</button>';
+  }
+  const filter = S.project
+    ? '<span class="filter-chip">Showing ' + esc(projName(S.project)) + '<button type="button" data-act="clear-filter">Show all</button></span>'
+    : '';
+  $('calendar').innerHTML =
+    '<div class="cal-head"><h2 id="cal-h">' + MONL[S.m] + ' ' + S.y + '</h2>' + filter +
+    '<div class="cal-nav"><button type="button" class="icon-btn" data-act="prev" aria-label="Previous month">' + ARROW_L + '</button>' +
+    '<button type="button" class="today-btn" data-act="today">Today</button>' +
+    '<button type="button" class="icon-btn" data-act="next" aria-label="Next month">' + ARROW_R + '</button></div></div>' +
+    '<div class="cal-grid" aria-hidden="true">' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((w) => '<span class="cal-wd">' + w + '</span>').join('') + '</div>' +
+    '<div class="cal-grid">' + cells + '</div>' +
+    '<div class="legend">' +
+    '<span>' + badge('P', true) + 'Paid out</span><span>' + badge('R', true) + 'Received</span>' +
+    '<span>' + badge('F', true) + 'Follow-up due (below the line)</span><span>' + badge('MT', true) + 'My task due (below the line)</span></div>';
+}
+
+function voidBtn(e) {
+  if (!isOwner()) return '';
+  const c = S.confirmVoid === e.id;
+  return '<button type="button" class="void-btn' + (c ? ' confirm' : '') + '" data-act="void" data-id="' + esc(e.id) + '">' + (c ? 'Void this entry?' : 'Void') + '</button>';
+}
+function tickBtn(e) {
+  const fg = TFG[e.type];
+  const box = '<span class="tick-box" style="border-color:' + fg + ';background:' + (e.done ? fg : '#FFFFFF') + '">' + (e.done ? CHECK : '') + '</span>';
+  if (!canWrite()) return '<span class="tick" role="img" aria-label="' + (e.done ? 'Done' : 'Not done') + '">' + box + '</span>';
+  return '<button type="button" class="tick" data-act="done" data-id="' + esc(e.id) + '" aria-label="' + (e.done ? 'Mark not done' : 'Mark done') + '" aria-pressed="' + !!e.done + '">' + box + '</button>';
+}
+function itemActions(e) { const h = editBtn(e) + voidBtn(e); return h ? '<span class="item-actions">' + h + '</span>' : ''; }
+function moneyItem(e) {
+  return '<div class="item">' + badge(e.type) + mainOpen(e) + '<span>' + esc(LC.describe(S.dir, e)) + '</span>' +
+    '<span class="item-meta">' + esc(projName(e.project)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() + itemActions(e) + '</div>';
+}
+function taskItem(e) {
+  return '<div class="item">' + tickBtn(e) + mainOpen(e) + '<span' + (e.done ? ' style="text-decoration:line-through"' : '') + '>' +
+    badge(e.type, true) + ' ' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="item-meta">' + esc(projName(e.project)) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() + itemActions(e) + '</div>';
+}
+function voidedItem(e) {
+  return '<div class="item voided">' + badge(e.type) +
+    '<div class="item-main"><span>' + esc(LC.describe(S.dir, e)) + '</span><span class="item-meta">' + esc(projName(e.project)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span></div>' +
+    (isOwner() ? '<button type="button" class="void-btn" data-act="unvoid" data-id="' + esc(e.id) + '">Unvoid</button>' : '') + '</div>';
+}
+
+function renderDay() {
+  const sd = LC.fromIso(S.sel);
+  const L = live().filter(inFilter);
+  const dm = L.filter((e) => !isTask(e) && e.date === S.sel);
+  const dt = L.filter((e) => isTask(e) && e.due === S.sel);
+  const voided = S.entries.filter((e) => e.status === 'void' && inFilter(e) && sitsOn(e) === S.sel);
+  let h = '<h2 id="day-h" style="font-size:18px">' + WDL[sd.getDay()] + ', ' + sd.getDate() + ' ' + MONL[sd.getMonth()] + '</h2>';
+  h += '<div class="list"><div class="label-caps">Payments · ' + dm.length + '</div>' +
+    (dm.length ? dm.map(moneyItem).join('') : '<p class="empty">No payments on this day.</p>') + '</div>';
+  h += '<div class="list"><div class="label-caps">Tasks due · ' + dt.length + '</div>' +
+    (dt.length ? dt.map(taskItem).join('') : '<p class="empty">No follow-ups or tasks due.</p>') + '</div>';
+  h += '<button type="button" class="toggle-link" data-act="show-voided" aria-expanded="' + S.showVoided + '">' + chev(S.showVoided) + 'Show voided (' + voided.length + ')</button>';
+  if (S.showVoided) h += '<div class="list">' + (voided.length ? voided.map(voidedItem).join('') : '<p class="empty">No voided entries on this day.</p>') + '</div>';
+  $('dayPanel').innerHTML = h;
+}
+
+function remItem(e) {
+  return '<div class="rem-item">' + badge(e.type, true) + mainOpen(e) + '<span style="font-size:13px">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="item-meta">' + esc(projName(e.project)) + ' · due ' + esc(LC.nice(e.due)) + byTag(e) + '</span>' + mainClose() +
+    (canWrite() ? '<span class="item-actions">' + editBtn(e) + '<button type="button" class="btn-sm" data-act="done" data-id="' + esc(e.id) + '">Done</button></span>' : '') + '</div>';
+}
+
+function renderReminders() {
+  const t = todayIso(), in7 = addDays(t, 7);
+  const open = live().filter((e) => isTask(e) && !e.done && inFilter(e)).sort(byDue);
+  const groups = [
+    ['Overdue', '#8C1D18', open.filter((e) => e.due < t)],
+    ['Today', '#5E4500', open.filter((e) => e.due === t)],
+    ['Next 7 days', '#3B4A26', open.filter((e) => e.due > t && e.due <= in7)]
+  ];
+  $('reminders').innerHTML =
+    '<div class="sec-head" style="align-items:center"><h2 id="al-h">Reminders</h2>' +
+    '<button type="button" class="btn-outline" style="margin-left:auto" data-act="tab" data-tab="tasks">All tasks</button></div>' +
+    groups.map((g) => '<div class="rem-group"><div class="rem-title" style="color:' + g[1] + '">' + g[0] + '<span class="mono">' + g[2].length + '</span></div>' +
+      (g[2].length ? g[2].map(remItem).join('') : '<span class="empty">None</span>') + '</div>').join('');
+}
+
+function projectRow(list) {
+  let labour = 0, material = 0, other = 0, received = 0;
+  list.forEach((e) => {
+    if (e.type === 'P') {
+      const p = S.dir.people[e.who], k = p ? p.kind : '';
+      if (k === 'labour') labour += e.amount; else if (k === 'material') material += e.amount; else other += e.amount;
+    } else if (e.type === 'R') received += e.amount;
+  });
+  return {
+    labour: labour, material: material, received: received, net: received - labour - material - other,
+    follow: list.filter((e) => e.type === 'F' && !e.done).length,
+    mine: list.filter((e) => e.type === 'MT' && !e.done).length
+  };
+}
+function renderProjects() {
+  const L = live();
+  const codes = LC.activeCodes(S.dir.projects);
+  const cells = (r) => '<td class="num">' + LC.inr(r.labour) + '</td><td class="num">' + LC.inr(r.material) + '</td><td class="num">' + LC.inr(r.received) +
+    '</td><td class="num" style="font-weight:600">' + LC.inr(r.net) + '</td><td class="num">' + r.follow + ' / ' + r.mine + '</td>';
+  let body = codes.map((c) => {
+    const p = S.dir.projects[c], on = S.project === c;
+    return '<tr class="' + (on ? 'on' : '') + '"><td><button type="button" class="proj-btn" data-act="filter-project" data-code="' + esc(c) + '" aria-pressed="' + on + '">' +
+      '<span class="code-tag">' + esc(c) + '</span>' + esc(p.name) + '<span style="font-weight:400;color:#5C615D;font-size:13px">' + esc(p.client || '') + '</span></button></td>' +
+      cells(projectRow(L.filter((e) => e.project === c))) + '</tr>';
+  }).join('');
+  if (!codes.length) {
+    body = '<tr><td colspan="6" style="padding:14px 12px" class="empty">No projects yet. Add your first one in the Directory tab.</td></tr>';
+  }
+  const tot = projectRow(L);
+  $('projects').innerHTML =
+    '<div class="sec-head"><h2 id="pr-h">Active projects</h2><span class="sec-note">Pick a project to filter the calendar and tasks.</span></div>' +
+    '<div class="table-box"><table class="ptable"><thead><tr><th scope="col">Project</th><th scope="col" class="num">Paid · labour</th><th scope="col" class="num">Paid · material</th>' +
+    '<th scope="col" class="num">Received</th><th scope="col" class="num">Net in hand</th><th scope="col" class="num">Open F / MT</th></tr></thead><tbody>' + body +
+    '<tr class="total"><td>All projects</td>' + cells(tot) + '</tr></tbody></table></div>';
+}
+
+/* ---------- tasks tab ---------- */
+function taskCard(e) {
+  return '<div class="tcard' + (e.done ? ' done' : '') + '">' + tickBtn(e) + mainOpen(e) + '<span class="tcard-title">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="tcard-meta">' + badge(e.type, true) + '<span>' + esc(projName(e.project)) + '</span><span>· due ' + esc(LC.nice(e.due)) + '</span>' +
+    (e.added_by ? '<span class="by" title="Added by ' + esc(userName(e.added_by)) + '">' + esc(initials(e.added_by)) + '</span>' : '') + '</span>' +
+    '<span class="raw">' + esc(e.raw_code) + '</span>' + mainClose() + (isOwner() ? '<span class="item-actions">' + editBtn(e) + '</span>' : '') + '</div>';
+}
+function renderTasks() {
+  const t = todayIso(), in7 = addDays(t, 7);
+  const all = live().filter((e) => isTask(e) && inFilter(e) && (!S.kind || e.type === S.kind));
+  const open = all.filter((e) => !e.done).sort(byDue);
+  const done = all.filter((e) => e.done).sort(byDue).reverse();
+  const cols = [
+    ['Overdue', '#8C1D18', open.filter((e) => e.due < t)],
+    ['Today', '#5E4500', open.filter((e) => e.due === t)],
+    ['Next 7 days', '#3B4A26', open.filter((e) => e.due > t && e.due <= in7)],
+    ['Later', '#1F3A5F', open.filter((e) => e.due > in7)],
+    ['Done', '#5C615D', done]
+  ];
+  const chip = (label, on, attrs) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" ' + attrs + ' aria-pressed="' + on + '">' + esc(label) + '</button>';
+  const kinds = chip('All', !S.kind, 'data-act="kind" data-kind=""') + chip('F · Follow-ups', S.kind === 'F', 'data-act="kind" data-kind="F"') + chip('MT · My tasks', S.kind === 'MT', 'data-act="kind" data-kind="MT"');
+  const projs = chip('All projects', !S.project, 'data-act="clear-filter"') +
+    LC.activeCodes(S.dir.projects).map((k) => chip(S.dir.projects[k].name, S.project === k, 'data-act="set-project" data-code="' + esc(k) + '"')).join('');
+  const DONE_SHOWN = 40;
+  $('view-tasks').innerHTML =
+    '<div class="view-head"><h2 id="tasks-h">Tasks</h2><span class="sec-note">Every F (follow-up with someone) and MT (my task) lands here by due date. Tick it off when it’s done.</span></div>' +
+    '<div class="filters"><div class="chip-group" role="group" aria-label="Task kind">' + kinds + '</div><div class="chip-group" role="group" aria-label="Project">' + projs + '</div></div>' +
+    '<div class="cols">' + cols.map((c) => {
+      const items = c[0] === 'Done' ? c[2].slice(0, DONE_SHOWN) : c[2];
+      return '<div class="col"><div class="col-title" style="color:' + c[1] + '">' + c[0] + '<span class="mono">' + c[2].length + '</span></div>' +
+        (items.length ? items.map(taskCard).join('') : '<span class="empty">Nothing here.</span>') +
+        (c[2].length > items.length ? '<span class="empty">Showing the latest ' + DONE_SHOWN + '.</span>' : '') + '</div>';
+    }).join('') + '</div>';
+}
+
+/* ---------- directory tab ---------- */
+function kindCodes(kind) {
+  const d = S.dir;
+  if (kind === 'project') return Object.keys(d.projects);
+  if (kind === 'mode') return Object.keys(d.modes);
+  return Object.keys(d.people).filter((k) => {
+    const p = d.people[k];
+    if (p.system || p.kind === 'client') return false;
+    return kind === 'labour' ? p.kind === 'labour' : p.kind !== 'labour';
+  });
+}
+function recName(kind, r) { return kind === 'mode' ? r.label : r.name; }
+
+function dirMsgHtml(kind) {
+  const f = S.forms[kind], typed = f.code.trim().toUpperCase();
+  const liveErr = typed ? LC.codeIssue(kind, typed, S.dir, null) : '';
+  const nameWarn = LC.nameDup(kind, f.name, S.dir, null);
+  const sug = !typed && f.name.trim() ? LC.suggestCode(kind, f.name, S.dir) : '';
+  let h = '';
+  if (sug) h += '<div class="suggest">Suggested code<button type="button" data-act="dir-suggest" data-kind="' + kind + '" data-code="' + esc(sug) + '" aria-label="Use suggested code ' + esc(sug) + '">' + esc(sug) + '</button>tap to use, or type your own</div>';
+  if (liveErr) h += '<p class="err" role="alert">' + esc(liveErr) + '</p>';
+  if (nameWarn) h += '<p class="warn" role="status">' + esc(nameWarn) + '</p>';
+  if (S.errs[kind] && S.errs[kind] !== liveErr) h += '<p class="err" role="alert">' + esc(S.errs[kind]) + '</p>';
+  return h;
+}
+
+function editMsgHtml() {
+  const ed = S.dirEdit;
+  if (!ed) return '';
+  const k = ed.code, kind = ed.kind, nu = ed.newCode.trim().toUpperCase(), n = usage(kind, k);
+  const changed = nu !== k;
+  const issue = changed ? LC.codeIssue(kind, nu, S.dir, k) : '';
+  let note, cls = '';
+  if (issue) { note = issue; cls = 'bad'; }
+  else if (changed) {
+    note = n > 0 ? 'Saving changes ' + k + ' to ' + nu + ' in all ' + plural(n, 'entry', 'entries') + '.' : k + ' becomes ' + nu + '. Nothing uses it yet.';
+    cls = 'change';
+  } else {
+    note = n > 0 ? 'Change the code and every entry that uses ' + k + ' (' + n + ') updates with it. A new name shows on old entries too.' : 'Nothing uses this code yet.';
+  }
+  const warn = LC.nameDup(kind, ed.name, S.dir, k);
+  return '<span class="dedit-note ' + cls + '"' + (issue ? ' role="alert"' : '') + '>' + esc(note) + '</span>' +
+    (warn ? '<p class="warn" role="status">' + esc(warn) + '</p>' : '') +
+    (ed.err && ed.err !== issue ? '<p class="err" role="alert">' + esc(ed.err) + '</p>' : '');
+}
+
+function editRowHtml(kind) {
+  const ed = S.dirEdit, P = PANELS[kind];
+  return '<div class="drow"><div class="dform">' +
+    '<div class="fld code"><label for="edit-code">Code</label><input id="edit-code" data-edit="newCode" value="' + esc(ed.newCode) + '" maxlength="' + (kind === 'mode' ? 2 : 4) + '" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>' +
+    '<div class="fld"><label for="edit-name">' + esc(P.nameLabel) + '</label><input id="edit-name" data-edit="name" value="' + esc(ed.name) + '" autocomplete="off"></div>' +
+    (P.detailLabel ? '<div class="fld"><label for="edit-detail">' + esc(P.detailLabel) + '</label><input id="edit-detail" data-edit="detail" value="' + esc(ed.detail) + '" autocomplete="off"></div>' : '') +
+    '<button type="button" class="btn-accent" data-act="dir-save">Save</button>' +
+    '<button type="button" class="btn-outline" data-act="dir-cancel">Cancel</button>' +
+    '<div id="editMsg" class="dmsg" style="flex:1 1 100%">' + editMsgHtml() + '</div></div></div>';
+}
+
+function rowHtml(kind, k, rec) {
+  const n = usage(kind, k), conf = S.confirmDel === kind + ':' + k;
+  const label = n > 0 ? 'Archive' : conf ? 'Confirm delete?' : 'Delete';
+  return '<div class="drow"><div class="drow-view"><span class="code-tag">' + esc(k) + '</span>' +
+    '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, rec))) + '</b><span>' + esc(PANELS[kind].detailOf(rec)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
+    (isOwner()
+      ? '<button type="button" class="btn-sm" data-act="dir-edit" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="Edit ' + esc(k) + '">Edit</button>' +
+        '<button type="button" class="btn-sm' + (conf ? ' btn-danger' : '') + '" data-act="dir-remove" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="' + label + ' ' + esc(k) + '">' + label + '</button>'
+      : '') +
+    '</div></div>';
+}
+
+function panelHtml(kind) {
+  const P = PANELS[kind], store = LC.storeFor(S.dir, kind), f = S.forms[kind];
+  const codes = kindCodes(kind).sort();
+  const act = codes.filter((k) => store[k].active), arch = codes.filter((k) => !store[k].active);
+  const open = !!S.showArch[kind];
+  let h = '<div class="panel"><div class="panel-head"><h3>' + esc(P.title) + '</h3><span class="mono">' + act.length + ' active</span></div>' +
+    '<p class="panel-desc">' + esc(P.desc) + '</p>';
+  if (isOwner()) h +=
+    '<div class="dform">' +
+    '<div class="fld code"><label for="dir-' + kind + '-code">Code</label><input id="dir-' + kind + '-code" data-form="' + kind + '" data-field="code" value="' + esc(f.code) +
+    '" placeholder="' + esc(P.codePh) + '" maxlength="' + (kind === 'mode' ? 2 : 4) + '" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>' +
+    '<div class="fld"><label for="dir-' + kind + '-name">' + esc(P.nameLabel) + '</label><input id="dir-' + kind + '-name" data-form="' + kind + '" data-field="name" value="' + esc(f.name) +
+    '" placeholder="' + esc(P.namePh) + '" autocomplete="off"></div>' +
+    (P.detailLabel ? '<div class="fld"><label for="dir-' + kind + '-detail">' + esc(P.detailLabel) + '</label><input id="dir-' + kind + '-detail" data-form="' + kind + '" data-field="detail" value="' + esc(f.detail) +
+      '" placeholder="' + esc(P.detailPh) + '" autocomplete="off"></div>' : '') +
+    '<button type="button" class="btn-accent" data-act="dir-add" data-kind="' + kind + '">Add</button></div>' +
+    '<div class="dmsg" id="dmsg-' + kind + '">' + dirMsgHtml(kind) + '</div>';
+  h += '<div>' + act.map((k) => (S.dirEdit && S.dirEdit.kind === kind && S.dirEdit.code === k ? editRowHtml(kind) : rowHtml(kind, k, store[k]))).join('') + '</div>';
+  if (!act.length) h += '<p class="empty">Nothing here yet.</p>';
+  if (arch.length) {
+    h += '<div style="border-top:1px solid #E6E7E2;display:flex;flex-direction:column">' +
+      '<button type="button" class="toggle-link" data-act="dir-arch" data-kind="' + kind + '" aria-expanded="' + open + '">' + chev(open) + 'Archived (' + arch.length + ')</button>';
+    if (open) {
+      h += arch.map((k) => {
+        const r = store[k], n = usage(kind, k);
+        return '<div class="drow arch"><div class="drow-view"><span class="code-tag arch">' + esc(k) + '</span>' +
+          '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, r))) + '</b><span>' + esc(PANELS[kind].detailOf(r)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
+          (isOwner() ? '<button type="button" class="btn-sm" data-act="dir-restore" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="Restore ' + esc(k) + '">Restore</button>' : '') + '</div></div>';
+      }).join('');
+    }
+    h += '</div>';
+  }
+  return h + '</div>';
+}
+
+function renderDir() {
+  const intro = isOwner()
+    ? 'These are the codes you type. Anything you add works in the code box straight away. A code already used in entries can be archived but not deleted: it stops working for new entries, old entries keep the name, and you can restore it any time from the Archived list. A code with no entries can be deleted.'
+    : canWrite()
+      ? 'These are the codes you can type in the code box. Only an owner can add or change them.'
+      : 'These are the codes used in the ledger’s entries. Only an owner can add or change them.';
+  $('view-dir').innerHTML =
+    '<div style="display:flex;flex-direction:column;gap:4px"><h2 id="dir-h" style="font-size:22px">Directory</h2>' +
+    '<p class="dir-intro">' + esc(intro) + '</p></div>' +
+    '<div class="panels">' + KINDS.map(panelHtml).join('') + (canWrite() && CONFIG.alerts ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>';
+}
+
+/* ---------- morning alerts (owners: everything; contributors: their own devices) ---------- */
+function alertsPanelHtml() {
+  const a = (S.data && S.data.alerts) || { devices: [] };
+  const owner = isOwner();
+  const setupUrl = CONFIG.alerts;
+  const devs = a.devices.map((d) => {
+    const conf = S.confirmDel === 'dev:' + d.id;
+    return '<div class="drow"><div class="drow-view"><div class="drow-text"><b>' + esc(d.name || 'Device') + '</b><span>' +
+      (owner ? esc(d.email) + ' · ' : '') + 'added ' + esc(d.added) + (owner && d.pending ? ' · not in the Devices tab yet' : '') + '</span></div>' +
+      '<button type="button" class="btn-sm' + (conf ? ' btn-danger' : '') + '" data-act="dev-remove" data-id="' + esc(d.id) + '">' + (conf ? 'Confirm remove?' : 'Remove') + '</button></div></div>';
+  }).join('');
+  return '<div class="panel alerts-panel"><div class="panel-head"><h3>Morning alerts</h3><span class="mono">' +
+    plural(a.devices.length, owner ? 'device' : 'device of yours', owner ? 'devices' : 'devices of yours') + '</span></div>' +
+    '<p class="panel-desc">Every day at 7:00 IST, a notification lists the tasks due today and overdue' +
+    (owner ? ' on owners’ and contributors’ devices.' : ' on your devices.') + ' No amounts. Days with nothing due are skipped.</p>' +
+    (owner
+      ? '<div class="alerts-status"><span>Firebase key: <b>' + (a.configured ? 'set (' + esc(a.project) + ')' : 'not set yet') + '</b></span>' +
+        (a.lastBrief ? '<span>Last morning brief: ' + esc(a.lastBrief) + '</span>' : '') + '</div>' +
+        '<div class="fld"><label for="alertsKey">' + (a.configured ? 'Replace' : 'Upload') + ' the Firebase service-account key (.json)</label>' +
+        '<input type="file" id="alertsKey" accept=".json,application/json"></div>'
+      : '') +
+    (S.alertsErr ? '<p class="err" role="alert">' + esc(S.alertsErr) + '</p>' : '') +
+    '<div>' + (devs || '<p class="empty">No devices yet. Use “Turn on alerts on this device” on each phone or laptop.</p>') + '</div>' +
+    '<div class="pf-actions"><button type="button" class="btn-accent" data-act="test-alert"' + (S.sendingTest ? ' disabled' : '') + '>' +
+    (S.sendingTest ? 'Sending…' : owner ? 'Send test alert' : 'Send test alert to my devices') + '</button>' +
+    '<a class="btn-outline linkbtn" href="' + esc(setupUrl) + '" target="_top">Turn on alerts on this device</a></div>' +
+    (owner ? '<p class="panel-desc">“Send test alert” goes to owners’ devices. Contributors can test their own from their app.</p>' : '') + '</div>';
+}
+
+function addCodeFromForm(kind) {
+  const f = S.forms[kind];
+  const code = f.code.trim().toUpperCase(), name = f.name.trim(), detail = f.detail.trim();
+  const issue = LC.codeIssue(kind, code, S.dir, null);
+  if (issue) { S.errs[kind] = issue; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
+  if (!name) { S.errs[kind] = kind === 'mode' ? 'Give the mode a label.' : 'Give it a name.'; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
+  call('addCode', [kind, code, name, detail], () => {
+    S.forms[kind] = blankForm();
+    S.errs[kind] = '';
+    snack(code + ' added. It works in the code box now.');
+  }, (msg) => { S.errs[kind] = msg; });
+}
+
+function startDirEdit(kind, code) {
+  const r = LC.storeFor(S.dir, kind)[code];
+  if (!r) return;
+  S.dirEdit = {
+    kind: kind, code: code, newCode: code, name: recName(kind, r) || '',
+    detail: kind === 'project' ? (r.client || '') : kind === 'mode' ? '' : (r.detail || ''), err: ''
+  };
+}
+
+function saveDirEdit() {
+  const ed = S.dirEdit;
+  if (!ed) return;
+  const nu = ed.newCode.trim().toUpperCase(), name = ed.name.trim(), detail = ed.detail.trim();
+  const issue = nu !== ed.code ? LC.codeIssue(ed.kind, nu, S.dir, ed.code) : '';
+  if (issue || !name) {
+    ed.err = issue || 'The name can’t be empty.';
+    $('editMsg').innerHTML = editMsgHtml();
+    return;
+  }
+  const old = ed.code, kind = ed.kind;
+  const hadFilter = kind === 'project' && S.project === old;
+  call('editCode', [kind, old, nu, name, detail], (res) => {
+    S.dirEdit = null;
+    if (nu !== old) {
+      if (hadFilter) S.project = nu;
+      if (kind === 'project' && S.pf.project === old) S.pf.project = nu;
+      if ((kind === 'labour' || kind === 'vendor') && S.pf.who === old) S.pf.who = nu;
+      snack(old + ' is now ' + nu + (res.moved ? ' in ' + plural(res.moved, 'entry', 'entries') + '.' : '.'));
+    } else {
+      snack(nu + ' saved.');
+    }
+  }, (msg) => { if (S.dirEdit) S.dirEdit.err = msg; });
+}
+
+function removeCode(kind, code, prevDel) {
+  if (usage(kind, code) > 0) {
+    if (S.dirEdit && S.dirEdit.code === code) S.dirEdit = null;
+    call('archiveCode', [kind, code], () => {
+      if (kind === 'project' && S.project === code) S.project = null;
+      snack(code + ' archived. Old entries keep the name; restore it from Archived any time.');
+    });
+  } else if (prevDel === kind + ':' + code) {
+    if (S.dirEdit && S.dirEdit.code === code) S.dirEdit = null;
+    call('deleteCode', [kind, code], () => snack(code + ' deleted.'));
+  } else {
+    S.confirmDel = kind + ':' + code;
+  }
+}
+
+/* ---------- print ---------- */
+// The print panel: numbered choices on the left, a live preview of the printed page on the right.
+// The preview and the printed sheet are built by the same sheetHtml(), so what you see is what prints.
+// All choices are remembered on this device.
+const PRINT_KEY = 'ofLedger.print';
+const PERIODS = [['week', 'This week'], ['month', 'This month'], ['last', 'Last month'], ['all', 'All time'], ['custom', 'Custom…']];
+const PRINTER_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6V2h8v4M4 12H2.5V6.5h11V12H12M4 9.5h8V14H4z"></path></svg>';
+
+function loadPrintChoices() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PRINT_KEY) || 'null') || {};
+    const older = JSON.parse(localStorage.getItem('ofLedger.printPage') || '{}'); // paper/orientation from the previous panel
+    const paper = saved.paper || older.paper, orient = saved.orient || older.orient;
+    if (PAPERS.indexOf(paper) >= 0) S.paper = paper;
+    if (ORIENTS.indexOf(orient) >= 0) S.orient = orient;
+    if (saved.pf) {
+      const pf = Object.assign(blankPf(), saved.pf);
+      pf.types = Object.assign(blankPf().types, saved.pf.types || {});
+      pf.modes = Object.assign({}, saved.pf.modes || {});
+      if (!PERIODS.some((p) => p[0] === pf.period)) pf.period = 'month';
+      S.pf = pf;
+    }
+  } catch (_) { /* storage blocked: keep defaults */ }
+}
+function savePrintChoices() {
+  try { localStorage.setItem(PRINT_KEY, JSON.stringify({ pf: S.pf, paper: S.paper, orient: S.orient })); } catch (_) { /* ignore */ }
+}
+
+function periodRange() {
+  const pf = S.pf, t = todayIso(), d = LC.fromIso(t);
+  if (pf.period === 'week') return { from: addDays(t, -6), to: t };
+  if (pf.period === 'month') return { from: LC.iso(new Date(d.getFullYear(), d.getMonth(), 1)), to: LC.iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)) };
+  if (pf.period === 'last') return { from: LC.iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)), to: LC.iso(new Date(d.getFullYear(), d.getMonth(), 0)) };
+  if (pf.period === 'custom') return { from: pf.from, to: pf.to };
+  return { from: '', to: '' };
+}
+function rangeLabel(from, to) {
+  if (!from && !to) return '';
+  if (from && !to) return 'From ' + niceY(from);
+  if (!from && to) return 'Up to ' + niceY(to);
+  if (from > to) return 'From is after To';
+  const a = LC.fromIso(from), b = LC.fromIso(to);
+  if (from === to) return niceY(from);
+  if (a.getFullYear() === b.getFullYear()) {
+    if (a.getMonth() === b.getMonth()) return a.getDate() + ' – ' + b.getDate() + ' ' + MON[b.getMonth()] + ' ' + b.getFullYear();
+    return a.getDate() + ' ' + MON[a.getMonth()] + ' – ' + niceY(to);
+  }
+  return niceY(from) + ' – ' + niceY(to);
+}
+function periodText() {
+  if (S.pf.period === 'all') return 'Every entry on record';
+  const r = periodRange();
+  return rangeLabel(r.from, r.to) || 'Pick From and To dates';
+}
+
+// Modes: every active mode, plus archived modes that entries still use.
+function printModes() {
+  const used = {};
+  S.entries.forEach((e) => { if (e.mode) used[e.mode] = true; });
+  return Object.keys(S.dir.modes).filter((k) => S.dir.modes[k].active || used[k]);
+}
+function modeOn(code) { return S.pf.modes[code] !== false; }
+function allModesOn() { return printModes().every(modeOn) && S.pf.noMode; }
+function titleCase(s) { return String(s).toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase()); }
+function modeLabelOf(code) { return String(LC.modeLabel(S.dir, code) || code).trim(); }
+// Cash: any mode whose label starts with "Cash" (plain Cash is "Me"). Bank: Direct and Transfer. Other: the rest.
+function modeGroup(code) {
+  const lab = modeLabelOf(code);
+  if (/^cash\b/i.test(lab)) return 'Cash';
+  if (/^(direct|transfer)$/i.test(lab)) return 'Bank';
+  return 'Other';
+}
+// The name after "Cash" is a person ("CASH SAVAN" → "Savan"); other labels keep their own case ("UPI").
+function cashRest(lab) { return titleCase(lab.replace(/^cash\b[\s:·\-]*/i, '').trim()); }
+function modeChipLabel(code) {
+  const lab = modeLabelOf(code);
+  if (/^cash\b/i.test(lab)) return cashRest(lab) || 'Me';
+  return LC.cap(lab);
+}
+function modeFull(code) {
+  if (!code) return 'No mode';
+  const lab = modeLabelOf(code);
+  if (/^cash\b/i.test(lab)) return cashRest(lab) ? 'Cash ' + cashRest(lab) : 'Cash';
+  return LC.cap(lab);
+}
+
+function printList() {
+  const pf = S.pf, r = periodRange();
+  return live().filter((e) => pf.types[e.type] &&
+    (isTask(e) || (e.mode ? modeOn(e.mode) : pf.noMode)) &&
+    (!pf.project || e.project === pf.project) && (!pf.who || e.who === pf.who) &&
+    (!r.from || sitsOn(e) >= r.from) && (!r.to || sitsOn(e) <= r.to))
+    .sort((a, b) => (sitsOn(a) < sitsOn(b) ? -1 : sitsOn(a) > sitsOn(b) ? 1 : a.created_at < b.created_at ? -1 : 1));
+}
+function sums(list) {
+  let paid = 0, received = 0;
+  list.forEach((e) => { if (e.type === 'P') paid += e.amount; else if (e.type === 'R') received += e.amount; });
+  return { paid: paid, received: received, net: received - paid };
+}
+// Paid / received per mode (P and R only), in the order of the mode chips, "No mode" last.
+function modeTotals(list) {
+  const m = {}, order = printModes();
+  list.forEach((e) => {
+    if (e.type !== 'P' && e.type !== 'R') return;
+    const k = e.mode || '';
+    m[k] = m[k] || { paid: 0, received: 0 };
+    if (e.type === 'P') m[k].paid += e.amount; else m[k].received += e.amount;
+  });
+  return Object.keys(m).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : order.indexOf(a) - order.indexOf(b)))
+    .map((k) => ({ code: k, name: modeFull(k), paid: m[k].paid, received: m[k].received }));
+}
+function whoLabel(code) {
+  if (!code) return 'Everyone';
+  if (code === LC.CLIENT) return S.pf.project ? LC.clientName(S.dir, S.pf.project) : 'Clients';
+  const p = S.dir.people[code];
+  return p ? p.name : code;
+}
+// Rough page count for the preview header (rows that fit per printed page).
+function pageEstimate(n) {
+  const per = { A4portrait: 30, A4landscape: 18, A3portrait: 46, A3landscape: 30 }[S.paper + S.orient] || 30;
+  return n <= per ? 1 : 1 + Math.ceil((n - per) / (per + 6));
+}
+
+function sheetHtml(list) {
+  const pf = S.pf, s = sums(list), wide = S.orient === 'landscape' || S.paper === 'A3';
+  const types = TYPE_ORDER.filter((t) => pf.types[t]).map((t) => PRINT_TYPE_LABELS[t]);
+  const sub = [types.length ? types.join(', ') : 'Nothing selected', periodText(), whoLabel(pf.who)].join(' · ');
+  const tiles = [];
+  if (pf.types.P) tiles.push(['Paid', LC.inr(s.paid)]);
+  if (pf.types.R) tiles.push(['Received', LC.inr(s.received)]);
+  if (pf.types.P && pf.types.R) tiles.push(['Net', LC.inr(s.net)]);
+  if (pf.types.F || pf.types.MT) tiles.push(['Tasks', String(list.filter(isTask).length)]);
+  const byMode = modeTotals(list).map((m) => {
+    const bits = [];
+    if (pf.types.P && pf.types.R) {
+      if (m.paid) bits.push(LC.inr(m.paid) + ' paid');
+      if (m.received) bits.push(LC.inr(m.received) + ' received');
+    } else bits.push(LC.inr(m.paid + m.received));
+    return '<span>' + esc(m.name) + ' <span class="v">' + esc(bits.join(' · ')) + '</span></span>';
+  });
+  const years = {};
+  list.forEach((e) => { years[sitsOn(e).slice(0, 4)] = true; });
+  const showYear = Object.keys(years).length > 1;
+  const rows = list.map((e) => '<tr><td class="d">' + esc(showYear ? niceY(sitsOn(e)) : LC.nice(sitsOn(e))) + '</td>' +
+    '<td><span class="sh-badge t-' + e.type + '">' + e.type + '</span>' + esc(LC.describe(S.dir, e)) + (pf.project ? '' : ' · ' + esc(projName(e.project))) + '</td>' +
+    (wide ? '<td class="m">' + (isTask(e) ? '' : esc(modeFull(e.mode))) + '</td>' : '') +
+    '<td class="num">' + (isTask(e) ? '—' : esc(LC.inr(e.amount))) + '</td></tr>').join('');
+  return '<div class="sh-head">' + (LOGO_URL ? '<img class="sh-logo" src="' + esc(LOGO_URL) + '" alt="OF Turnkey">' : '') +
+    '<div class="sh-titles"><span class="sh-title">' + esc(pf.project ? projName(pf.project) : 'All projects') +
+    (pf.project && S.dir.projects[pf.project].client ? '<span class="sh-client"> · Client: ' + esc(S.dir.projects[pf.project].client) + '</span>' : '') +
+    '</span><span class="sh-sub">' + esc(sub) + '</span></div>' +
+    '<span class="sh-date">Printed ' + esc(niceY(todayIso())) + '</span></div>' +
+    (tiles.length ? '<div class="sh-tiles">' + tiles.map((t) => '<div class="sh-tile"><span>' + t[0] + '</span><b>' + esc(t[1]) + '</b></div>').join('') + '</div>' : '') +
+    (byMode.length ? '<div class="sh-modes"><b>By mode</b>' + byMode.join('') + '</div>' : '') +
+    (list.length
+      ? '<table class="sh-table"><thead><tr><th scope="col">Date</th><th scope="col">Details</th>' + (wide ? '<th scope="col">Mode</th>' : '') +
+        '<th scope="col" class="num">Amount</th></tr></thead><tbody>' + rows + '</tbody></table>'
+      : '<p class="sh-empty">Nothing matches these choices.</p>');
+}
+
+function choiceChip(cls, on, act, v, label, extra) {
+  return '<button type="button" class="' + cls + (on ? ' on' : '') + '" id="' + act + '-' + esc(v || 'none') + '" data-act="' + act + '" data-v="' + esc(v) + '" aria-pressed="' + on + '"' + (extra || '') + '>' + label + '</button>';
+}
+
+function renderPrint() {
+  const panel = $('printPanel');
+  $('printToggle').textContent = S.print ? 'Close print' : 'Print sheets';
+  panel.hidden = !S.print;
+  applyPageSize();
+  if (!S.print) { $('printSheet').innerHTML = ''; return; }
+  const pf = S.pf;
+  if (pf.project && !S.dir.projects[pf.project]) pf.project = '';
+  if (pf.who && !S.dir.people[pf.who]) pf.who = '';
+  const list = printList(), n = list.length, pages = pageEstimate(n);
+  const money = pf.types.P || pf.types.R;
+  const opt = (v, l, cur) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(l) + '</option>';
+  const projOpts = opt('', 'All projects', pf.project) + Object.keys(S.dir.projects).map((k) => opt(k, k + ' · ' + S.dir.projects[k].name + (S.dir.projects[k].active ? '' : ' (archived)'), pf.project)).join('');
+  const whoOpts = opt('', 'Everyone', pf.who) + Object.keys(S.dir.people).filter((k) => k !== LC.CLIENT).map((k) => {
+    const p = S.dir.people[k];
+    return opt(k, p.name + (p.detail ? ' · ' + p.detail : '') + (p.active ? '' : ' (archived)'), pf.who);
+  }).join('') + opt(LC.CLIENT, 'Client (CL)', pf.who);
+
+  const periods = PERIODS.map((p) => choiceChip('pp-chip', pf.period === p[0], 'pp-period', p[0], esc(p[1]))).join('');
+  const custom = pf.period === 'custom'
+    ? '<div class="pp-row"><div class="pp-fld"><label for="pf-from">From</label><input id="pf-from" type="date" data-pf="from" value="' + esc(pf.from) + '"></div>' +
+      '<div class="pp-fld"><label for="pf-to">To</label><input id="pf-to" type="date" data-pf="to" value="' + esc(pf.to) + '"></div></div>'
+    : '';
+  const types = TYPE_ORDER.map((t) => choiceChip('pp-chip pp-type', !!pf.types[t], 'pp-type', t,
+    '<span class="tb t-' + t + '">' + t + '</span>' + esc(PRINT_TYPE_LABELS[t]))).join('');
+  const dis = money ? '' : ' disabled';
+  const groups = ['Cash', 'Bank', 'Other'].map((g) => {
+    const items = printModes().filter((k) => modeGroup(k) === g)
+      .map((k) => choiceChip('pp-mode', modeOn(k), 'pp-mode', k, esc(modeChipLabel(k)) + (S.dir.modes[k].active ? '' : ' (archived)'), dis + ' title="' + esc(modeFull(k)) + '"'));
+    if (g === 'Other') items.push(choiceChip('pp-mode', pf.noMode, 'pp-mode', '', 'No mode', dis));
+    return items.length ? '<div class="pp-mode-row"><span>' + g + '</span>' + items.join('') + '</div>' : '';
+  }).join('');
+  const papers = PAPERS.map((p) => choiceChip('', S.paper === p, 'pp-paper', p, p)).join('');
+  const orients = ORIENTS.map((o) => choiceChip('pp-orient', S.orient === o, 'pp-orient', o, '<i class="' + o + '" aria-hidden="true"></i>' + (o === 'portrait' ? 'Portrait' : 'Landscape'))).join('');
+
+  panel.innerHTML =
+    '<div class="pp-head"><div class="pp-titles"><h2 id="print-h">Print a sheet</h2><span>Choose what goes on the page. The preview updates as you go.</span></div>' +
+    '<div class="spacer"></div>' +
+    '<button type="button" class="pp-close" data-act="print-toggle">Close</button>' +
+    '<button type="button" class="pp-print" id="pp-print" data-act="print-go"' + (n ? '' : ' disabled') + '>' + PRINTER_ICON + 'Print ' + plural(n, 'entry', 'entries') + '</button></div>' +
+    '<div class="pp-body"><div class="pp-left">' +
+    '<div class="pp-sec"><span class="pp-step">1 · Whose entries</span><div class="pp-row">' +
+    '<div class="pp-fld"><label for="pf-project">Project</label><select id="pf-project" data-pf="project">' + projOpts + '</select></div>' +
+    '<div class="pp-fld"><label for="pf-who">Person or vendor</label><select id="pf-who" data-pf="who">' + whoOpts + '</select></div></div></div>' +
+    '<div class="pp-sec"><span class="pp-step">2 · Period</span><div class="pp-chips" role="group" aria-label="Period">' + periods + '</div>' +
+    '<span class="pp-note">' + esc(periodText()) + '</span>' + custom + '</div>' +
+    '<div class="pp-sec"><span class="pp-step">3 · Show</span><div class="pp-chips" role="group" aria-label="Entry types">' + types + '</div></div>' +
+    '<div class="pp-sec pp-modes' + (money ? '' : ' off') + '"><div class="pp-step-row"><span class="pp-step">4 · Payment mode</span>' +
+    '<button type="button" class="pp-link" id="pp-modes-all" data-act="pp-modes-all"' + dis + '>' + (allModesOn() ? 'Clear all' : 'Select all') + '</button></div>' +
+    (money ? '' : '<span class="pp-note">Only applies to Paid and Received.</span>') +
+    '<div class="pp-mode-box" role="group" aria-label="Payment modes">' + groups + '</div></div>' +
+    '<div class="pp-sec"><span class="pp-step">5 · Page</span><div class="pp-row pp-center">' +
+    '<div class="pp-seg" role="group" aria-label="Paper size">' + papers + '</div>' +
+    '<div class="pp-orients" role="group" aria-label="Orientation">' + orients + '</div></div>' +
+    '<span class="pp-note">Pick the same size and orientation in the print dialog.</span></div>' +
+    '</div>' +
+    '<div class="pp-right"><div class="pp-meta"><span>Preview · ' + S.paper + ' ' + S.orient + '</span><span>' + plural(n, 'entry', 'entries') + ' · ' +
+    (pages === 1 ? '1 page' : 'about ' + pages + ' pages') + '</span></div>' +
+    '<div class="pv-page paper-' + S.paper + ' ' + S.orient + '" role="img" aria-label="Preview of the first printed page">' +
+    '<div class="sheet">' + sheetHtml(list) + '</div>' +
+    '<div class="pv-foot"><span>OF Turnkey · Site ledger</span><span>Page 1 of ' + pages + '</span></div></div></div></div>';
+
+  $('printSheet').className = 'print-sheet sheet paper-' + S.paper + ' ' + S.orient;
+  $('printSheet').innerHTML = sheetHtml(list);
+}
+
+/* ---------- layout & render ---------- */
+const phone = window.matchMedia('(max-width: 699px)');
+function placeCodebar() {
+  const bar = $('codebar');
+  bar.hidden = !canWrite(); // viewers have nothing to type
+  $('viewOnly').hidden = canWrite();
+  const want = phone.matches && S.tab === 'ledger' ? $('codebarPhoneSlot') : $('codebarHome');
+  if (bar.parentNode !== want) want.appendChild(bar);
+}
+
+function renderAll() {
+  const a = document.activeElement, id = a && a.id;
+  let s0 = null, s1 = null;
+  try { if (id && typeof a.selectionStart === 'number') { s0 = a.selectionStart; s1 = a.selectionEnd; } } catch (_) { /* not a text field */ }
+  renderStatus();
+  renderTabs();
+  renderCodebar();
+  renderPrint();
+  renderSnack();
+  $('view-ledger').hidden = S.tab !== 'ledger';
+  $('view-tasks').hidden = S.tab !== 'tasks';
+  $('view-dir').hidden = S.tab !== 'dir';
+  if (S.tab === 'ledger') { renderCalendar(); renderDay(); renderReminders(); renderProjects(); }
+  else if (S.tab === 'tasks') renderTasks();
+  else renderDir();
+  placeCodebar();
+  if (id) {
+    const el = $(id);
+    if (el && document.activeElement !== el) {
+      el.focus({ preventScroll: true });
+      try { if (s0 !== null) el.setSelectionRange(s0, s1); } catch (_) { /* ignore */ }
+    }
+  }
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
+  // Buttons on the opening / sign-in screens work before any ledger data has loaded.
+  if (act === 'reload') { location.reload(); return; }
+  if (act === 'choose-account') { showSignIn(null, { chooseAccount: true }); return; }
+  if (act === 'sign-out-here') { signOutHere(); return; }
+  if (!S.started) return;
+  const prevVoid = S.confirmVoid, prevDel = S.confirmDel;
+  S.confirmVoid = null;
+  S.confirmDel = null;
+  switch (act) {
+    case 'pick': {
+      S.sel = el.dataset.date;
+      const d = LC.fromIso(S.sel);
+      S.y = d.getFullYear(); S.m = d.getMonth(); S.armed = ''; S.saveErr = '';
+      break;
+    }
+    case 'prev': if (S.m === 0) { S.m = 11; S.y--; } else S.m--; break;
+    case 'next': if (S.m === 11) { S.m = 0; S.y++; } else S.m++; break;
+    case 'today': { const t = new Date(); S.y = t.getFullYear(); S.m = t.getMonth(); S.sel = LC.iso(t); break; }
+    case 'filter-project': S.project = S.project === code ? null : code; break;
+    case 'set-project': S.project = code; break;
+    case 'clear-filter': S.project = null; break;
+    case 'tab':
+      S.tab = el.dataset.tab;
+      window.scrollTo(0, 0);
+      if (S.tab === 'dir') loadDevices();
+      break;
+    case 'sess-out':
+      if (prevDel === 'sess:' + id) signOutDevice(id); else S.confirmDel = 'sess:' + id;
+      break;
+    case 'kind': S.kind = kind || ''; break;
+    case 'guide': S.guide = !S.guide; break;
+    case 'refresh': refresh(false); break;
+    case 'print-toggle':
+      S.print = !S.print;
+      renderAll();
+      if (S.print) $('printPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    case 'pp-period': S.pf.period = el.dataset.v; savePrintChoices(); break;
+    case 'pp-type': S.pf.types[el.dataset.v] = !S.pf.types[el.dataset.v]; savePrintChoices(); break;
+    case 'pp-mode':
+      if (el.dataset.v === '') S.pf.noMode = !S.pf.noMode; else S.pf.modes[el.dataset.v] = !modeOn(el.dataset.v);
+      savePrintChoices();
+      break;
+    case 'pp-modes-all': {
+      const on = !allModesOn();
+      printModes().forEach((k) => { S.pf.modes[k] = on; });
+      S.pf.noMode = on;
+      savePrintChoices();
+      break;
+    }
+    case 'pp-paper': S.paper = el.dataset.v; savePrintChoices(); break;
+    case 'pp-orient': S.orient = el.dataset.v; savePrintChoices(); break;
+    case 'test-alert':
+      S.sendingTest = true;
+      call('sendTestAlert', [], (res) => {
+        S.sendingTest = false;
+        const r = res.result || {};
+        snack('Test alert sent to ' + plural(r.sent || 0, 'device', 'devices') + (r.failed ? ', ' + r.failed + ' failed' : '') + (r.removed ? ' (' + r.removed + ' old device removed)' : '') + '.', { error: !r.sent });
+      }, (msg) => { S.sendingTest = false; snack(msg, { error: true }); });
+      break;
+    case 'dev-remove':
+      if (prevDel === 'dev:' + id) call('removeDevice', [id], () => snack('Device removed. It won’t get morning alerts.'));
+      else S.confirmDel = 'dev:' + id;
+      break;
+    case 'print-go': renderPrint(); window.print(); return;
+    case 'save': saveCode(); return;
+    case 'cancel-edit': cancelEdit(); return;
+    case 'edit': startEdit(id); return;
+    case 'done': toggleDone(id); break;
+    case 'void': if (prevVoid === id) doVoid(id); else S.confirmVoid = id; break;
+    case 'unvoid': call('setEntryStatus', [id, 'unvoid'], () => snack('Entry is back.')); break;
+    case 'show-voided': S.showVoided = !S.showVoided; break;
+    case 'undo':
+      S.snackMsg = null;
+      call('setEntryStatus', [id, 'undo'], () => snack('Undone. The entry is voided; “Show voided” on its day can bring it back.'));
+      break;
+    case 'snack-close': S.snackMsg = null; break;
+    case 'dir-add': addCodeFromForm(kind); return;
+    case 'dir-suggest': S.forms[kind].code = code; S.errs[kind] = ''; break;
+    case 'dir-edit': startDirEdit(kind, code); break;
+    case 'dir-save': saveDirEdit(); return;
+    case 'dir-cancel': S.dirEdit = null; break;
+    case 'dir-remove': removeCode(kind, code, prevDel); break;
+    case 'dir-restore': call('restoreCode', [kind, code], () => snack(code + ' restored. It works in new codes again.')); break;
+    case 'dir-arch': S.showArch[kind] = !S.showArch[kind]; break;
+    default: return;
+  }
+  renderAll();
+});
+
+document.addEventListener('input', (ev) => {
+  const t = ev.target;
+  if (t.id === 'code') {
+    S.code = t.value; S.armed = ''; S.saveErr = '';
+    renderCodebar();
+  } else if (t.id === 'editDate') {
+    if (t.value) { S.editDate = t.value; S.armed = ''; renderCodebar(); }
+  } else if (t.dataset.form) {
+    const k = t.dataset.form;
+    S.forms[k][t.dataset.field] = t.value;
+    S.errs[k] = '';
+    $('dmsg-' + k).innerHTML = dirMsgHtml(k);
+  } else if (t.dataset.edit && S.dirEdit) {
+    S.dirEdit[t.dataset.edit] = t.value;
+    S.dirEdit.err = '';
+    $('editMsg').innerHTML = editMsgHtml();
+  }
+});
+
+document.addEventListener('change', (ev) => {
+  const t = ev.target;
+  if (t.id === 'editDate') { S.editDate = t.value || ''; S.armed = ''; S.saveErr = ''; renderCodebar(); return; }
+  if (t.id === 'alertsKey' && t.files && t.files[0]) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      S.alertsErr = '';
+      call('setAlertsKey', [String(reader.result || '')], () => snack('Firebase key saved. Morning alerts can be sent now.'), (msg) => { S.alertsErr = msg; });
+    };
+    reader.readAsText(t.files[0]);
+    return;
+  }
+  if (!t.dataset.pf) return;
+  S.pf[t.dataset.pf] = t.value;
+  savePrintChoices();
+  renderPrint();
+});
+
+document.addEventListener('keydown', (ev) => {
+  const t = ev.target;
+  if (t.id === 'code') {
+    if (ev.key === 'Enter') { ev.preventDefault(); onEnter(); }
+    else if (ev.key === 'Escape' && S.editId) cancelEdit();
+  } else if (t.dataset.form && ev.key === 'Enter') {
+    ev.preventDefault();
+    addCodeFromForm(t.dataset.form);
+  } else if (t.dataset.edit) {
+    if (ev.key === 'Enter') { ev.preventDefault(); saveDirEdit(); }
+    else if (ev.key === 'Escape') { S.dirEdit = null; renderAll(); }
+  }
+});
+
+// Coming back to the app (e.g. phone unlocked) picks up entries made on another device.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.started && sessionToken() && !S.pending && Date.now() - S.lastLoad > 60000) refresh(true);
+});
+if (phone.addEventListener) phone.addEventListener('change', () => { if (S.started) placeCodebar(); });
+else phone.addListener(() => { if (S.started) placeCodebar(); });
+
+/* ---------- start ---------- */
+// Signed in before on this device: show the ledger from this device's copy at once and bring it up to date.
+// Not signed in: Google sign-in.
+renderEnvStrip();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* works without it */ });
+if (!sessionToken()) {
+  showSignIn();
+} else {
+  try { S.me = JSON.parse(stored(ME_KEY) || 'null'); } catch (_) { S.me = null; }
+  const cache = loadCache();
+  if (cache && S.me && cache.email === S.me.email) {
+    S.sheetUrl = cache.sheetUrl || '';
+    setData(cache.data);
+    firstRender();
+    boot(true);
+  } else {
+    boot(false);
+  }
+}
+})();
