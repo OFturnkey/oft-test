@@ -76,7 +76,13 @@ function addDays(s, n) { const d = LC.fromIso(s); d.setDate(d.getDate() + n); re
 function niceY(s) { const d = LC.fromIso(s); return d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear(); }
 function isTask(e) { return e.type === 'F' || e.type === 'MT'; }
 function sitsOn(e) { return isTask(e) ? e.due : e.date; }
-function live() { return S.entries.filter((e) => e.status !== 'void'); }
+// Active entries. A follow-up task (after_task) stays out of sight until the task before it is ticked.
+function live() { return S.entries.filter((e) => e.status !== 'void' && !(e.after_task && !S.doneIds[e.after_task])); }
+// Team code of the signed-in person (the @ in tasks).
+function myCode() { const u = ((S.data && S.data.users) || []).find((x) => x.email === (S.data && S.data.user)); return u ? u.code || '' : ''; }
+// Whose task: the person it was given to (@), else whoever added it.
+function isMine(e) { return e.assignee ? !!myCode() && e.assignee === myCode() : e.added_by === (S.data && S.data.user); }
+function forTag(e) { return e.assignee ? ' · <span class="for-tag">for ' + esc(LC.teamName(S.dir, e.assignee)) + '</span>' : ''; }
 function inFilter(e) { return !S.project || e.project === S.project; }
 function norm(s) { return String(s || '').trim().split(/\s+/).filter(Boolean).join(' '); }
 function byDue(a, b) { return a.due < b.due ? -1 : a.due > b.due ? 1 : 0; }
@@ -130,6 +136,8 @@ function setData(d) {
   S.data = d;
   S.dir = LC.buildDir(d);
   S.entries = d.entries || [];
+  S.doneIds = {};
+  S.entries.forEach((e) => { if (e.done) S.doneIds[e.id] = true; });
   S.loadedAt = d.loadedAt || '';
   S.lastLoad = Date.now();
   if (S.project && !S.dir.projects[S.project]) S.project = null;
@@ -254,11 +262,101 @@ function showNoAccess(email) {
     button: '<button type="button" class="btn-big" data-act="choose-account">Use another account</button>'
   });
 }
-function showEngineer(me) {
-  showGate('Signed in', 'You’re signed in as ' + me.email + ' · site engineer.', {
-    extra: '<span>Site engineer screens are on their way. No ledger or payment information is sent to this device.</span>' +
-      '<button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button>'
+/* ---------- site engineer screens (phone first; no ledger data ever reaches them) ---------- */
+function engClick(act, el) {
+  if (act === 'eng-tab') { S.engTab = el.dataset.tab; window.scrollTo(0, 0); renderEng(); }
+  else if (act === 'eng-done') engCall('setDone', [el.dataset.id, el.checked], (res) => engSnack(el.checked ? 'Ticked off.' : 'Back on your list.'));
+  else if (act === 'eng-add') engAddTask();
+}
+function showEngineer(me, site) {
+  S.me = me;
+  S.site = site;
+  S.engineer = true;
+  $('gate').hidden = true;
+  $('appScreen').hidden = true;
+  $('engScreen').hidden = false;
+  if (!S.engTab) S.engTab = 'today';
+  renderEng();
+  renderEnvStrip();
+}
+function engMe() { return ((S.site && S.site.users) || []).find((u) => u.email === S.me.email) || { projects: [], code: '' }; }
+function engProjects() {
+  // His own projects first, then the rest (engineers can see every project, to help each other).
+  const mine = engMe().projects || [];
+  return ((S.site && S.site.projects) || []).filter((p) => p.stage !== 'archive')
+    .sort((a, b) => (mine.indexOf(b.code) >= 0) - (mine.indexOf(a.code) >= 0) || (a.code < b.code ? -1 : 1));
+}
+function engCall(fn, args, onOk, onFail) {
+  api(fn, args).then((res) => {
+    if (res && res.site) S.site = res.site;
+    if (onOk) onOk(res);
+    renderEng();
+  }, (err) => {
+    if (err.signin) { signedOut(err.message); return; }
+    const msg = cleanErr(err.message);
+    if (onFail) onFail(msg); else engSnack(msg, true);
+    renderEng();
   });
+}
+let engSnackTimer = null;
+function engSnack(text, error) {
+  const el = $('engSnack');
+  el.hidden = false;
+  el.className = 'snack' + (error ? ' error' : '');
+  el.innerHTML = '<span class="snack-text">' + esc(text) + '</span>';
+  clearTimeout(engSnackTimer);
+  engSnackTimer = setTimeout(() => { el.hidden = true; }, error ? 8000 : 4000);
+}
+const ENG_TABS = [['today', 'Today'], ['queries', 'Queries'], ['photos', 'Photos'], ['schedule', 'Schedule']];
+function renderEng() {
+  const projs = engProjects();
+  if (!S.engProject || !projs.some((p) => p.code === S.engProject)) S.engProject = projs.length ? projs[0].code : '';
+  $('engProject').innerHTML = projs.map((p) => '<option value="' + esc(p.code) + '"' + (p.code === S.engProject ? ' selected' : '') + '>' + esc(p.code) + '</option>').join('');
+  $('engNav').innerHTML = ENG_TABS.map((t) => '<button type="button" class="eng-tab' + (S.engTab === t[0] ? ' on' : '') + '" data-act="eng-tab" data-tab="' + t[0] +
+    '" aria-pressed="' + (S.engTab === t[0]) + '">' + esc(t[1]) + '</button>').join('');
+  const main = $('engMain');
+  if (S.engTab === 'today') main.innerHTML = engTodayHtml();
+  else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
+    '<p class="empty">This comes in the next test version.</p></section>';
+}
+function engTodayHtml() {
+  const now = new Date(), t = todayIso();
+  const greet = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
+  const name = (engMe().name || S.me.email).split(/\s+/)[0];
+  const tasks = ((S.site && S.site.tasks) || []).slice().sort(byDue);
+  const open = tasks.filter((x) => !x.done), done = tasks.filter((x) => x.done).slice(-5).reverse();
+  const projName = (c) => { const p = ((S.site && S.site.projects) || []).find((x) => x.code === c); return p ? p.name || c : c; };
+  const who = (email) => { const u = ((S.site && S.site.users) || []).find((x) => x.email === email); return u ? u.name : email; };
+  const row = (x) => '<label class="eng-task' + (x.done ? ' done' : '') + (x.due < t && !x.done ? ' late' : '') + '">' +
+    '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + '>' +
+    '<span class="eng-task-text"><span>' + esc(LC.cap(x.note)) + '</span><span class="eng-meta">' + esc(projName(x.project)) +
+    ' · ' + (x.due < t && !x.done ? 'overdue, was due ' : 'due ') + esc(niceDay(x.due)) +
+    (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + '</span></span></label>';
+  const a = S.engAdd || (S.engAdd = { note: '', due: '', err: '' });
+  return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
+    '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">Ask a question</button>' +
+    '<section class="card eng-card"><h2 class="eng-h2">My tasks <span class="muted">· ' + open.length + '</span></h2>' +
+    (open.length ? open.map(row).join('') : '<p class="empty">Nothing on your list.</p>') +
+    (done.length ? '<div class="eng-done-h">Done recently</div>' + done.map(row).join('') : '') + '</section>' +
+    '<section class="card eng-card"><h2 class="eng-h2">Add a task for yourself</h2>' +
+    '<div class="eng-form"><label>What to do<input id="engAddNote" data-ea="note" value="' + esc(a.note) + '" autocomplete="off" placeholder="Check cove light level at reception"></label>' +
+    '<label>Due (optional)<input id="engAddDue" data-ea="due" type="date" value="' + esc(a.due) + '"></label>' +
+    '<button type="button" class="btn-save" data-act="eng-add">Add to my tasks · ' + esc(S.engProject) + '</button>' +
+    (a.err ? '<p class="err" role="alert">' + esc(a.err) + '</p>' : '') + '</div></section>' +
+    '<p class="foot eng-foot">Signed in as ' + esc(S.me.email) + '. <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>';
+}
+function engAddTask() {
+  const a = S.engAdd, note = String(a.note || '').trim();
+  if (!note) { a.err = 'Type what to do.'; renderEng(); return; }
+  if (!S.engProject) { a.err = 'Pick a project at the top.'; renderEng(); return; }
+  const due = a.due ? LC.fromIso(a.due) : null;
+  const code = 'MT ' + S.engProject + (due ? ' ' + due.getDate() + '/' + (due.getMonth() + 1) : '') + ' ' + note;
+  // dd/mm takes the year of the day it is noted on, so a due date in another year is noted on that date.
+  const sel = a.due && a.due.slice(0, 4) !== todayIso().slice(0, 4) ? a.due : todayIso();
+  engCall('addEntry', [code, sel], () => {
+    S.engAdd = { note: '', due: '', err: '' };
+    engSnack('Added to your tasks.');
+  }, (msg) => { S.engAdd.err = msg; });
 }
 function isStandalone() { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
 // How this device is listed under "Signed-in devices".
@@ -295,7 +393,7 @@ function boot(fromCache) {
     S.me = res.me;
     store(ME_KEY, JSON.stringify(res.me));
     if (res.noAccess) { forgetDevice(); showNoAccess(res.me.email); return; }
-    if (res.engineer) { store(CACHE_KEY, null); showEngineer(res.me); renderEnvStrip(); return; }
+    if (res.engineer) { store(CACHE_KEY, null); showEngineer(res.me, res.site); return; }
     S.sheetUrl = res.sheetUrl || '';
     setData(res.data);
     saveCache();
@@ -534,6 +632,7 @@ function renderGuide() {
     '<span><b>P / R</b>   TYPE PROJECT WHO AMOUNT MODE note       e.g. P SA BAB 25k C</span>' +
     '<span><b>F</b>       TYPE PROJECT WHO dd/mm note             e.g. F SA ZAM 18/10 gate drawings</span>' +
     '<span><b>MT</b>      TYPE PROJECT dd/mm what-to-do           e.g. MT SA 15/10 send revised BOQ</span>' +
+    '<span><b>MT @</b>    TYPE PROJECT @CODE dd/mm what-to-do     e.g. MT NST @VNK 26/11 seal pantry joint (a task for Venky)</span>' +
     '<p>No date on F or MT means the task is due on the day you picked. CL always means the client of that project. Add or change codes in the Directory tab.</p>' +
     '</div><div class="guide-groups">' +
     groups.map((g) => '<div class="guide-group"><h4>' + esc(g[0]) + '</h4>' +
@@ -675,7 +774,7 @@ function moneyItem(e) {
 function taskItem(e) {
   return '<div class="item">' + tickBtn(e) + mainOpen(e) + '<span' + (e.done ? ' style="text-decoration:line-through"' : '') + '>' +
     badge(e.type, true) + ' ' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="item-meta">' + esc(projName(e.project)) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() + itemActions(e) + '</div>';
+    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() + itemActions(e) + '</div>';
 }
 function voidedItem(e) {
   return '<div class="item voided">' + badge(e.type) +
@@ -701,7 +800,7 @@ function renderDay() {
 
 function remItem(e) {
   return '<div class="rem-item">' + badge(e.type, true) + mainOpen(e) + '<span style="font-size:13px">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="item-meta">' + esc(projName(e.project)) + ' · due ' + esc(LC.nice(e.due)) + byTag(e) + '</span>' + mainClose() +
+    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · due ' + esc(LC.nice(e.due)) + byTag(e) + '</span>' + mainClose() +
     (canWrite() ? '<span class="item-actions">' + editBtn(e) + '<button type="button" class="btn-sm" data-act="done" data-id="' + esc(e.id) + '">Done</button></span>' : '') + '</div>';
 }
 
@@ -759,13 +858,13 @@ function renderProjects() {
 /* ---------- tasks tab ---------- */
 function taskCard(e) {
   return '<div class="tcard' + (e.done ? ' done' : '') + '">' + tickBtn(e) + mainOpen(e) + '<span class="tcard-title">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="tcard-meta">' + badge(e.type, true) + '<span>' + esc(projName(e.project)) + '</span><span>· due ' + esc(LC.nice(e.due)) + '</span>' +
+    '<span class="tcard-meta">' + badge(e.type, true) + '<span>' + esc(projName(e.project)) + forTag(e) + '</span><span>· due ' + esc(LC.nice(e.due)) + '</span>' +
     (e.added_by ? '<span class="by" title="Added by ' + esc(userName(e.added_by)) + '">' + esc(initials(e.added_by)) + '</span>' : '') + '</span>' +
     '<span class="raw">' + esc(e.raw_code) + '</span>' + mainClose() + (isOwner() ? '<span class="item-actions">' + editBtn(e) + '</span>' : '') + '</div>';
 }
 function renderTasks() {
   const t = todayIso(), in7 = addDays(t, 7);
-  const all = live().filter((e) => isTask(e) && inFilter(e) && (!S.kind || e.type === S.kind));
+  const all = live().filter((e) => isTask(e) && inFilter(e) && (!S.kind || e.type === S.kind) && (!S.mine || isMine(e)));
   const open = all.filter((e) => !e.done).sort(byDue);
   const done = all.filter((e) => e.done).sort(byDue).reverse();
   const cols = [
@@ -777,12 +876,13 @@ function renderTasks() {
   ];
   const chip = (label, on, attrs) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" ' + attrs + ' aria-pressed="' + on + '">' + esc(label) + '</button>';
   const kinds = chip('All', !S.kind, 'data-act="kind" data-kind=""') + chip('F · Follow-ups', S.kind === 'F', 'data-act="kind" data-kind="F"') + chip('MT · My tasks', S.kind === 'MT', 'data-act="kind" data-kind="MT"');
+  const whose = chip('Everyone', !S.mine, 'data-act="mine" data-v=""') + chip('Just mine', !!S.mine, 'data-act="mine" data-v="1"');
   const projs = chip('All projects', !S.project, 'data-act="clear-filter"') +
     LC.activeCodes(S.dir.projects).map((k) => chip(S.dir.projects[k].name, S.project === k, 'data-act="set-project" data-code="' + esc(k) + '"')).join('');
   const DONE_SHOWN = 40;
   $('view-tasks').innerHTML =
     '<div class="view-head"><h2 id="tasks-h">Tasks</h2><span class="sec-note">Every F (follow-up with someone) and MT (my task) lands here by due date. Tick it off when it’s done.</span></div>' +
-    '<div class="filters"><div class="chip-group" role="group" aria-label="Task kind">' + kinds + '</div><div class="chip-group" role="group" aria-label="Project">' + projs + '</div></div>' +
+    '<div class="filters"><div class="chip-group" role="group" aria-label="Whose tasks">' + whose + '</div><div class="chip-group" role="group" aria-label="Task kind">' + kinds + '</div><div class="chip-group" role="group" aria-label="Project">' + projs + '</div></div>' +
     '<div class="cols">' + cols.map((c) => {
       const items = c[0] === 'Done' ? c[2].slice(0, DONE_SHOWN) : c[2];
       return '<div class="col"><div class="col-title" style="color:' + c[1] + '">' + c[0] + '<span class="mono">' + c[2].length + '</span></div>' +
@@ -1474,6 +1574,7 @@ document.addEventListener('click', (ev) => {
   if (act === 'reload') { location.reload(); return; }
   if (act === 'choose-account') { showSignIn(null, { chooseAccount: true }); return; }
   if (act === 'sign-out-here') { signOutHere(); return; }
+  if (S.engineer) { engClick(act, el); return; }
   if (!S.started) return;
   const prevVoid = S.confirmVoid, prevDel = S.confirmDel;
   S.confirmVoid = null;
@@ -1523,6 +1624,7 @@ document.addEventListener('click', (ev) => {
       break;
     case 'ma-add': addMember(); return;
     case 'kind': S.kind = kind || ''; break;
+    case 'mine': S.mine = !!el.dataset.v; break;
     case 'guide': S.guide = !S.guide; break;
     case 'refresh': refresh(false); break;
     case 'print-toggle':
@@ -1603,6 +1705,11 @@ document.addEventListener('input', (ev) => {
     S.projEdit[t.dataset.pi] = t.value;
   } else if (t.dataset.me && S.memberEdit) {
     S.memberEdit[t.dataset.me] = t.value;
+  } else if (t.dataset.ea && S.engAdd) {
+    S.engAdd[t.dataset.ea] = t.value;
+  } else if (t.id === 'engProject') {
+    S.engProject = t.value;
+    renderEng();
   } else if (t.dataset.ma) {
     S.memberAdd[t.dataset.ma] = t.value;
   } else if (t.matches('[data-ma-proj]')) {
@@ -1652,7 +1759,9 @@ document.addEventListener('keydown', (ev) => {
 
 // Coming back to the app (e.g. phone unlocked) picks up entries made on another device.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && S.started && sessionToken() && !S.pending && Date.now() - S.lastLoad > 60000) refresh(true);
+  if (document.visibilityState !== 'visible' || !sessionToken()) return;
+  if (S.engineer) engCall('getSite', []);
+  else if (S.started && !S.pending && Date.now() - S.lastLoad > 60000) refresh(true);
 });
 if (phone.addEventListener) phone.addEventListener('change', () => { if (S.started) placeCodebar(); });
 else phone.addListener(() => { if (S.started) placeCodebar(); });
