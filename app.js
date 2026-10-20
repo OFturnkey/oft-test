@@ -202,6 +202,35 @@ function loadCache() {
   try { const c = JSON.parse(stored(CACHE_KEY) || 'null'); return c && c.data ? c : null; } catch (_) { return null; }
 }
 
+/* ---------- alerts on this device (live app only: CONFIG.firebase) ---------- */
+const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('Couldn’t load ' + src));
+    document.head.appendChild(s);
+  });
+}
+function enableAlerts() {
+  const cfg = CONFIG.firebase, tell = (t, err) => (S.engineer ? engSnack(t, err) : snack(t, { error: err }));
+  if (!cfg) { tell('The test app never sends alerts.', true); return; }
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) { tell('This browser can’t receive alerts. Use Chrome.', true); return; }
+  tell('Asking for permission…');
+  Notification.requestPermission().then((perm) => {
+    if (perm !== 'granted') throw new Error('Notifications are blocked for O F Turnkey. Allow them in the browser or app settings, then try again.');
+    return navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready);
+  }).then((reg) => loadScript(FIREBASE_SDK + 'firebase-app-compat.js').then(() => loadScript(FIREBASE_SDK + 'firebase-messaging-compat.js')).then(() => {
+    if (!firebase.apps.length) firebase.initializeApp(cfg.app);
+    return firebase.messaging().getToken({ vapidKey: cfg.vapidKey, serviceWorkerRegistration: reg });
+  })).then((token) => {
+    if (!token) throw new Error('Couldn’t get an alert address for this device. Try again.');
+    return api('registerDevice', [token, deviceName()]);
+  }).then((res) => {
+    if (res.data) { setData(res.data); saveCache(); renderAll(); }
+    tell(res.notice || 'Alerts are on for this device.');
+  }, (err) => { if (err.signin) signedOut(err.message); else tell(cleanErr(err.message), true); });
+}
+
 /* ---------- opening, sign-in and signed-in devices ---------- */
 // The screen before the ledger: opening, sign in, no access, site engineer.
 function showGate(title, text, opts) {
@@ -268,8 +297,8 @@ function showNoAccess(email) {
 }
 /* ---------- site engineer screens (phone first; no ledger data ever reaches them) ---------- */
 function engClick(act, el) {
-  if (photoClick(act, el)) return;
-  if (act === 'eng-tab') { S.engTab = el.dataset.tab; window.scrollTo(0, 0); renderEng(); }
+  if (photoClick(act, el) || queryClick(act, el)) return;
+  if (act === 'eng-tab') { S.engTab = el.dataset.tab; S.engQuery = ''; S.engRegister = false; window.scrollTo(0, 0); renderEng(); }
   else if (act === 'eng-done') engCall('setDone', [el.dataset.id, el.checked], (res) => engSnack(el.checked ? 'Ticked off.' : 'Back on your list.'));
   else if (act === 'eng-add') engAddTask();
 }
@@ -280,7 +309,11 @@ function showEngineer(me, site) {
   $('gate').hidden = true;
   $('appScreen').hidden = true;
   $('engScreen').hidden = false;
-  if (!S.engTab) S.engTab = 'today';
+  if (!S.engTab) {
+    const qs = new URLSearchParams(location.search);
+    S.engTab = ['queries', 'photos', 'schedule'].indexOf(qs.get('tab')) >= 0 ? qs.get('tab') : 'today';
+    if (qs.get('q')) S.engQuery = qs.get('q');
+  }
   renderEng();
   renderEnvStrip();
 }
@@ -322,6 +355,7 @@ function renderEng() {
   const main = $('engMain');
   if (S.engTab === 'today') main.innerHTML = engTodayHtml();
   else if (S.engTab === 'photos') main.innerHTML = engPhotosHtml();
+  else if (S.engTab === 'queries') main.innerHTML = engQueriesHtml();
   else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
     '<p class="empty">This comes in the next test version.</p></section>';
 }
@@ -423,8 +457,12 @@ function firstRender() {
     S.sel = LC.iso(now);
     S.y = now.getFullYear();
     S.m = now.getMonth();
-    const tab = new URLSearchParams(location.search).get('tab');
+    // Links from alerts: ?tab=projects&project=NST&sec=queries&q=<id>
+    const qs = new URLSearchParams(location.search), tab = qs.get('tab');
     S.tab = ['ledger', 'projects', 'tasks', 'dir'].indexOf(tab) >= 0 ? tab : 'ledger';
+    if (qs.get('project')) S.projTab = qs.get('project').toUpperCase();
+    if (['overview', 'site', 'queries'].indexOf(qs.get('sec')) >= 0) S.projSec = qs.get('sec');
+    if (qs.get('q')) S.qSel = qs.get('q');
     $('logoSlot').innerHTML = logoHtml();
     loadPrintChoices();
     applyPageSize();
@@ -1018,14 +1056,23 @@ function renderDir() {
   $('view-dir').innerHTML =
     '<div style="display:flex;flex-direction:column;gap:4px"><h2 id="dir-h" style="font-size:22px">Directory</h2>' +
     '<p class="dir-intro">' + esc(intro) + '</p></div>' +
-    '<div class="panels">' + KINDS.map(panelHtml).join('') + teamPanelHtml() + (canWrite() && CONFIG.alerts ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>';
+    '<div class="panels">' + KINDS.map(panelHtml).join('') + teamPanelHtml() + (canWrite() ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>';
 }
 
 /* ---------- morning alerts (owners: everything; contributors: their own devices) ---------- */
+// Morning alerts. The test app (no CONFIG.firebase) sends nothing: it shows the preview only.
 function alertsPanelHtml() {
-  const a = (S.data && S.data.alerts) || { devices: [] };
   const owner = isOwner();
-  const setupUrl = CONFIG.alerts;
+  const preview = owner ? '<div class="brief-prev"><button type="button" class="btn-outline" data-act="brief-preview">What today’s 7:00 alert says</button>' +
+    (S.briefs ? S.briefs.map((b) => '<div class="brief"><b>' + esc(b.name) + '</b> <span class="muted small">' + esc(b.email) + '</span>' +
+      '<div class="brief-card"><div class="brief-title">' + esc(b.title) + '</div><pre>' + esc(b.body) + '</pre></div>' +
+      (b.total ? '' : '<span class="muted small">Nothing due: on a normal morning nothing is sent.</span>') + '</div>').join('') : '') + '</div>' : '';
+  if (!CONFIG.firebase) {
+    return '<div class="panel alerts-panel"><div class="panel-head"><h3>Morning alerts</h3></div>' +
+      '<p class="panel-desc">Every day at 7:00 IST each person gets their own alert, grouped by project: tasks late or due today, queries waiting for a reply, sites with no photos for 3 days. Site engineers only get their own tasks, never amounts. ' +
+      '<b>The test app never sends alerts</b>; here you can see what they would say.</p>' + preview + '</div>';
+  }
+  const a = (S.data && S.data.alerts) || { devices: [] };
   const devs = a.devices.map((d) => {
     const conf = S.confirmDel === 'dev:' + d.id;
     return '<div class="drow"><div class="drow-view"><div class="drow-text"><b>' + esc(d.name || 'Device') + '</b><span>' +
@@ -1034,8 +1081,8 @@ function alertsPanelHtml() {
   }).join('');
   return '<div class="panel alerts-panel"><div class="panel-head"><h3>Morning alerts</h3><span class="mono">' +
     plural(a.devices.length, owner ? 'device' : 'device of yours', owner ? 'devices' : 'devices of yours') + '</span></div>' +
-    '<p class="panel-desc">Every day at 7:00 IST, a notification lists the tasks due today and overdue' +
-    (owner ? ' on owners’ and contributors’ devices.' : ' on your devices.') + ' No amounts. Days with nothing due are skipped.</p>' +
+    '<p class="panel-desc">Every day at 7:00 IST each person gets their own alert, grouped by project: tasks late or due today' +
+    (owner ? ', queries waiting for a reply, sites with no photos for 3 days. Site engineers only get their own tasks.' : '.') + ' No amounts. Days with nothing due are skipped.</p>' + preview +
     (owner
       ? '<div class="alerts-status"><span>Firebase key: <b>' + (a.configured ? 'set (' + esc(a.project) + ')' : 'not set yet') + '</b></span>' +
         (a.lastBrief ? '<span>Last morning brief: ' + esc(a.lastBrief) + '</span>' : '') + '</div>' +
@@ -1046,7 +1093,7 @@ function alertsPanelHtml() {
     '<div>' + (devs || '<p class="empty">No devices yet. Use “Turn on alerts on this device” on each phone or laptop.</p>') + '</div>' +
     '<div class="pf-actions"><button type="button" class="btn-accent" data-act="test-alert"' + (S.sendingTest ? ' disabled' : '') + '>' +
     (S.sendingTest ? 'Sending…' : owner ? 'Send test alert' : 'Send test alert to my devices') + '</button>' +
-    '<a class="btn-outline linkbtn" href="' + esc(setupUrl) + '" target="_top">Turn on alerts on this device</a></div>' +
+    '<button type="button" class="btn-outline" data-act="alerts-on">Turn on alerts on this device</button></div>' +
     (owner ? '<p class="panel-desc">“Send test alert” goes to owners’ devices. Contributors can test their own from their app.</p>' : '') + '</div>';
 }
 
@@ -1351,8 +1398,8 @@ const STAGE_LABEL = { design: 'Design', execution: 'Execution', handover: 'Hando
 const SCHEDULE_LABEL = { full: 'Full schedule', light: 'Light schedule', none: 'No schedule yet' };
 // Sections per stage. [key, label, ready in this version]. Later steps switch the others on.
 const SECTIONS = {
-  design: [['overview', 'Overview', true], ['drawings', 'Drawings', false], ['queries', 'Queries', false]],
-  execution: [['overview', 'Overview', true], ['schedule', 'Schedule', false], ['site', 'Site', true], ['queries', 'Queries', false],
+  design: [['overview', 'Overview', true], ['drawings', 'Drawings', false], ['queries', 'Queries', true]],
+  execution: [['overview', 'Overview', true], ['schedule', 'Schedule', false], ['site', 'Site', true], ['queries', 'Queries', true],
     ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', false], ['visits', 'Site visits', false]],
   handover: [['overview', 'Overview', true]],
   archive: [['overview', 'Overview', true]]
@@ -1392,13 +1439,17 @@ function projectLine(p) {
 }
 
 function renderProjectsView() {
+  if (!S.queries && !S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); }
   const list = liveProjects();
-  if (!S.projTab || !list.some((p) => p.code === S.projTab)) S.projTab = list.length ? list[0].code : '';
+  // First tab: Today, everything that needs you across all projects.
+  if (!S.projTab || (S.projTab !== '_today' && !list.some((p) => p.code === S.projTab))) S.projTab = '_today';
   const p = projInfo(S.projTab);
   const tabs = list.map((x) => '<button type="button" class="ptab' + (x.code === S.projTab ? ' on' : '') + '" data-act="proj-tab" data-code="' + esc(x.code) +
-    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.name || x.code) + '</span>' + stagePill(x.stage) + '</button>').join('');
+    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.name || x.code) + '</span>' + stagePill(x.stage) +
+    (isOwner() && hasNeeds(x.code) ? '<span class="red-dot" title="Needs you"></span>' : '') + '</button>').join('');
+  const todayTab = '<button type="button" class="ptab' + (S.projTab === '_today' ? ' on' : '') + '" data-act="proj-tab" data-code="_today" aria-pressed="' + (S.projTab === '_today') + '"><span class="ptab-name">Today</span></button>';
   if (!p) {
-    $('view-projects').innerHTML = '<h2 id="proj-h" class="view-title">Projects</h2><p class="empty">No live projects. Add one in Directory → Projects.</p>';
+    $('view-projects').innerHTML = '<nav class="ptabs" aria-label="Projects">' + todayTab + tabs + '</nav>' + (list.length ? todayAllHtml(list) : '<p class="empty">No live projects. Add one in Directory → Projects.</p>');
     return;
   }
   const secs = SECTIONS[p.stage] || SECTIONS.execution;
@@ -1407,16 +1458,39 @@ function renderProjectsView() {
     ? '<button type="button" class="psec' + (S.projSec === s[0] ? ' on' : '') + '" data-act="proj-sec" data-sec="' + s[0] + '" aria-pressed="' + (S.projSec === s[0]) + '">' + esc(s[1]) + '</button>'
     : '<span class="psec off" title="Comes in a later step">' + esc(s[1]) + '</span>').join('');
   $('view-projects').innerHTML =
-    '<nav class="ptabs" aria-label="Projects">' + tabs + '</nav>' +
+    '<nav class="ptabs" aria-label="Projects">' + todayTab + tabs + '</nav>' +
     '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.name || p.code) + ' <span class="code-tag">' + esc(p.code) + '</span></h2>' +
     '<div class="psub">' + esc(projectLine(p)) + '</div></div>' +
     '<nav class="psecs" aria-label="Project sections">' + nav + '</nav>' +
-    (S.projSec === 'site' ? projectSiteHtml(p) : projectOverviewHtml(p));
+    (S.projSec === 'site' ? projectSiteHtml(p) : S.projSec === 'queries' ? projectQueriesHtml(p) : projectOverviewHtml(p));
+}
+
+// Today across all projects (the morning view): each project's Needs you items, Everyone or Just mine.
+function todayAllHtml(list) {
+  const mine = !!S.todayMine;
+  const groups = list.map((p) => {
+    let items = needsFor(p.code);
+    if (mine) items = items.filter((n) => n.act === 'needs-query' || (n.act === 'done' && isMine(findEntry(n.id) || {})));
+    const shown = items.slice(0, 5);
+    return '<section class="card tday"><button type="button" class="tday-h" data-act="proj-tab" data-code="' + esc(p.code) + '"><b>' + esc(p.name || p.code) + '</b><span class="muted small">' + esc(projectLine(p)) + '</span></button>' +
+      (shown.length ? shown.map((n) => '<div class="need"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="need-text"><b>' + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span></span>' +
+        (canWrite() ? '<button type="button" class="btn-outline" data-act="' + (n.act === 'needs-query' ? 'today-query' : 'done') + '" data-id="' + esc(n.id) + '" data-code="' + esc(p.code) + '">' + esc(n.label) + '</button>' : '') + '</div>').join('')
+        : '<p class="empty">Nothing urgent.</p>') +
+      (items.length > shown.length ? '<p class="muted small">+ ' + (items.length - shown.length) + ' more · open the project</p>' : '') + '</section>';
+  }).join('');
+  return '<div class="phead"><h2 id="proj-h" class="view-title">Today <span class="muted" style="font-size:16px;font-weight:400">' + esc(niceDay(todayIso())) + '</span></h2></div>' +
+    '<div class="seg" role="group" aria-label="Whose items" style="margin:10px 0"><button type="button" class="seg-b' + (!mine ? ' on' : '') + '" data-act="today-mine" data-v="">Everyone</button>' +
+    '<button type="button" class="seg-b' + (mine ? ' on' : '') + '" data-act="today-mine" data-v="1">Just mine</button></div>' + groups;
 }
 
 function projectOverviewHtml(p) {
-  const needs = '<section class="card needs" aria-labelledby="needs-h"><div class="sec-head"><h3 id="needs-h">Needs you</h3></div>' +
-    '<p class="empty">Nothing needs you on this project right now. Site queries, photos and tasks will show up here.</p></section>';
+  const needs = needsHtml(p.code);
+  if (p.stage === 'execution' && S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; loadPhotos(p.code); }
+  const latest = S.photos && S.photos.project === p.code ? S.photos.photos.slice(0, 4) : [];
+  const photos = p.stage !== 'execution' ? '' : '<section class="card" aria-labelledby="lp-h"><div class="sec-head"><h3 id="lp-h">Latest site photos</h3>' +
+    '<button type="button" class="link-btn" data-act="proj-sec" data-sec="site">All photos</button></div>' +
+    (latest.length ? '<div class="ph-grid">' + latest.map((x) => '<button type="button" class="ph-tile" data-act="ph-open-site" data-id="' + esc(x.id) + '"><span class="ph-frame">' + thumbImg(x) + '</span><span class="ph-area">' + esc(x.area || '—') + ' · ' + esc(niceDay(photoDay(x.at))) + '</span></button>').join('') + '</div>'
+      : '<p class="empty">' + (S.photos ? 'No site photos yet.' : 'Loading…') + '</p>') + '</section>';
   let money = '';
   if (isOwner()) {
     const got = live().filter((e) => e.type === 'R' && e.project === p.code && e.who === LC.CLIENT).reduce((s, e) => s + e.amount, 0);
@@ -1435,7 +1509,7 @@ function projectOverviewHtml(p) {
   const details = '<section class="card" aria-labelledby="pd-h"><div class="label-caps" id="pd-h">Project</div><dl class="pdl">' +
     rows.map((r) => '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>').join('') + '</dl>' +
     (isOwner() ? '<button type="button" class="btn-outline" data-act="proj-edit-dir" data-code="' + esc(p.code) + '">Change in Directory</button>' : '') + '</section>';
-  return '<div class="pgrid"><div class="pmain">' + needs + '</div><div class="pside">' + money + details + '</div></div>';
+  return '<div class="pgrid"><div class="pmain">' + needs + photos + '</div><div class="pside">' + money + details + '</div></div>';
 }
 
 /* ---------- Directory additions: project stage & dates, trade, team ---------- */
@@ -1604,6 +1678,7 @@ function outboxSent(item, res) {
     if (S.photos && S.photos.project === p.project && res && res.photo && !S.photos.photos.some((x) => x.id === res.photo.id)) S.photos.photos.unshift(res.photo);
     if (res && res.photo && p.thumb) S.thumbs[res.photo.id] = 'data:image/jpeg;base64,' + p.thumb;
   }
+  if ((item.action === 'askQuery' || item.action === 'replyQuery') && res && res.queries) { S.queries = res; loadThumbs(queryPhotoIds()); }
   if (S.engineer) renderEng(); else if (S.started) renderAll();
 }
 function renderNetStrip() {
@@ -1667,7 +1742,7 @@ function addDraftFiles(files, project) {
   chain.then(loadDrafts).then(renderEng);
 }
 function sendDrafts(project, caption) {
-  const drafts = S.drafts.filter((d) => d.project === project);
+  const drafts = S.drafts.filter((d) => d.project === project && !d.purpose);
   if (!drafts.length) return;
   const missing = drafts.find((d) => !String(d.area || '').trim());
   if (missing) { engSnack('Pick or type an area for each photo.', true); return; }
@@ -1777,7 +1852,7 @@ function deletePhotoNow(id) {
 function engPhotosHtml() {
   const proj = S.engProject;
   if (proj && S.photosFor !== proj) { S.photosFor = proj; S.photos = null; S.photoSel = ''; loadPhotos(proj); }
-  const drafts = S.drafts.filter((d) => d.project === proj);
+  const drafts = S.drafts.filter((d) => d.project === proj && !d.purpose);
   const areas = ((S.site && S.site.areas) || {})[proj] || [];
   const mine = (S.photos && S.photos.photos.filter((p) => p.by === S.me.email)) || [];
   return '<section class="card eng-card"><h2 class="eng-h2">Site photos · ' + esc(proj) + '</h2>' +
@@ -1807,6 +1882,44 @@ function projectSiteHtml(p) {
     '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div></div>';
 }
 
+// Query buttons (owners and engineers). Returns true when it handled the click.
+function queryClick(act, el) {
+  const id = el.dataset.id, v = el.dataset.v;
+  if (act === 'lightbox') showLightbox(id);
+  else if (act === 'lightbox-close') hideLightbox();
+  else if (act === 'eq-open') { S.engQuery = id; window.scrollTo(0, 0); renderEng(); }
+  else if (act === 'eq-back') { S.engQuery = ''; S.engRegister = false; renderEng(); }
+  else if (act === 'eq-register') { S.engRegister = true; renderEng(); }
+  else if (act === 'ask-chip') { S.ask[el.dataset.f] = v; renderEng(); }
+  else if (act === 'ask-send') engSendAsk();
+  else if (act === 'er-send') engSendReply(id);
+  else if (act === 'q-open') { S.qSel = id; S.qc = null; renderAll(); const th = $('qThread'); if (th && phone.matches) th.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  else if (act === 'q-view') { S.qView = v; renderAll(); }
+  else if (act === 'q-print') printRegister(el.dataset.code);
+  else if (act === 'qc-photo') ownerSend(true);
+  else if (act === 'qc-send') ownerSend(false);
+  else if (act === 'qc-outcome') { S.qc.outcome = v; S.qc.err = ''; renderAll(); }
+  else if (act === 'qc-cause') { S.qc.cause = v; S.qc.err = ''; renderAll(); }
+  else if (act === 'today-mine') { S.todayMine = !!v; renderAll(); }
+  else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
+  else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
+  else if (act === 'ph-open-site') { S.projSec = 'site'; openPhoto(id); renderAll(); }
+  else return false;
+  return true;
+}
+// A photo full size, over everything (tap to close).
+function showLightbox(id) {
+  hideLightbox();
+  const box = document.createElement('div');
+  box.id = 'lightbox';
+  box.className = 'lightbox';
+  box.setAttribute('data-act', 'lightbox-close');
+  box.innerHTML = (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="Photo">' : '') + '<span class="ph-hint">Loading full size… tap to close</span>';
+  document.body.appendChild(box);
+  api('photoFull', [id]).then((res) => { const b = $('lightbox'); if (b) b.innerHTML = '<img src="' + res.url + '" alt="Photo"><span class="ph-hint">Tap to close</span>'; }, () => { /* the preview stays */ });
+}
+function hideLightbox() { const b = $('lightbox'); if (b) b.remove(); }
+
 // Photo buttons, the same for owners and engineers. Returns true when it handled the click.
 function photoClick(act, el) {
   const redraw = () => { if (S.engineer) renderEng(); else renderAll(); };
@@ -1827,6 +1940,283 @@ function photoClick(act, el) {
   } else return false;
   return true;
 }
+
+/* ---------- site queries (shared by engineers and owners) ---------- */
+S.queries = null;
+const QUERY_DEFAULT_PHOTO_ASK = 'Photo isn’t clear. Please send one from further back.';
+function teamUsers() { return ((S.engineer ? S.site && S.site.users : S.data && S.data.users) || []); }
+function nameOfEmail(email) { const u = teamUsers().find((x) => x.email === email); return u ? u.name : email; }
+function initialsOfName(n) { const w = String(n || '').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean); return ((w[0] || '').charAt(0) + (w[1] || '').charAt(0)).toUpperCase() || '?'; }
+function redraw() { if (S.engineer) renderEng(); else if (S.started) renderAll(); }
+function loadQueries(then) {
+  api('listQueries', ['']).then((res) => {
+    S.queries = res;
+    loadThumbs(queryPhotoIds());
+    if (then) then();
+    redraw();
+  }, (err) => { if (err.signin) signedOut(err.message); });
+}
+function queryPhotoIds() {
+  if (!S.queries) return [];
+  const ids = [];
+  S.queries.queries.forEach((q) => ids.push.apply(ids, q.photoIds));
+  S.queries.messages.forEach((m) => ids.push.apply(ids, m.photoIds));
+  return ids.slice(0, 40);
+}
+function ageText(stamp) {
+  const ms = Date.now() - Date.parse(String(stamp).replace(' ', 'T') + ':00+05:30');
+  const h = Math.floor(ms / 3600000);
+  return h < 1 ? Math.max(1, Math.floor(ms / 60000)) + ' min' : h < 24 ? h + ' h' : plural(Math.floor(h / 24), 'day', 'days');
+}
+function queryTasks(q) { return ((S.queries && S.queries.tasks) || []).filter((t) => t.queryId === q.id); }
+function queryState(q) {
+  if (q.status === 'closed') return { text: (q.outcome === 'change' ? 'Change approved' + (q.changeNo ? ' ' + q.changeNo : '') : 'Answered') + (queryTasks(q).length ? ' + task' : ''), cls: 'ok' };
+  if (q.status === 'waiting_photo') return { text: 'Waiting for photo', cls: 'wait' };
+  return { text: 'Waiting ' + ageText(q.askedAt), cls: q.workOnHold ? 'bad' : 'wait' };
+}
+function workText(q) {
+  return (q.workOnHold ? 'Work on hold' : 'Work continuing') +
+    (q.otherTeam === 'yes' ? ' · needs ' + (q.otherTeamWhich || 'another team') : q.otherTeam === 'not_sure' ? ' · another team? not sure' : '');
+}
+function photoStrip(ids) {
+  if (!ids || !ids.length) return '';
+  return '<div class="q-photos">' + ids.map((id) => '<button type="button" class="q-photo" data-act="lightbox" data-id="' + esc(id) + '">' +
+    (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="Photo">' : '<span class="ph-wait"></span>') + '</button>').join('') + '</div>';
+}
+function bubble(email, when, body) {
+  const n = nameOfEmail(email);
+  return '<div class="q-msg"><span class="q-av">' + esc(initialsOfName(n)) + '</span><div class="q-body"><div class="muted small"><b class="q-name">' + esc(n) + '</b> · ' +
+    esc(when.slice(0, 10) === todayIso() ? 'today ' + when.slice(11, 16) : niceDay(when.slice(0, 10)) + ' ' + when.slice(11, 16)) + '</div>' + body + '</div></div>';
+}
+function queryThreadHtml(q, owner) {
+  const msgs = S.queries.messages.filter((m) => m.queryId === q.id);
+  const tasks = queryTasks(q);
+  let h = '<div class="q-pills"><span class="pill ' + (q.workOnHold ? 'pill-bad' : 'pill-blue') + '">' + (q.workOnHold ? 'Work on hold' : 'Work continuing') + '</span>' +
+    '<span class="pill">' + esc(q.otherTeam === 'yes' ? 'Needs ' + (q.otherTeamWhich || 'another team') : q.otherTeam === 'not_sure' ? 'Another team: not sure' : 'No other team needed') + '</span>' +
+    '<span class="pill pill-' + queryState(q).cls + '">' + esc(queryState(q).text) + '</span></div>';
+  h += bubble(q.askedBy, q.askedAt, photoStrip(q.photoIds) + '<p>' + esc(q.text) + '</p>');
+  msgs.forEach((m) => {
+    h += bubble(m.by, m.at, photoStrip(m.photoIds) + (m.text ? '<p>' + esc(m.text) + '</p>' : '') +
+      (m.kind === 'photo_request' ? '<span class="pill pill-wait">Waiting for a new photo</span>' : ''));
+  });
+  if (tasks.length) {
+    const first = tasks.filter((t) => !t.after), next = tasks.filter((t) => t.after);
+    h += '<div class="q-tasks">' + first.map((t, i) => '<div><b>Task ' + (i + 1) + ' · ' + esc(LC.teamName(S.dir || { team: {} }, t.assignee) || t.assignee) + ' · due ' + esc(niceDay(t.due)) + '</b>' +
+      (t.done ? ' <span class="pill pill-ok">Done</span>' : '') + '<br>' + esc(t.note) + '</div>').join('') +
+      next.map((t) => '<div class="muted"><b>Then · ' + esc(t.assignee) + '</b> · appears when the task before is ticked' + (t.done ? ' · done' : '') + '<br>' + esc(t.note) + '</div>').join('') + '</div>';
+  }
+  if (q.status !== 'closed') h += owner ? ownerComposerHtml(q) : engComposerHtml(q);
+  return h;
+}
+
+// Owners: reply, ask for a clearer photo, close as Answered / Change approved, task + follow-up task.
+function ownerComposerHtml(q) {
+  if (!S.qc || S.qc.qid !== q.id) {
+    const eng = (teamUsers().find((u) => u.email === q.askedBy && u.code) || teamUsers().find((u) => u.role === 'site_engineer' && u.code && (u.projects || []).indexOf(q.project) >= 0) || {}).code || '';
+    S.qc = { qid: q.id, text: '', outcome: 'answered', cause: '', cost: '', area: '', task: false, taskWho: eng, taskDue: addDays(todayIso(), 2), taskText: '',
+      follow: false, followWho: eng, followText: '', err: '', sending: false };
+  }
+  const c = S.qc, causes = (S.queries && S.queries.causes) || [];
+  const chip = (act, v, on, label) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" data-act="' + act + '" data-v="' + esc(v) + '" aria-pressed="' + on + '">' + esc(label) + '</button>';
+  const who = (field) => '<select data-qc="' + field + '">' + teamUsers().filter((u) => u.code).filter((u, i, a) => a.findIndex((x) => x.code === u.code) === i)
+    .map((u) => '<option value="' + esc(u.code) + '"' + (u.code === c[field] ? ' selected' : '') + '>' + esc(u.name + ' (' + u.code + ')') + '</option>').join('') + '</select>';
+  return '<div class="q-compose"><div class="q-row"><label for="qcText">Your reply</label>' +
+    '<button type="button" class="btn-outline" data-act="qc-photo">Ask for a clearer photo</button></div>' +
+    '<textarea id="qcText" data-qc="text" rows="2">' + esc(c.text) + '</textarea>' +
+    '<div class="muted small">How does this close?</div><div class="chip-group">' +
+    chip('qc-outcome', 'keep', c.outcome === 'keep', 'Reply only, keep open') + chip('qc-outcome', 'answered', c.outcome === 'answered', 'Answered') +
+    chip('qc-outcome', 'change', c.outcome === 'change', 'Change approved') + '</div>' +
+    (c.outcome === 'change' ? '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
+      causes.map((x) => chip('qc-cause', x, c.cause === x, x)).join('') + '</div>' +
+      '<div class="q-row2"><label>Area<input data-qc="area" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off"></label>' +
+      '<label>Cost to us (optional)<input data-qc="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000" autocomplete="off"></label></div>' +
+      '<span class="muted small">If the client asked for it and will pay, it belongs in Extras instead (comes with Budget).</span></div>' : '') +
+    (c.outcome !== 'keep' ? '<div class="q-taskbox"><label class="pcheck"><input type="checkbox" data-qc-check="task"' + (c.task ? ' checked' : '') + '> Make it a task</label>' +
+      (c.task ? '<div class="q-taskline">' + who('taskWho') + '<input type="date" data-qc="taskDue" value="' + esc(c.taskDue) + '">' +
+        '<input data-qc="taskText" value="' + esc(c.taskText) + '" placeholder="Get the electrician to raise the switch box by 6 in" autocomplete="off"></div>' +
+        '<label class="pcheck"><input type="checkbox" data-qc-check="follow"' + (c.follow ? ' checked' : '') + '> Add a follow-up task after this one</label>' +
+        '<span class="muted small">Only if another team has to come back. It shows on their list only after the first task is ticked.</span>' +
+        (c.follow ? '<div class="q-taskline">' + who('followWho') + '<input data-qc="followText" value="' + esc(c.followText) + '" placeholder="Get Raju to patch and repaint around the box" autocomplete="off"></div>' : '') : '') +
+      '</div>' : '') +
+    (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
+    '<button type="button" class="btn-accent q-send" data-act="qc-send"' + (c.sending ? ' disabled' : '') + '>' + (c.sending ? 'Sending…' : 'Send reply') + '</button></div>';
+}
+function ownerSend(photoAsk) {
+  const c = S.qc;
+  if (!c) return;
+  const text = String(c.text || '').trim();
+  let req;
+  if (photoAsk) req = api('replyQuery', [c.qid, text || QUERY_DEFAULT_PHOTO_ASK, 'photo_request', [], newId()]);
+  else if (c.outcome === 'keep') {
+    if (!text) { c.err = 'Type a reply.'; redraw(); return; }
+    req = api('replyQuery', [c.qid, text, 'reply', [], newId()]);
+  } else {
+    if (c.outcome === 'change' && !c.cause) { c.err = 'Pick why this changed.'; redraw(); return; }
+    if (c.task && !String(c.taskText || text).trim()) { c.err = 'Type what the task is.'; redraw(); return; }
+    req = api('closeQuery', [c.qid, {
+      outcome: c.outcome, reply: text, cause: c.cause, cost: c.cost, area: c.area, changeText: text,
+      task: c.task ? { assignee: c.taskWho, due: c.taskDue, note: String(c.taskText || text).trim() } : null,
+      followup: c.task && c.follow && String(c.followText || '').trim() ? { assignee: c.followWho, note: c.followText } : null
+    }]);
+  }
+  c.sending = true; c.err = ''; redraw();
+  req.then((res) => {
+    S.queries = res; S.qc = null;
+    snack(photoAsk ? 'Asked for a clearer photo.' : c.outcome === 'keep' ? 'Reply sent.' : 'Reply sent and the query is closed.');
+    if (c.task) refresh(true);
+    redraw();
+  }, (err) => { if (err.signin) { signedOut(err.message); return; } c.sending = false; c.err = cleanErr(err.message); redraw(); });
+}
+
+// Engineers: reply in the thread, with photos if asked for one (goes through the phone's outbox).
+function engComposerHtml(q) {
+  const drafts = S.drafts.filter((d) => d.purpose === 'reply:' + q.id);
+  const r = (S.engReply && S.engReply.qid === q.id) ? S.engReply : (S.engReply = { qid: q.id, text: '' });
+  return '<div class="q-compose"><label for="erText">Your reply</label><textarea id="erText" data-er="text" rows="2">' + esc(r.text) + '</textarea>' +
+    (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""></span>').join('') + '</div>' : '') +
+    '<div class="ph-pick"><label class="btn-outline ph-pick-btn">Add photo<input type="file" accept="image/*" data-q-pick="reply:' + esc(q.id) + '" hidden></label>' +
+    '<button type="button" class="btn-save" data-act="er-send" data-id="' + esc(q.id) + '">Send reply</button></div></div>';
+}
+function engSendReply(qid) {
+  const r = S.engReply, q = S.queries.queries.find((x) => x.id === qid);
+  const drafts = S.drafts.filter((d) => d.purpose === 'reply:' + qid);
+  if (!q || (!String(r.text || '').trim() && !drafts.length)) { engSnack('Type a reply or add a photo.', true); return; }
+  let chain = Promise.resolve();
+  drafts.forEach((d) => {
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: q.project, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a query'))
+      .then(() => idbDel('drafts', d.id));
+  });
+  chain.then(() => outboxAdd('replyQuery', [qid, String(r.text || '').trim(), 'reply', drafts.map((d) => d.id), newId()], 'Reply')).then(loadDrafts).then(() => {
+    S.engReply = null;
+    engSnack(navigator.onLine ? 'Reply sent.' : 'Saved on your phone. It will send by itself.');
+    renderEng();
+  });
+}
+
+// Engineers → Queries: ask a question (photos, the question, is work on hold, is another team needed) and the list.
+function engQueriesHtml() {
+  if (!S.queries && !S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); }
+  const proj = S.engProject;
+  if (S.engQuery) {
+    const q = S.queries && S.queries.queries.find((x) => x.id === S.engQuery);
+    if (!q) { S.engQuery = ''; return engQueriesHtml(); }
+    return '<button type="button" class="link-btn" data-act="eq-back">← All queries</button>' +
+      '<section class="card eng-card eng-pad q-thread"><h2 class="eng-h2" style="padding-left:0">' + esc(q.project) + ' · ' + esc(q.text.slice(0, 60)) + '</h2>' + queryThreadHtml(q, false) + '</section>';
+  }
+  if (S.engRegister) return engRegisterHtml(proj);
+  const a = S.ask || (S.ask = { text: '', work: 'continuing', other: 'no', which: '' });
+  const drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
+  const chip = (field, v, label, red) => '<button type="button" class="q-chip' + (a[field] === v ? (red ? ' on red' : ' on') : '') + '" data-act="ask-chip" data-f="' + field + '" data-v="' + esc(v) + '" aria-pressed="' + (a[field] === v) + '">' + esc(label) + '</button>';
+  const teams = ((S.site && S.site.people) || []).filter((p) => p.kind === 'labour').slice(0, 6).map((p) => p.name + (p.trade ? ' · ' + p.trade : '')).concat(['Electrician', 'Other']);
+  const list = ((S.queries && S.queries.queries) || []).filter((q) => q.project === proj);
+  return '<section class="card eng-card" id="askForm"><h2 class="eng-h2">Ask a question · ' + esc(proj) + '</h2><div class="eng-form">' +
+    '<div class="ph-pick" style="padding:0"><label class="btn-save ph-pick-btn">Take photo<input type="file" accept="image/*" capture="environment" data-q-pick="query" hidden></label>' +
+    '<label class="btn-outline ph-pick-btn">From gallery<input type="file" accept="image/*" multiple data-q-pick="query" hidden></label></div>' +
+    (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
+    '<label>Your question<textarea id="askText" data-ask="text" rows="3">' + esc(a.text) + '</textarea></label>' +
+    '<div><span class="lbl">Meanwhile, the work is</span><div class="q-chips2">' + chip('work', 'hold', 'On hold', true) + chip('work', 'continuing', 'Continuing') + '</div>' +
+    '<span class="muted small">' + (a.work === 'hold' ? 'Shows in red for Shruthi and Savan until someone replies.' : 'They will reply when they can.') + '</span></div>' +
+    '<div><span class="lbl">Does another team need to come in?</span><div class="q-chips3">' + chip('other', 'no', 'No') + chip('other', 'yes', 'Yes') + chip('other', 'not_sure', 'Not sure') + '</div>' +
+    (a.other === 'yes' ? '<div class="q-chipwrap">' + teams.map((t) => chip('which', t, t)).join('') + '</div>' : '') + '</div>' +
+    '<button type="button" class="eng-big" data-act="ask-send">Send to Shruthi and Savan</button></div></section>' +
+    '<section class="card eng-card"><h2 class="eng-h2">Queries · ' + esc(proj) + '</h2>' +
+    (list.length ? list.map((q) => '<button type="button" class="q-card" data-act="eq-open" data-id="' + esc(q.id) + '"><span class="q-card-top"><span class="muted small">' +
+      esc(nameOfEmail(q.askedBy) + ' · ' + (q.askedAt.slice(0, 10) === todayIso() ? 'today ' + q.askedAt.slice(11, 16) : niceDay(q.askedAt.slice(0, 10)))) + '</span><span class="pill pill-' + queryState(q).cls + '">' +
+      esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(workText(q)) + '</span></button>').join('') : '<p class="empty eng-pad">No queries on this project yet.</p>') +
+    '<p class="eng-pad"><button type="button" class="link-btn" data-act="eq-register">Change register</button></p></section>';
+}
+function engSendAsk() {
+  const a = S.ask, proj = S.engProject, text = String(a.text || '').trim();
+  if (!text) { engSnack('Type your question.', true); return; }
+  const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
+  let chain = Promise.resolve();
+  drafts.forEach((d) => {
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: proj, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a question'))
+      .then(() => idbDel('drafts', d.id));
+  });
+  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamWhich: a.other === 'yes' ? a.which : '', photoIds: drafts.map((d) => d.id) }], 'Question'))
+    .then(loadDrafts).then(() => {
+      S.ask = null;
+      engSnack(navigator.onLine ? 'Sent. Shruthi and Savan get a notification; you get one when they reply.' : 'Saved on your phone. It will send by itself when there’s signal.');
+      renderEng();
+    });
+}
+function addQueryDraftFiles(files, purpose, project) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  let chain = Promise.resolve();
+  list.forEach((f) => {
+    chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, purpose: purpose, area: '', full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
+      (err) => engSnack(cleanErr(err.message), true));
+  });
+  chain.then(loadDrafts).then(renderEng);
+}
+
+/* ---------- change register ---------- */
+function registerRowsHtml(rows, showCost) {
+  if (!rows.length) return '<p class="empty">No changes approved yet.</p>';
+  return '<div class="table-box"><table class="ptable reg"><thead><tr><th>No.</th><th>Date</th><th>Area</th><th>Change</th><th>Approved by</th><th>Raised from</th><th>Why' + (showCost ? ' · cost to us' : '') + '</th></tr></thead><tbody>' +
+    rows.map((r) => '<tr><td class="mono">' + esc(r.no) + '</td><td>' + esc(niceDay(r.date)) + '</td><td>' + esc(r.area || '—') + '</td><td>' + esc(r.text) + '</td><td>' + esc(nameOfEmail(r.approvedBy)) +
+      '</td><td>' + esc(r.raisedFrom) + '</td><td>' + esc(r.cause) + (showCost ? ' · ' + (r.cost ? LC.inr(r.cost) : 'nil') : '') + '</td></tr>').join('') + '</tbody></table></div>';
+}
+function engRegisterHtml(proj) {
+  const rows = ((S.queries && S.queries.register) || []).filter((r) => r.project === proj);
+  return '<button type="button" class="link-btn" data-act="eq-back">← All queries</button><section class="card eng-card eng-pad"><h2 class="eng-h2" style="padding-left:0">Change register · ' + esc(proj) + '</h2>' + registerRowsHtml(rows, false) + '</section>';
+}
+function printRegister(proj) {
+  const p = projInfo(proj) || { name: proj };
+  const rows = ((S.queries && S.queries.register) || []).filter((r) => r.project === proj);
+  S.paper = 'A4'; S.orient = 'landscape'; applyPageSize();
+  $('printSheet').className = 'print-sheet sheet paper-A4 landscape';
+  $('printSheet').innerHTML = '<div class="sh-head"><img class="sh-logo" src="' + esc(LOGO_URL) + '" alt="O F Turnkey"><div class="sh-titles"><span class="sh-title">' + esc(p.name || proj) +
+    ' · Change register</span><span class="sh-sub">' + plural(rows.length, 'approved change', 'approved changes') + '</span></div><span class="sh-date">Printed ' + esc(niceY(todayIso())) + '</span></div>' +
+    registerRowsHtml(rows, true);
+  window.print();
+  loadPrintChoices(); applyPageSize();
+}
+
+/* ---------- owners: project → Queries, Needs you, red dots ---------- */
+function projectQueriesHtml(p) {
+  if (!S.queries && !S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); }
+  if (!S.queries) return '<p class="empty">Loading…</p>';
+  const list = S.queries.queries.filter((q) => q.project === p.code)
+    .sort((a, b) => ((a.status === 'closed') - (b.status === 'closed')) || ((b.workOnHold && b.status !== 'closed') - (a.workOnHold && a.status !== 'closed')) || (a.askedAt < b.askedAt ? 1 : -1));
+  const view = S.qView || 'list';
+  const toggle = '<div class="q-toolbar"><div class="seg" role="group" aria-label="View"><button type="button" class="seg-b' + (view === 'list' ? ' on' : '') + '" data-act="q-view" data-v="list">Queries</button>' +
+    '<button type="button" class="seg-b' + (view === 'register' ? ' on' : '') + '" data-act="q-view" data-v="register">Change register</button></div>' +
+    (view === 'register' && isOwner() ? '<button type="button" class="btn-outline" data-act="q-print" data-code="' + esc(p.code) + '">Print change register</button>' : '') + '</div>';
+  if (view === 'register') return toggle + '<section class="card">' + registerRowsHtml(S.queries.register.filter((r) => r.project === p.code), isOwner()) + '</section>';
+  if (!S.qSel || !list.some((q) => q.id === S.qSel)) S.qSel = list.length && !phone.matches ? list[0].id : '';
+  const sel = list.find((q) => q.id === S.qSel);
+  const cards = list.map((q) => '<button type="button" class="q-card' + (q.id === S.qSel ? ' on' : '') + '" data-act="q-open" data-id="' + esc(q.id) + '"><span class="q-card-top"><span class="muted small">' +
+    esc(nameOfEmail(q.askedBy) + ' · ' + (q.askedAt.slice(0, 10) === todayIso() ? 'today ' + q.askedAt.slice(11, 16) : niceDay(q.askedAt.slice(0, 10)))) + '</span><span class="pill pill-' + queryState(q).cls + '">' +
+    esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(workText(q)) + '</span></button>').join('') || '<p class="empty">No queries on this project yet.</p>';
+  return toggle + '<div class="pgrid"><nav class="pside q-list" aria-label="Query list">' + cards + '</nav>' +
+    '<article class="pmain card q-thread" id="qThread">' + (sel ? queryThreadHtml(sel, isOwner()) : '<p class="empty">Pick a query.</p>') + '</article></div>';
+}
+// "Needs you" on a project's overview: open queries (work on hold first), tasks overdue or due today, new photos.
+function needsFor(code) {
+  const out = [], t = todayIso();
+  ((S.queries && S.queries.queries) || []).filter((q) => q.project === code && q.status !== 'closed').forEach((q) => out.push({
+    kind: 'Query', cls: q.workOnHold || q.status === 'open' ? 'bad' : 'wait', title: q.text,
+    sub: nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago · ' + workText(q).toLowerCase() + (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
+    act: 'needs-query', id: q.id, label: 'Reply', hold: q.workOnHold
+  }));
+  live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).forEach((e) => out.push({
+    kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'blue', title: LC.taskTitle(S.dir, e),
+    sub: (e.assignee ? 'For ' + LC.teamName(S.dir, e.assignee) : 'Yours') + ' · due ' + niceDay(e.due), act: 'done', id: e.id, label: 'Done'
+  }));
+  return out.sort((a, b) => (b.hold === true) - (a.hold === true));
+}
+function needsHtml(code) {
+  const items = needsFor(code);
+  return '<section class="card needs" aria-labelledby="needs-h"><div class="sec-head"><h3 id="needs-h">Needs you <span class="muted">· ' + items.length + '</span></h3>' +
+    (items.length ? '' : '<span class="sec-note">Everything else is moving on its own</span>') + '</div>' +
+    (items.length ? items.map((n) => '<div class="need"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="need-text"><b>' + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span></span>' +
+      (canWrite() ? '<button type="button" class="btn-outline" data-act="' + n.act + '" data-id="' + esc(n.id) + '">' + esc(n.label) + '</button>' : '') + '</div>').join('')
+      : '<p class="empty">Nothing needs you on this project right now.</p>') + '</section>';
+}
+function hasNeeds(code) { return needsFor(code).length > 0; }
 
 /* ---------- layout & render ---------- */
 const phone = window.matchMedia('(max-width: 699px)');
@@ -1876,7 +2266,7 @@ document.addEventListener('click', (ev) => {
   if (act === 'sign-out-here') { signOutHere(); return; }
   if (S.engineer) { engClick(act, el); return; }
   if (!S.started) return;
-  if (photoClick(act, el)) return;
+  if (photoClick(act, el) || queryClick(act, el)) return;
   const prevVoid = S.confirmVoid, prevDel = S.confirmDel;
   S.confirmVoid = null;
   S.confirmDel = null;
@@ -1948,6 +2338,10 @@ document.addEventListener('click', (ev) => {
     }
     case 'pp-paper': S.paper = el.dataset.v; savePrintChoices(); break;
     case 'pp-orient': S.orient = el.dataset.v; savePrintChoices(); break;
+    case 'brief-preview':
+      call('previewBriefs', [], (res) => { S.briefs = res.previews; });
+      break;
+    case 'alerts-on': enableAlerts(); return;
     case 'test-alert':
       S.sendingTest = true;
       call('sendTestAlert', [], (res) => {
@@ -2006,6 +2400,16 @@ document.addEventListener('input', (ev) => {
     S.projEdit[t.dataset.pi] = t.value;
   } else if (t.dataset.me && S.memberEdit) {
     S.memberEdit[t.dataset.me] = t.value;
+  } else if (t.dataset.qc && S.qc) {
+    S.qc[t.dataset.qc] = t.value;
+    S.qc.err = '';
+  } else if (t.dataset.qcCheck && S.qc) {
+    S.qc[t.dataset.qcCheck] = t.checked;
+    renderAll();
+  } else if (t.dataset.ask && S.ask) {
+    S.ask[t.dataset.ask] = t.value;
+  } else if (t.dataset.er && S.engReply) {
+    S.engReply[t.dataset.er] = t.value;
   } else if (t.dataset.draftArea) {
     const d = S.drafts.find((x) => x.id === t.dataset.draftArea);
     if (d) { d.area = t.value; idbPut('drafts', d).catch(() => { /* kept in memory until sent */ }); }
@@ -2031,6 +2435,7 @@ document.addEventListener('input', (ev) => {
 document.addEventListener('change', (ev) => {
   const t = ev.target;
   if (t.dataset && t.dataset.phPick) { addDraftFiles(t.files, S.engProject); t.value = ''; return; }
+  if (t.dataset && t.dataset.qPick) { addQueryDraftFiles(t.files, t.dataset.qPick, S.engProject); t.value = ''; return; }
   if (t.id === 'editDate') { S.editDate = t.value || ''; S.armed = ''; S.saveErr = ''; renderCodebar(); return; }
   if (t.id === 'alertsKey' && t.files && t.files[0]) {
     const reader = new FileReader();
