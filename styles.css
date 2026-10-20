@@ -594,3 +594,12 @@ h2, h3 { margin: 0; }
 .brief-card { margin-top: 4px; background: #FFFFFF; border: 1px solid #DEDED8; border-radius: 14px; padding: 10px 12px; }
 .brief-title { font-weight: 600; font-size: 14px; }
 .brief-card pre { margin: 4px 0 0; white-space: pre-wrap; font: inherit; font-size: 13px; color: #3A3C39; }
+
+/* Project code bar */
+.pbar { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.pbar-row { display: flex; gap: 8px; }
+.pbar-row input { flex: 1 1 auto; min-width: 0; border: 0; outline: none; font-family: 'IBM Plex Mono', monospace; font-size: 15px; padding: 10px 12px; background: transparent; color: #1C1E1D; }
+.pbar-row .btn-save { min-height: 44px; padding: 0 20px; }
+.pbar-prev:empty { display: none; }
+.pbar-prev { padding: 0 6px 6px; }
+
