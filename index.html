@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>O F Turnkey</title>
+<meta name="theme-color" content="#1C1E1D">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="envStrip" class="env-strip" role="note" hidden></div>
+
+<!-- Before the ledger: opening, sign in, no access, site engineer. One of these shows at a time. -->
+<main id="gate" class="gate" aria-live="polite">
+  <div class="gate-box">
+    <img class="gate-logo" src="logo.png" alt="" width="72" height="72">
+    <h1 id="gateTitle" class="gate-title">O F Turnkey</h1>
+    <p id="gateText" class="gate-text">Opening…</p>
+    <div id="gateButton" class="gate-button"></div>
+    <div id="gateExtra" class="gate-extra"></div>
+  </div>
+</main>
+
+<div id="appScreen" hidden>
+<header class="hdr">
+  <div class="wrap hdr-in">
+    <div id="logoSlot" class="logo-slot"></div>
+    <div class="hdr-title">
+      <b>Site ledger</b>
+      <span class="hdr-sub">Payments, receipts, follow-ups &amp; tasks across all projects</span>
+    </div>
+    <div class="spacer"></div>
+    <span id="status" class="status" aria-live="polite"></span>
+    <button type="button" class="btn-dark" data-act="refresh">Refresh</button>
+    <button type="button" id="printToggle" class="btn-light" data-act="print-toggle">Print sheets</button>
+  </div>
+</header>
+
+<div id="codebarHome">
+  <section id="codebar" class="codebar" aria-label="Code bar">
+    <div class="codebar-in">
+      <div class="cb-top">
+        <label for="code" id="cbLabel" class="cb-label">New entry</label>
+        <span class="cb-help">Pick a date on the calendar, type a code, check the line below, press Enter.</span>
+        <button type="button" id="guideBtn" class="btn-outline cb-guide" data-act="guide">Code guide</button>
+      </div>
+      <div class="cb-row">
+        <input id="code" placeholder="P SA BAB 25k C" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="done">
+        <button type="button" id="saveBtn" class="btn-save" data-act="save" disabled>Save entry</button>
+      </div>
+      <div id="cbEdit" class="cb-edit" hidden></div>
+      <div id="cbChips" class="chips"></div>
+      <div id="cbPreview" class="preview"></div>
+      <div id="cbWarn" class="cb-warn"></div>
+      <div id="cbGuide" class="guide" hidden></div>
+    </div>
+  </section>
+</div>
+
+<div class="tabsbar">
+  <nav id="tabs" class="wrap tabs" aria-label="Dashboard views"></nav>
+</div>
+
+<main class="main">
+  <p id="viewOnly" class="view-only" role="note" hidden>View only: you can see and print everything in the ledger, but not add or change entries.</p>
+  <section id="printPanel" class="card print-panel" aria-labelledby="print-h" hidden></section>
+
+  <div id="view-ledger" class="view">
+    <div class="ledger-top">
+      <section id="calendar" class="card cal" aria-labelledby="cal-h"></section>
+      <div id="codebarPhoneSlot" class="phone-slot"></div>
+      <aside class="side">
+        <section id="dayPanel" class="card" aria-labelledby="day-h"></section>
+        <section id="reminders" class="card" aria-labelledby="al-h"></section>
+      </aside>
+    </div>
+    <section id="projects" class="card" aria-labelledby="pr-h"></section>
+  </div>
+
+  <section id="view-tasks" class="view" aria-labelledby="tasks-h" hidden></section>
+  <section id="view-dir" class="view" aria-labelledby="dir-h" hidden></section>
+
+  <p class="foot">Everything is stored in the <a id="sheetLink" href="#" target="_blank" rel="noopener">O F Turnkey sheet</a>. <span id="backupNote"></span>
+    <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>
+</main>
+
+<div id="snack" class="snack" role="status" aria-live="polite" hidden></div>
+</div>
+<!-- Must stay a direct child of body: the print stylesheet hides everything else. -->
+<div id="printSheet" class="print-sheet"></div>
+
+<script src="config.js"></script>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
