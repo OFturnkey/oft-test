@@ -193,7 +193,12 @@ function call(fn, args, onOk, onFail) {
     renderAll();
   });
 }
-function refresh(quiet) { call('getData', [], quiet ? null : () => snack('Up to date.')); }
+// Brings everything on screen up to date: ledger, queries, and the open project's photos.
+function refresh(quiet) {
+  call('getData', [], quiet ? null : () => snack('Up to date.'));
+  if (S.queries) loadQueries();
+  if (S.photosFor) loadPhotos(S.photosFor);
+}
 
 function saveCache() {
   if (S.data && S.me) store(CACHE_KEY, JSON.stringify({ email: S.me.email, sheetUrl: S.sheetUrl, data: S.data }));
@@ -298,7 +303,12 @@ function showNoAccess(email) {
 /* ---------- site engineer screens (phone first; no ledger data ever reaches them) ---------- */
 function engClick(act, el) {
   if (photoClick(act, el) || queryClick(act, el)) return;
-  if (act === 'eng-tab') { S.engTab = el.dataset.tab; S.engQuery = ''; S.engRegister = false; window.scrollTo(0, 0); renderEng(); }
+  if (act === 'eng-tab') {
+    S.engTab = el.dataset.tab; S.engQuery = ''; S.engRegister = false; window.scrollTo(0, 0);
+    if (S.engTab === 'queries' && S.queries) loadQueries();
+    if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
+    renderEng();
+  }
   else if (act === 'eng-done') engCall('setDone', [el.dataset.id, el.checked], (res) => engSnack(el.checked ? 'Ticked off.' : 'Back on your list.'));
   else if (act === 'eng-add') engAddTask();
 }
@@ -1483,8 +1493,38 @@ function todayAllHtml(list) {
     '<button type="button" class="seg-b' + (mine ? ' on' : '') + '" data-act="today-mine" data-v="1">Just mine</button></div>' + groups;
 }
 
+// The project's own code bar: the project code is filled in, so "MT 26/11 check cove gap" or "P ALM 12k C" is enough.
+function projCodeFull(raw, proj) {
+  const t = String(raw || '').trim().split(/\s+/).filter(Boolean);
+  if (!t.length) return '';
+  if (LC.TYPES[t[0].toUpperCase()] && (t[1] || '').toUpperCase() !== proj) t.splice(1, 0, proj);
+  return t.join(' ');
+}
+function projCodePreview(proj) {
+  const full = projCodeFull(S.pcode, proj);
+  const r = LC.parse(full, { dir: S.dir, sel: todayIso() });
+  S.pcodeParsed = r;
+  const chips = r.tokens.map((x) => '<div class="tk ' + (x.ok ? 'ok' : 'bad') + '"><b>' + esc(x.txt) + '</b><span>' + esc(x.ok ? x.meaning : '? ' + x.meaning) + '</span></div>').join('') +
+    (r.hint ? '<div class="hint">Next: ' + esc(r.hint) + '</div>' : '');
+  return (full ? '<div class="chips">' + chips + '</div>' : '') + (r.entry ? '<div class="pv-line">' + badge(r.entry.type) + '<span class="pv-sent">' + esc(LC.describe(S.dir, r.entry)) + '</span></div>' : '');
+}
+function projCodeSave(proj) {
+  const r = S.pcodeParsed;
+  if (!r || !r.ready) { snack(r && r.problem ? r.problem : 'Type a code first.', { error: true }); return; }
+  const full = projCodeFull(S.pcode, proj);
+  call('addEntry', [full, todayIso()], (res) => {
+    S.pcode = ''; S.pcodeParsed = null;
+    const e = findEntry(res.id);
+    snack('Saved: ' + (e ? shortLine(e) : full), { undoId: res.id });
+  });
+}
+
 function projectOverviewHtml(p) {
-  const needs = needsHtml(p.code);
+  const pbar = canWrite() ? '<div class="card pbar"><div class="pbar-row"><label for="pcode" class="sr-only">Quick entry for ' + esc(p.code) + '</label>' +
+    '<input id="pcode" data-pcode="' + esc(p.code) + '" value="' + esc(S.pcode || '') + '" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Type anything for ' + esc(p.code) + ', e.g. MT 26/11 check cove gap  or  P ALM 12k C">' +
+    '<button type="button" class="btn-save" data-act="pcode-save" data-code="' + esc(p.code) + '">Add</button></div>' +
+    '<div id="pcodePreview" class="pbar-prev">' + projCodePreview(p.code) + '</div></div>' : '';
+  const needs = pbar + needsHtml(p.code);
   if (p.stage === 'execution' && S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; loadPhotos(p.code); }
   const latest = S.photos && S.photos.project === p.code ? S.photos.photos.slice(0, 4) : [];
   const photos = p.stage !== 'execution' ? '' : '<section class="card" aria-labelledby="lp-h"><div class="sec-head"><h3 id="lp-h">Latest site photos</h3>' +
@@ -1900,6 +1940,7 @@ function queryClick(act, el) {
   else if (act === 'qc-send') ownerSend(false);
   else if (act === 'qc-outcome') { S.qc.outcome = v; S.qc.err = ''; renderAll(); }
   else if (act === 'qc-cause') { S.qc.cause = v; S.qc.err = ''; renderAll(); }
+  else if (act === 'pcode-save') projCodeSave(el.dataset.code);
   else if (act === 'today-mine') { S.todayMine = !!v; renderAll(); }
   else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
@@ -2287,6 +2328,7 @@ document.addEventListener('click', (ev) => {
       S.tab = el.dataset.tab;
       window.scrollTo(0, 0);
       if (S.tab === 'dir') loadDevices();
+      if (S.tab === 'projects' && S.queries) loadQueries();
       break;
     case 'sess-out':
       if (prevDel === 'sess:' + id) signOutDevice(id); else S.confirmDel = 'sess:' + id;
@@ -2400,6 +2442,9 @@ document.addEventListener('input', (ev) => {
     S.projEdit[t.dataset.pi] = t.value;
   } else if (t.dataset.me && S.memberEdit) {
     S.memberEdit[t.dataset.me] = t.value;
+  } else if (t.dataset.pcode) {
+    S.pcode = t.value;
+    $('pcodePreview').innerHTML = projCodePreview(t.dataset.pcode);
   } else if (t.dataset.qc && S.qc) {
     S.qc[t.dataset.qc] = t.value;
     S.qc.err = '';
@@ -2463,6 +2508,9 @@ document.addEventListener('keydown', (ev) => {
   } else if (t.dataset.edit) {
     if (ev.key === 'Enter') { ev.preventDefault(); saveDirEdit(); }
     else if (ev.key === 'Escape') { S.dirEdit = null; renderAll(); }
+  } else if (t.dataset.pcode && ev.key === 'Enter') {
+    ev.preventDefault();
+    projCodeSave(t.dataset.pcode);
   } else if (t.dataset.ma && ev.key === 'Enter') {
     ev.preventDefault();
     addMember();
@@ -2475,7 +2523,7 @@ document.addEventListener('keydown', (ev) => {
 // Coming back to the app (e.g. phone unlocked) picks up entries made on another device.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !sessionToken()) return;
-  if (S.engineer) engCall('getSite', []);
+  if (S.engineer) { engCall('getSite', []); if (S.queries) loadQueries(); }
   else if (S.started && !S.pending && Date.now() - S.lastLoad > 60000) refresh(true);
 });
 if (phone.addEventListener) phone.addEventListener('change', () => { if (S.started) placeCodebar(); });
