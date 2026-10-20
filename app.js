@@ -9,6 +9,8 @@ const LOGO_URL = 'logo.png';
 const SESSION_KEY = 'oft.session.' + CONFIG.env;
 const ME_KEY = 'oft.me.' + CONFIG.env;
 const CACHE_KEY = 'oft.cache.' + CONFIG.env;
+// Site engineers: their projects, team and tasks (no ledger data), so the app opens without signal.
+const SITE_KEY = 'oft.site.' + CONFIG.env;
 const MON = LC.MON;
 const MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const WDS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -162,8 +164,10 @@ function api(action, args) {
     if (!r.ok) throw new Error('The server answered ' + r.status + '. Please try again.');
     return r.json().catch(() => { throw new Error('The server sent something unexpected. Please try again.'); });
   }, (err) => {
-    throw new Error(err && err.name === 'AbortError' ? 'No answer from the server after 90 seconds. Check your signal and try again.'
+    const e = new Error(err && err.name === 'AbortError' ? 'No answer from the server after 90 seconds. Check your signal and try again.'
       : navigator.onLine === false ? 'No signal. Nothing was sent.' : 'Couldn’t reach the server. Check your connection and try again.');
+    e.network = true; // the outbox keeps the item and tries again later
+    throw e;
   }).then((res) => {
     S.timing = { action: action, server: res.ms, total: Math.round(performance.now() - t0) };
     renderEnvStrip();
@@ -264,6 +268,7 @@ function showNoAccess(email) {
 }
 /* ---------- site engineer screens (phone first; no ledger data ever reaches them) ---------- */
 function engClick(act, el) {
+  if (photoClick(act, el)) return;
   if (act === 'eng-tab') { S.engTab = el.dataset.tab; window.scrollTo(0, 0); renderEng(); }
   else if (act === 'eng-done') engCall('setDone', [el.dataset.id, el.checked], (res) => engSnack(el.checked ? 'Ticked off.' : 'Back on your list.'));
   else if (act === 'eng-add') engAddTask();
@@ -316,6 +321,7 @@ function renderEng() {
     '" aria-pressed="' + (S.engTab === t[0]) + '">' + esc(t[1]) + '</button>').join('');
   const main = $('engMain');
   if (S.engTab === 'today') main.innerHTML = engTodayHtml();
+  else if (S.engTab === 'photos') main.innerHTML = engPhotosHtml();
   else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
     '<p class="empty">This comes in the next test version.</p></section>';
 }
@@ -368,7 +374,9 @@ function deviceName() {
   return os + (br ? ' · ' + br : '') + (isStandalone() ? ' (installed app)' : '');
 }
 function forgetDevice() {
-  store(SESSION_KEY, null); store(ME_KEY, null); store(CACHE_KEY, null);
+  store(SESSION_KEY, null); store(ME_KEY, null); store(CACHE_KEY, null); store(SITE_KEY, null);
+  S.engineer = false;
+  $('engScreen').hidden = true;
   S.me = null; S.devices = null;
 }
 // The server says this device is no longer signed in (signed out from another device, or unused for months).
@@ -393,15 +401,17 @@ function boot(fromCache) {
     S.me = res.me;
     store(ME_KEY, JSON.stringify(res.me));
     if (res.noAccess) { forgetDevice(); showNoAccess(res.me.email); return; }
-    if (res.engineer) { store(CACHE_KEY, null); showEngineer(res.me, res.site); return; }
+    if (res.engineer) { store(CACHE_KEY, null); store(SITE_KEY, JSON.stringify({ email: res.me.email, site: res.site })); showEngineer(res.me, res.site); startOutbox(); return; }
     S.sheetUrl = res.sheetUrl || '';
     setData(res.data);
     saveCache();
     firstRender();
+    startOutbox();
   }, (err) => {
     S.pending--;
     if (err.signin) { signedOut(err.message); return; }
     if (S.started) { snack(cleanErr(err.message) + ' Showing what was last saved on this device.', { error: true }); renderAll(); return; }
+    if (S.engineer) { engSnack(cleanErr(err.message) + ' Showing what was last saved on this phone.', true); startOutbox(); return; }
     showGate('O F Turnkey', cleanErr(err.message), { error: true, button: TRY_AGAIN });
   });
 }
@@ -1342,7 +1352,7 @@ const SCHEDULE_LABEL = { full: 'Full schedule', light: 'Light schedule', none: '
 // Sections per stage. [key, label, ready in this version]. Later steps switch the others on.
 const SECTIONS = {
   design: [['overview', 'Overview', true], ['drawings', 'Drawings', false], ['queries', 'Queries', false]],
-  execution: [['overview', 'Overview', true], ['schedule', 'Schedule', false], ['site', 'Site', false], ['queries', 'Queries', false],
+  execution: [['overview', 'Overview', true], ['schedule', 'Schedule', false], ['site', 'Site', true], ['queries', 'Queries', false],
     ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', false], ['visits', 'Site visits', false]],
   handover: [['overview', 'Overview', true]],
   archive: [['overview', 'Overview', true]]
@@ -1401,7 +1411,7 @@ function renderProjectsView() {
     '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.name || p.code) + ' <span class="code-tag">' + esc(p.code) + '</span></h2>' +
     '<div class="psub">' + esc(projectLine(p)) + '</div></div>' +
     '<nav class="psecs" aria-label="Project sections">' + nav + '</nav>' +
-    projectOverviewHtml(p);
+    (S.projSec === 'site' ? projectSiteHtml(p) : projectOverviewHtml(p));
 }
 
 function projectOverviewHtml(p) {
@@ -1528,6 +1538,296 @@ function saveMemberEdit() {
   }, (msg) => { if (S.memberEdit) S.memberEdit.err = msg; });
 }
 
+/* ---------- the phone's outbox: things that wait for signal, then send by themselves ---------- */
+// IndexedDB on this device: "drafts" (photos picked but not sent yet) and "outbox" (sent when there is
+// signal, in order, each with its own id so a resend after a dropped signal is saved once on the server).
+const IDB_NAME = 'oft-phone-' + CONFIG.env;
+let idbOpen = null;
+function idb() {
+  if (!idbOpen) {
+    idbOpen = new Promise((resolve, reject) => {
+      const r = indexedDB.open(IDB_NAME, 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore('drafts', { keyPath: 'id' }); r.result.createObjectStore('outbox', { keyPath: 'id' }); };
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => { idbOpen = null; reject(r.error || new Error('This phone’s storage isn’t available.')); };
+    });
+  }
+  return idbOpen;
+}
+function idbDo(store, mode, fn) {
+  return idb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(store, mode), st = tx.objectStore(store);
+    let out;
+    const req = fn(st);
+    if (req) req.onsuccess = () => { out = req.result; };
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Couldn’t save on this phone.'));
+  }));
+}
+const idbAll = (store) => idbDo(store, 'readonly', (st) => st.getAll()).then((l) => (l || []).sort((a, b) => a.createdAt - b.createdAt));
+const idbPut = (store, item) => idbDo(store, 'readwrite', (st) => st.put(item));
+const idbDel = (store, id) => idbDo(store, 'readwrite', (st) => st.delete(id));
+function newId() { return (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).replace(/[^a-z0-9-]/gi, ''); }
+
+const OUT = { items: [], sending: false, online: navigator.onLine, lastError: '' };
+// Adds a request to the outbox and tries to send it straight away.
+function outboxAdd(action, args, label) {
+  const item = { id: newId(), action: action, args: args, label: label, email: S.me ? S.me.email : '', createdAt: Date.now(), error: '' };
+  return idbPut('outbox', item).then(() => { refreshOutbox(); flushOutbox(); });
+}
+function refreshOutbox() {
+  return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); }, () => { /* no storage: nothing waiting */ });
+}
+// Sends waiting items one by one. Stops at the first network problem (tries again on signal); an item the
+// server refuses is kept aside with the reason, so it can't block the rest.
+function flushOutbox() {
+  if (OUT.sending || !sessionToken() || !S.me) return;
+  OUT.sending = true;
+  renderNetStrip();
+  const next = () => idbAll('outbox').then((items) => {
+    OUT.items = items;
+    const item = items.find((x) => !x.error && x.email === S.me.email);
+    if (!item) return null;
+    return api(item.action, item.args).then((res) => idbDel('outbox', item.id).then(() => { OUT.online = true; outboxSent(item, res); return next(); }), (err) => {
+      if (err.network) { OUT.online = false; return null; }
+      if (err.signin) { signedOut(err.message); return null; }
+      item.error = cleanErr(err.message);
+      return idbPut('outbox', item).then(next);
+    });
+  });
+  next().catch(() => { /* storage trouble: leave items as they are */ }).finally(() => { OUT.sending = false; refreshOutbox(); });
+}
+// What to refresh on screen once something from the outbox has arrived.
+function outboxSent(item, res) {
+  if (item.action === 'uploadPhoto') {
+    const p = item.args[0];
+    if (S.photos && S.photos.project === p.project && res && res.photo && !S.photos.photos.some((x) => x.id === res.photo.id)) S.photos.photos.unshift(res.photo);
+    if (res && res.photo && p.thumb) S.thumbs[res.photo.id] = 'data:image/jpeg;base64,' + p.thumb;
+  }
+  if (S.engineer) renderEng(); else if (S.started) renderAll();
+}
+function renderNetStrip() {
+  const el = $('netStrip'), mine = OUT.items.filter((x) => S.me && x.email === S.me.email);
+  const waiting = mine.filter((x) => !x.error), failed = mine.filter((x) => x.error);
+  if (!waiting.length && !failed.length && OUT.online) { el.hidden = true; return; }
+  el.hidden = false;
+  let h = '';
+  if (waiting.length) {
+    h += !OUT.online ? 'No signal · ' + plural(waiting.length, 'item', 'items') + ' waiting. ' + (waiting.length === 1 ? 'It' : 'They') + ' will send by ' + (waiting.length === 1 ? 'itself' : 'themselves') + '.'
+      : OUT.sending ? 'Sending ' + plural(waiting.length, 'item', 'items') + '…' : plural(waiting.length, 'item', 'items') + ' waiting to send.';
+  } else if (!OUT.online) h += 'No signal.';
+  if (failed.length) {
+    h += (h ? ' ' : '') + plural(failed.length, 'item', 'items') + ' couldn’t be sent: ' + esc(failed[0].error) +
+      ' <button type="button" data-act="out-drop">Remove</button>';
+  }
+  el.innerHTML = h;
+  el.className = 'net-strip' + (failed.length ? ' bad' : '');
+}
+window.addEventListener('online', () => { OUT.online = true; flushOutbox(); renderNetStrip(); });
+window.addEventListener('offline', () => { OUT.online = false; renderNetStrip(); });
+setInterval(() => { if (OUT.items.some((x) => !x.error)) flushOutbox(); }, 30000);
+
+// After sign-in on this device: show what is waiting and send it.
+function startOutbox() { loadDrafts().then(refreshOutbox).then(() => { if (S.engineer) renderEng(); flushOutbox(); }); }
+
+/* ---------- photos: shrink on the phone, then send ---------- */
+// About 1600 px on the long side at JPEG 0.7 (roughly 300 KB), plus a 400 px preview. Turned the right way up.
+function shrinkPhoto(file) {
+  const fromBitmap = () => createImageBitmap(file, { imageOrientation: 'from-image' });
+  const fromImg = () => new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file isn’t a photo the phone can read.')); };
+    img.src = url;
+  });
+  return (window.createImageBitmap ? fromBitmap().catch(fromImg) : fromImg()).then((src) => {
+    const draw = (maxSide, q) => {
+      const w = src.width, h = src.height, k = Math.min(1, maxSide / Math.max(w, h));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+      c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', q).split(',')[1];
+    };
+    const full = draw(1600, 0.7);
+    return { full: full, thumb: draw(400, 0.6), bytes: Math.round(full.length * 3 / 4) };
+  });
+}
+// Photos picked on the phone are saved here at once, so a reload (or the camera closing the app) can't lose them.
+S.drafts = []; S.thumbs = {}; S.photos = null; S.photoSel = '';
+function loadDrafts() { return idbAll('drafts').then((d) => { S.drafts = d; }, () => { S.drafts = []; }); }
+function addDraftFiles(files, project) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  engSnack('Getting ' + plural(list.length, 'photo', 'photos') + ' ready…');
+  let chain = Promise.resolve();
+  list.forEach((f) => {
+    chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, area: '', full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
+      (err) => engSnack(cleanErr(err.message), true));
+  });
+  chain.then(loadDrafts).then(renderEng);
+}
+function sendDrafts(project, caption) {
+  const drafts = S.drafts.filter((d) => d.project === project);
+  if (!drafts.length) return;
+  const missing = drafts.find((d) => !String(d.area || '').trim());
+  if (missing) { engSnack('Pick or type an area for each photo.', true); return; }
+  const batch = newId();
+  let chain = Promise.resolve();
+  drafts.forEach((d) => {
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: project, batchId: batch, area: d.area.trim(), caption: caption, linkedTo: '', full: d.full, thumb: d.thumb }],
+      'Photo · ' + d.area.trim())).then(() => idbDel('drafts', d.id));
+  });
+  chain.then(loadDrafts).then(() => {
+    S.photoCaption = '';
+    engSnack(navigator.onLine ? 'Sending ' + plural(drafts.length, 'photo', 'photos') + '…' : 'Saved on your phone. ' + (drafts.length === 1 ? 'It' : 'They') + ' will send by ' + (drafts.length === 1 ? 'itself' : 'themselves') + ' when there’s signal.');
+    renderEng();
+  });
+}
+function loadPhotos(project, then) {
+  api('listPhotos', [project]).then((res) => {
+    S.photos = res;
+    if (then) then();
+    loadThumbs(res.photos.slice(0, 40).map((p) => p.id));
+    if (S.engineer) renderEng(); else renderAll();
+  }, (err) => { if (err.signin) signedOut(err.message); else if (S.engineer) engSnack(cleanErr(err.message), true); else snack(cleanErr(err.message), { error: true }); });
+}
+function loadThumbs(ids) {
+  const need = ids.filter((i) => !S.thumbs[i]);
+  if (!need.length) return;
+  api('photoThumbs', [need]).then((res) => {
+    Object.assign(S.thumbs, res.thumbs || {});
+    if (S.engineer) renderEng(); else renderAll();
+  }, () => { /* previews come next time */ });
+}
+function thumbImg(p, cls) {
+  const src = S.thumbs[p.id];
+  return src ? '<img class="' + (cls || 'ph-img') + '" src="' + src + '" alt="' + esc(p.area || 'Site photo') + '">' : '<span class="' + (cls || 'ph-img') + ' ph-wait" aria-label="Loading photo"></span>';
+}
+function photoDay(at) { return String(at || '').slice(0, 10); }
+// The dated photo feed. sel: the photo opened beside (laptop) or below (phone) the feed.
+function photoFeedHtml(photos, opts) {
+  opts = opts || {};
+  if (!photos.length) return '<p class="empty">No site photos yet.</p>';
+  const days = [];
+  photos.forEach((p) => { const d = photoDay(p.at); let g = days.find((x) => x.d === d); if (!g) days.push(g = { d: d, items: [] }); g.items.push(p); });
+  const users = (S.engineer ? S.site.users : S.data.users) || [];
+  const nameOf = (email) => { const u = users.find((x) => x.email === email); return u ? u.name : email; };
+  const counts = {};
+  ((S.photos && S.photos.comments) || []).forEach((c) => { counts[c.photoId] = (counts[c.photoId] || 0) + 1; });
+  return days.map((g) => {
+    const who = Array.from(new Set(g.items.map((p) => nameOf(p.by)))).join(', ');
+    return '<section class="ph-day"><div class="ph-day-h"><b>' + esc(g.d === todayIso() ? 'Today · ' + niceDay(g.d) : niceDay(g.d)) + '</b><span class="muted">' + esc(who) + ' · ' + plural(g.items.length, 'photo', 'photos') + '</span></div>' +
+      '<div class="ph-grid">' + g.items.map((p) => '<button type="button" class="ph-tile' + (S.photoSel === p.id ? ' on' : '') + '" data-act="ph-open" data-id="' + esc(p.id) + '">' +
+        '<span class="ph-frame">' + thumbImg(p) + (counts[p.id] ? '<span class="ph-badge">' + plural(counts[p.id], 'comment', 'comments') + '</span>' : '') + '</span>' +
+        '<span class="ph-area">' + esc(p.area || '—') + '</span></button>').join('') + '</div></section>';
+  }).join('');
+}
+// The opened photo: big picture, who/when/line, comments, and (owners) comment or comment + task.
+function photoPanelHtml() {
+  const p = S.photos && S.photos.photos.find((x) => x.id === S.photoSel);
+  if (!p) return '<p class="empty">Tap a photo to see it bigger, comment on it, or make it a task.</p>';
+  const users = (S.engineer ? S.site.users : S.data.users) || [];
+  const nameOf = (email) => { const u = users.find((x) => x.email === email); return u ? u.name : email; };
+  const comments = S.photos.comments.filter((c) => c.photoId === p.id);
+  const owner = !S.engineer && isOwner();
+  const full = S.fullPhoto && S.fullPhoto.id === p.id ? '<img class="ph-big" src="' + S.fullPhoto.url + '" alt="' + esc(p.area || 'Site photo') + '">'
+    : '<span class="ph-big-wrap">' + thumbImg(p, 'ph-big') + '<span class="ph-hint">Loading full size…</span></span>';
+  const c = S.photoComment || (S.photoComment = { text: '', due: addDays(todayIso(), 2), err: '' });
+  const canDelete = owner || (p.by === (S.me && S.me.email) && Date.now() - Date.parse(p.at.replace(' ', 'T') + ':00+05:30') < 86400000);
+  return full +
+    '<div class="ph-info"><b>' + esc(p.area || 'Site photo') + '</b><span class="muted">' + esc(nameOf(p.by)) + ' · ' + esc(niceDay(photoDay(p.at)) + ' ' + p.at.slice(11, 16)) +
+    (p.caption ? ' · ' + esc(p.caption) : '') + '</span></div>' +
+    comments.map((x) => '<div class="ph-comment"><b>' + esc(nameOf(x.by)) + '</b> <span class="muted">' + esc(x.at.slice(5, 16)) + '</span><div>' + esc(x.text) + '</div>' +
+      (x.taskId ? '<span class="ph-task">Task for the site engineer</span>' : '') + '</div>').join('') +
+    '<div class="ph-form"><label for="phComment">Comment on this photo</label><textarea id="phComment" data-pc="text" rows="2">' + esc(c.text) + '</textarea>' +
+    (owner ? '<label class="ph-due">Task due <input type="date" data-pc="due" value="' + esc(c.due) + '"></label>' : '') +
+    '<div class="ph-btns"><button type="button" class="btn-outline" data-act="ph-comment">Comment</button>' +
+    (owner ? '<button type="button" class="btn-accent" data-act="ph-task">Comment + make it a task</button>' : '') + '</div>' +
+    (owner ? '<span class="muted small">The task goes to the site engineer with this photo, due in 2 days unless you change the date.</span>' : '') +
+    (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
+    (canDelete ? '<button type="button" class="link-btn ph-del" data-act="ph-delete" data-id="' + esc(p.id) + '">' + (S.confirmPhotoDel === p.id ? 'Confirm: remove this photo?' : 'Remove photo') + '</button>' : '') + '</div>';
+}
+function openPhoto(id) {
+  S.photoSel = id;
+  S.photoComment = null;
+  if (!S.fullPhoto || S.fullPhoto.id !== id) {
+    S.fullPhoto = null;
+    api('photoFull', [id]).then((res) => { if (S.photoSel === id) { S.fullPhoto = res; if (S.engineer) renderEng(); else renderAll(); } }, () => { /* the preview stays */ });
+  }
+}
+function sendPhotoComment(makeTask) {
+  const c = S.photoComment, p = S.photos && S.photos.photos.find((x) => x.id === S.photoSel);
+  if (!c || !p) return;
+  if (!String(c.text || '').trim()) { c.err = 'Type a comment.'; if (S.engineer) renderEng(); else renderAll(); return; }
+  api('commentPhoto', [p.id, c.text, !!makeTask, makeTask ? c.due : '']).then((res) => {
+    S.photos = res;
+    S.photoComment = null;
+    if (S.engineer) { engSnack('Comment sent.'); renderEng(); }
+    else { snack(makeTask ? 'Comment sent and made a task for the site engineer.' : 'Comment sent.'); if (makeTask) refresh(true); renderAll(); }
+  }, (err) => { c.err = cleanErr(err.message); if (S.engineer) renderEng(); else renderAll(); });
+}
+function deletePhotoNow(id) {
+  api('deletePhoto', [id]).then((res) => {
+    S.photos = res; S.photoSel = ''; S.confirmPhotoDel = '';
+    if (S.engineer) { engSnack('Photo removed.'); renderEng(); } else { snack('Photo removed.'); renderAll(); }
+  }, (err) => { if (S.engineer) engSnack(cleanErr(err.message), true); else snack(cleanErr(err.message), { error: true }); });
+}
+
+// Engineer → Photos: take or pick photos, an area for each (pick or type; new ones are kept), one line, send.
+function engPhotosHtml() {
+  const proj = S.engProject;
+  if (proj && S.photosFor !== proj) { S.photosFor = proj; S.photos = null; S.photoSel = ''; loadPhotos(proj); }
+  const drafts = S.drafts.filter((d) => d.project === proj);
+  const areas = ((S.site && S.site.areas) || {})[proj] || [];
+  const mine = (S.photos && S.photos.photos.filter((p) => p.by === S.me.email)) || [];
+  return '<section class="card eng-card"><h2 class="eng-h2">Site photos · ' + esc(proj) + '</h2>' +
+    '<p class="muted small eng-pad">' + (mine.length ? 'You last sent photos ' + esc(niceDay(photoDay(mine[0].at))) + '.' : 'No photos from you on this project yet.') + '</p>' +
+    '<div class="ph-pick eng-pad"><label class="btn-save ph-pick-btn">Take photos<input type="file" accept="image/*" capture="environment" data-ph-pick="1" hidden></label>' +
+    '<label class="btn-outline ph-pick-btn">From gallery<input type="file" accept="image/*" multiple data-ph-pick="1" hidden></label></div>' +
+    '<datalist id="areaList">' + areas.map((a) => '<option value="' + esc(a) + '">').join('') + '</datalist>' +
+    (drafts.length ? '<p class="muted small eng-pad">' + plural(drafts.length, 'photo', 'photos') + ' · pick an area or type a new one. New areas are saved for this project.</p>' +
+      drafts.map((d) => '<div class="ph-draft"><img src="data:image/jpeg;base64,' + d.thumb + '" alt="">' +
+        '<label>Area · pick or type<input list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.area || '') + '" autocomplete="off"></label>' +
+        '<button type="button" class="icon-btn" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove this photo">×</button></div>').join('') +
+      '<div class="eng-form"><label>One line for Shruthi and Savan (optional)<input data-ph-caption="1" value="' + esc(S.photoCaption || '') + '" autocomplete="off"></label>' +
+      '<button type="button" class="btn-save" data-act="ph-send">Send ' + plural(drafts.length, 'photo', 'photos') + '</button>' +
+      '<span class="muted small">Shrunk before sending. No signal? They wait on the phone and send later.</span></div>'
+      : '') + '</section>' +
+    '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' +
+    (S.photos ? photoFeedHtml(S.photos.photos) : '<p class="empty">Loading…</p>') + '</div></section>' +
+    (S.photoSel ? '<section class="card eng-card eng-pad" id="phPanel">' + photoPanelHtml() + '</section>' : '');
+}
+
+// Owners → project → Site: the dated photo feed, with the opened photo beside it.
+function projectSiteHtml(p) {
+  if (S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; loadPhotos(p.code); }
+  return '<div class="pgrid"><div class="pmain"><section class="card"><div class="sec-head"><h3>Photos from site</h3>' +
+    '<button type="button" class="btn-outline" data-act="ph-reload">Refresh</button></div>' +
+    (S.photos ? photoFeedHtml(S.photos.photos) : '<p class="empty">Loading…</p>') + '</section></div>' +
+    '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div></div>';
+}
+
+// Photo buttons, the same for owners and engineers. Returns true when it handled the click.
+function photoClick(act, el) {
+  const redraw = () => { if (S.engineer) renderEng(); else renderAll(); };
+  if (act === 'ph-open') {
+    openPhoto(el.dataset.id);
+    redraw();
+    const panel = $('phPanel');
+    if (panel && window.matchMedia('(max-width: 699px)').matches) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else if (act === 'ph-comment') sendPhotoComment(false);
+  else if (act === 'ph-task') sendPhotoComment(true);
+  else if (act === 'ph-delete') {
+    if (S.confirmPhotoDel === el.dataset.id) deletePhotoNow(el.dataset.id); else { S.confirmPhotoDel = el.dataset.id; redraw(); }
+  } else if (act === 'ph-reload') { if (S.photosFor) { S.thumbs = {}; loadPhotos(S.photosFor); } }
+  else if (act === 'ph-send') sendDrafts(S.engProject, S.photoCaption || '');
+  else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
+  else if (act === 'out-drop') {
+    Promise.all(OUT.items.filter((x) => x.error).map((x) => idbDel('outbox', x.id))).then(refreshOutbox);
+  } else return false;
+  return true;
+}
+
 /* ---------- layout & render ---------- */
 const phone = window.matchMedia('(max-width: 699px)');
 function placeCodebar() {
@@ -1576,6 +1876,7 @@ document.addEventListener('click', (ev) => {
   if (act === 'sign-out-here') { signOutHere(); return; }
   if (S.engineer) { engClick(act, el); return; }
   if (!S.started) return;
+  if (photoClick(act, el)) return;
   const prevVoid = S.confirmVoid, prevDel = S.confirmDel;
   S.confirmVoid = null;
   S.confirmDel = null;
@@ -1705,6 +2006,14 @@ document.addEventListener('input', (ev) => {
     S.projEdit[t.dataset.pi] = t.value;
   } else if (t.dataset.me && S.memberEdit) {
     S.memberEdit[t.dataset.me] = t.value;
+  } else if (t.dataset.draftArea) {
+    const d = S.drafts.find((x) => x.id === t.dataset.draftArea);
+    if (d) { d.area = t.value; idbPut('drafts', d).catch(() => { /* kept in memory until sent */ }); }
+  } else if (t.dataset.phCaption) {
+    S.photoCaption = t.value;
+  } else if (t.dataset.pc) {
+    S.photoComment = S.photoComment || { text: '', due: addDays(todayIso(), 2), err: '' };
+    S.photoComment[t.dataset.pc] = t.value;
   } else if (t.dataset.ea && S.engAdd) {
     S.engAdd[t.dataset.ea] = t.value;
   } else if (t.id === 'engProject') {
@@ -1721,6 +2030,7 @@ document.addEventListener('input', (ev) => {
 
 document.addEventListener('change', (ev) => {
   const t = ev.target;
+  if (t.dataset && t.dataset.phPick) { addDraftFiles(t.files, S.engProject); t.value = ''; return; }
   if (t.id === 'editDate') { S.editDate = t.value || ''; S.armed = ''; S.saveErr = ''; renderCodebar(); return; }
   if (t.id === 'alertsKey' && t.files && t.files[0]) {
     const reader = new FileReader();
@@ -1776,7 +2086,12 @@ if (!sessionToken()) {
 } else {
   try { S.me = JSON.parse(stored(ME_KEY) || 'null'); } catch (_) { S.me = null; }
   const cache = loadCache();
-  if (cache && S.me && cache.email === S.me.email) {
+  let siteCache = null;
+  try { siteCache = JSON.parse(stored(SITE_KEY) || 'null'); } catch (_) { siteCache = null; }
+  if (siteCache && S.me && siteCache.email === S.me.email && S.me.role === 'site_engineer') {
+    showEngineer(S.me, siteCache.site);
+    boot(true);
+  } else if (cache && S.me && cache.email === S.me.email) {
     S.sheetUrl = cache.sheetUrl || '';
     setData(cache.data);
     firstRender();
