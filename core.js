@@ -17,7 +17,8 @@ function LedgerCore() {
     P: { label: 'Paid', money: true, parts: ['project', 'who', 'amount', 'mode', 'note'] },
     R: { label: 'Received', money: true, parts: ['project', 'who', 'amount', 'mode', 'note'] },
     F: { label: 'Follow-up', task: true, parts: ['project', 'who', 'due', 'note'] },
-    MT: { label: 'My task', task: true, noteRequired: true, parts: ['project', 'due', 'note'] }
+    // An optional @CODE gives the task to that team member: MT NST @VNK 26/11 seal pantry joint.
+    MT: { label: 'My task', task: true, noteRequired: true, parts: ['project', 'assignee', 'due', 'note'] }
   };
 
   function pad(n) { return (n < 10 ? '0' : '') + n; }
@@ -71,9 +72,10 @@ function LedgerCore() {
   }
   function amountWords(n) { return words(n) + (n === 1 ? ' rupee' : ' rupees'); }
 
-  // Directory: { projects: {SA: {name, client, active}}, people: {BAB: {...}}, modes: {C: {...}} }
+  // Directory: { projects: {SA: {name, client, active}}, people: {BAB: {...}}, modes: {C: {...}}, team: {VNK: {name, role}} }
   function buildDir(data) {
-    var dir = { projects: {}, people: {}, modes: {} };
+    var dir = { projects: {}, people: {}, modes: {}, team: {} };
+    (data.users || []).forEach(function (u) { if (u.code && !dir.team[u.code]) dir.team[u.code] = { name: u.name || u.email, role: u.role }; });
     (data.projects || []).forEach(function (p) { dir.projects[p.code] = { name: p.name, client: p.client, active: p.active }; });
     (data.people || []).forEach(function (p) {
       dir.people[p.code] = { name: p.name, kind: p.kind, detail: p.detail, active: p.active, system: p.code === CLIENT };
@@ -100,8 +102,9 @@ function LedgerCore() {
     if (e.type === 'F') return 'Follow up with ' + whoName(dir, e.who, e.project) + (e.note ? ': ' + e.note : '');
     return cap(e.note);
   }
+  function teamName(dir, code) { var u = dir.team && dir.team[code]; return u ? u.name : code; }
   function describe(dir, e) {
-    if (TYPES[e.type] && TYPES[e.type].task) return taskTitle(dir, e) + ' (due ' + nice(e.due) + ')';
+    if (TYPES[e.type] && TYPES[e.type].task) return taskTitle(dir, e) + (e.assignee ? ' · for ' + teamName(dir, e.assignee) : '') + ' (due ' + nice(e.due) + ')';
     var nm = whoName(dir, e.who, e.project);
     var by = e.mode ? ' by ' + modeLabel(dir, e.mode) : '';
     var note = e.note ? ' — ' + e.note : '';
@@ -161,6 +164,20 @@ function LedgerCore() {
         return good(m.label + (m.active ? '' : ' (archived)'));
       }
     },
+    assignee: {
+      optional: true,
+      hint: function (ctx) {
+        var l = Object.keys(ctx.dir.team || {}).map(function (k) { return '@' + k; });
+        return l.length ? '@code to give it to someone (' + listCodes(l) + '), or a date dd/mm, or what to do' : 'date dd/mm (optional), then what to do';
+      },
+      match: function (raw) { return /^@/.test(raw); },
+      read: function (raw, st, ctx) {
+        var c = raw.slice(1).toUpperCase(), u = ctx.dir.team && ctx.dir.team[c];
+        if (!u) return bad('no one has the code ' + (c || '…') + ' — see Directory → Team');
+        st.assignee = c;
+        return good('for ' + u.name);
+      }
+    },
     due: {
       optional: true,
       hint: function (ctx, type) { return 'date dd/mm (optional), then ' + (TYPES[type].noteRequired ? 'what to do' : 'a note'); },
@@ -192,7 +209,7 @@ function LedgerCore() {
       return out;
     }
     out.tokens.push({ txt: t[0], meaning: def.label, ok: true });
-    var st = { project: '', who: '', amount: null, mode: '', due: '', note: '' };
+    var st = { project: '', who: '', amount: null, mode: '', due: '', note: '', assignee: '' };
     var i = 1, hint = '', problem = '';
     for (var p = 0; p < def.parts.length; p++) {
       var name = def.parts[p], part = PARTS[name];
@@ -221,7 +238,7 @@ function LedgerCore() {
     if (out.ready) {
       out.entry = {
         type: type, project: st.project, who: st.who, amount: def.money ? st.amount : null, mode: st.mode,
-        due: def.task ? (st.due || ctx.sel) : '', note: st.note, date: ctx.sel, raw_code: t.join(' ')
+        due: def.task ? (st.due || ctx.sel) : '', note: st.note, date: ctx.sel, raw_code: t.join(' '), assignee: st.assignee
       };
     }
     out.problem = problem || (out.ready ? '' : 'This code is not complete yet' + (hint ? ' (next: ' + hint + ')' : '') + '.');
@@ -286,7 +303,7 @@ function LedgerCore() {
     MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT,
     pad: pad, iso: iso, fromIso: fromIso, nice: nice, cap: cap, inr: inr, short: short, amountOf: amountOf, amountWords: amountWords,
     buildDir: buildDir, storeFor: storeFor, activeCodes: activeCodes, whoCodes: whoCodes,
-    projName: projName, clientName: clientName, whoName: whoName, modeLabel: modeLabel, taskTitle: taskTitle, describe: describe,
+    projName: projName, clientName: clientName, whoName: whoName, modeLabel: modeLabel, taskTitle: taskTitle, describe: describe, teamName: teamName,
     parse: parse, codeIssue: codeIssue, nameDup: nameDup, suggestCode: suggestCode, renameRaw: renameRaw
   };
 }
