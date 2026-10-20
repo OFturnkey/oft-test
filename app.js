@@ -2245,7 +2245,7 @@ function needsFor(code) {
   }));
   live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).forEach((e) => out.push({
     kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'blue', title: LC.taskTitle(S.dir, e),
-    sub: (e.assignee ? 'For ' + LC.teamName(S.dir, e.assignee) : 'Yours') + ' · due ' + niceDay(e.due), act: 'done', id: e.id, label: 'Done'
+    sub: (isMine(e) ? 'Yours' : 'For ' + (e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by))) + ' · due ' + niceDay(e.due), act: 'done', id: e.id, label: 'Done'
   }));
   return out.sort((a, b) => (b.hold === true) - (a.hold === true));
 }
