@@ -290,7 +290,8 @@ function signInWith(credential) {
     store(SESSION_KEY, res.session);
     store(ME_KEY, JSON.stringify(res.me));
     S.me = res.me;
-    boot(false);
+    // Site engineers see their own screen (with its bottom bar) at once; it fills in when the data arrives.
+    if (res.me.role === 'site_engineer') { showEngineer(res.me, null); boot(true); } else boot(false);
   }, (err) => showSignIn(cleanErr(err.message), { error: true, chooseAccount: true }));
 }
 function showNoAccess(email) {
@@ -327,6 +328,8 @@ function showEngineer(me, site) {
   renderEng();
   renderEnvStrip();
 }
+// Engineer screens use the site's name (E-City) everywhere: the picker, task lines, headings.
+function engProjName(code) { const p = ((S.site && S.site.projects) || []).find((x) => x.code === code); return p && p.name ? p.name : code; }
 function engMe() { return ((S.site && S.site.users) || []).find((u) => u.email === S.me.email) || { projects: [], code: '' }; }
 function engProjects() {
   // His own projects first, then the rest (engineers can see every project, to help each other).
@@ -359,11 +362,12 @@ const ENG_TABS = [['today', 'Today'], ['queries', 'Queries'], ['photos', 'Photos
 function renderEng() {
   const projs = engProjects();
   if (!S.engProject || !projs.some((p) => p.code === S.engProject)) S.engProject = projs.length ? projs[0].code : '';
-  $('engProject').innerHTML = projs.map((p) => '<option value="' + esc(p.code) + '"' + (p.code === S.engProject ? ' selected' : '') + '>' + esc(p.code) + '</option>').join('');
+  $('engProject').innerHTML = projs.length ? projs.map((p) => '<option value="' + esc(p.code) + '"' + (p.code === S.engProject ? ' selected' : '') + '>' + esc(engProjName(p.code)) + '</option>').join('') : '<option>Loading…</option>';
   $('engNav').innerHTML = ENG_TABS.map((t) => '<button type="button" class="eng-tab' + (S.engTab === t[0] ? ' on' : '') + '" data-act="eng-tab" data-tab="' + t[0] +
     '" aria-pressed="' + (S.engTab === t[0]) + '">' + esc(t[1]) + '</button>').join('');
   const main = $('engMain');
-  if (S.engTab === 'today') main.innerHTML = engTodayHtml();
+  if (!S.site) main.innerHTML = '<p class="empty">Opening…</p>';
+  else if (S.engTab === 'today') main.innerHTML = engTodayHtml();
   else if (S.engTab === 'photos') main.innerHTML = engPhotosHtml();
   else if (S.engTab === 'queries') main.innerHTML = engQueriesHtml();
   else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
@@ -375,7 +379,7 @@ function engTodayHtml() {
   const name = (engMe().name || S.me.email).split(/\s+/)[0];
   const tasks = ((S.site && S.site.tasks) || []).slice().sort(byDue);
   const open = tasks.filter((x) => !x.done), done = tasks.filter((x) => x.done).slice(-5).reverse();
-  const projName = (c) => { const p = ((S.site && S.site.projects) || []).find((x) => x.code === c); return p ? p.name || c : c; };
+  const projName = engProjName;
   const who = (email) => { const u = ((S.site && S.site.users) || []).find((x) => x.email === email); return u ? u.name : email; };
   const row = (x) => '<label class="eng-task' + (x.done ? ' done' : '') + (x.due < t && !x.done ? ' late' : '') + '">' +
     '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + '>' +
@@ -386,27 +390,30 @@ function engTodayHtml() {
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
     '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">Ask a question</button>' +
     '<section class="card eng-card"><h2 class="eng-h2">My tasks <span class="muted">· ' + open.length + '</span></h2>' +
-    (open.length ? open.map(row).join('') : '<p class="empty">Nothing on your list.</p>') +
+    (open.length ? open.map(row).join('') : '<p class="empty eng-pad">Nothing on your list.</p>') +
     (done.length ? '<div class="eng-done-h">Done recently</div>' + done.map(row).join('') : '') + '</section>' +
     '<section class="card eng-card"><h2 class="eng-h2">Add a task for yourself</h2>' +
     '<div class="eng-form"><label>What to do<input id="engAddNote" data-ea="note" value="' + esc(a.note) + '" autocomplete="off" placeholder="Check cove light level at reception"></label>' +
     '<label>Due (optional)<input id="engAddDue" data-ea="due" type="date" value="' + esc(a.due) + '"></label>' +
-    '<button type="button" class="btn-save" data-act="eng-add">Add to my tasks · ' + esc(S.engProject) + '</button>' +
+    '<button type="button" class="btn-save" data-act="eng-add"' + (a.saving ? ' disabled' : '') + '>' + (a.saving ? 'Saving…' : 'Add to my tasks · ' + esc(engProjName(S.engProject))) + '</button>' +
     (a.err ? '<p class="err" role="alert">' + esc(a.err) + '</p>' : '') + '</div></section>' +
     '<p class="foot eng-foot">Signed in as ' + esc(S.me.email) + '. <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>';
 }
 function engAddTask() {
   const a = S.engAdd, note = String(a.note || '').trim();
+  if (a.saving) return; // a second tap while saving does nothing
   if (!note) { a.err = 'Type what to do.'; renderEng(); return; }
   if (!S.engProject) { a.err = 'Pick a project at the top.'; renderEng(); return; }
   const due = a.due ? LC.fromIso(a.due) : null;
   const code = 'MT ' + S.engProject + (due ? ' ' + due.getDate() + '/' + (due.getMonth() + 1) : '') + ' ' + note;
   // dd/mm takes the year of the day it is noted on, so a due date in another year is noted on that date.
   const sel = a.due && a.due.slice(0, 4) !== todayIso().slice(0, 4) ? a.due : todayIso();
+  a.saving = true; a.err = '';
+  renderEng();
   engCall('addEntry', [code, sel], () => {
     S.engAdd = { note: '', due: '', err: '' };
     engSnack('Added to your tasks.');
-  }, (msg) => { S.engAdd.err = msg; });
+  }, (msg) => { S.engAdd.saving = false; S.engAdd.err = msg; });
 }
 function isStandalone() { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
 // How this device is listed under "Signed-in devices".
@@ -1782,19 +1789,20 @@ function addDraftFiles(files, project) {
   });
   chain.then(loadDrafts).then(renderEng);
 }
-function sendDrafts(project, caption) {
+function sendDrafts(project) {
   const drafts = S.drafts.filter((d) => d.project === project && !d.purpose);
-  if (!drafts.length) return;
+  if (!drafts.length || S.sendingPhotos) return; // a second tap while sending does nothing
   const missing = drafts.find((d) => !String(d.area || '').trim());
   if (missing) { engSnack('Pick or type an area for each photo.', true); return; }
   const batch = newId();
+  S.sendingPhotos = true;
+  renderEng();
   let chain = Promise.resolve();
   drafts.forEach((d) => {
-    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: project, batchId: batch, area: d.area.trim(), caption: caption, linkedTo: '', full: d.full, thumb: d.thumb }],
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: project, batchId: batch, area: d.area.trim(), caption: '', linkedTo: '', full: d.full, thumb: d.thumb }],
       'Photo · ' + d.area.trim())).then(() => idbDel('drafts', d.id));
   });
-  chain.then(loadDrafts).then(() => {
-    S.photoCaption = '';
+  chain.then(loadDrafts).finally(() => { S.sendingPhotos = false; }).then(() => {
     engSnack(navigator.onLine ? 'Sending ' + plural(drafts.length, 'photo', 'photos') + '…' : 'Saved on your phone. ' + (drafts.length === 1 ? 'It' : 'They') + ' will send by ' + (drafts.length === 1 ? 'itself' : 'themselves') + ' when there’s signal.');
     renderEng();
   });
@@ -1833,9 +1841,10 @@ function photoFeedHtml(photos, opts) {
   return days.map((g) => {
     const who = Array.from(new Set(g.items.map((p) => nameOf(p.by)))).join(', ');
     return '<section class="ph-day"><div class="ph-day-h"><b>' + esc(g.d === todayIso() ? 'Today · ' + niceDay(g.d) : niceDay(g.d)) + '</b><span class="muted">' + esc(who) + ' · ' + plural(g.items.length, 'photo', 'photos') + '</span></div>' +
-      '<div class="ph-grid">' + g.items.map((p) => '<button type="button" class="ph-tile' + (S.photoSel === p.id ? ' on' : '') + '" data-act="ph-open" data-id="' + esc(p.id) + '">' +
+      '<div class="ph-grid">' + g.items.map((p) => '<div class="ph-cell"><button type="button" class="ph-tile' + (S.photoSel === p.id ? ' on' : '') + '" data-act="ph-open" data-id="' + esc(p.id) + '">' +
         '<span class="ph-frame">' + thumbImg(p) + (counts[p.id] ? '<span class="ph-badge">' + plural(counts[p.id], 'comment', 'comments') + '</span>' : '') + '</span>' +
-        '<span class="ph-area">' + esc(p.area || '—') + '</span></button>').join('') + '</div></section>';
+        '<span class="ph-area">' + esc(p.area || '—') + '</span></button>' +
+        (opts.ask ? '<button type="button" class="link-btn ph-ask" data-act="ph-ask" data-id="' + esc(p.id) + '">Ask about this photo</button>' : '') + '</div>').join('') + '</div></section>';
   }).join('');
 }
 // The opened photo: big picture, who/when/line, comments, and (owners) comment or comment + task.
@@ -1889,14 +1898,14 @@ function deletePhotoNow(id) {
   }, (err) => { if (S.engineer) engSnack(cleanErr(err.message), true); else snack(cleanErr(err.message), { error: true }); });
 }
 
-// Engineer → Photos: take or pick photos, an area for each (pick or type; new ones are kept), one line, send.
+// Engineer → Photos: take or pick photos, an area for each (pick or type; new ones are kept), send.
 function engPhotosHtml() {
   const proj = S.engProject;
   if (proj && S.photosFor !== proj) { S.photosFor = proj; S.photos = null; S.photoSel = ''; loadPhotos(proj); }
   const drafts = S.drafts.filter((d) => d.project === proj && !d.purpose);
   const areas = ((S.site && S.site.areas) || {})[proj] || [];
   const mine = (S.photos && S.photos.photos.filter((p) => p.by === S.me.email)) || [];
-  return '<section class="card eng-card"><h2 class="eng-h2">Site photos · ' + esc(proj) + '</h2>' +
+  return '<section class="card eng-card"><h2 class="eng-h2">Site photos · ' + esc(engProjName(proj)) + '</h2>' +
     '<p class="muted small eng-pad">' + (mine.length ? 'You last sent photos ' + esc(niceDay(photoDay(mine[0].at))) + '.' : 'No photos from you on this project yet.') + '</p>' +
     '<div class="ph-pick eng-pad"><label class="btn-save ph-pick-btn">Take photos<input type="file" accept="image/*" capture="environment" data-ph-pick="1" hidden></label>' +
     '<label class="btn-outline ph-pick-btn">From gallery<input type="file" accept="image/*" multiple data-ph-pick="1" hidden></label></div>' +
@@ -1905,13 +1914,19 @@ function engPhotosHtml() {
       drafts.map((d) => '<div class="ph-draft"><img src="data:image/jpeg;base64,' + d.thumb + '" alt="">' +
         '<label>Area · pick or type<input list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.area || '') + '" autocomplete="off"></label>' +
         '<button type="button" class="icon-btn" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove this photo">×</button></div>').join('') +
-      '<div class="eng-form"><label>One line for Shruthi and Savan (optional)<input data-ph-caption="1" value="' + esc(S.photoCaption || '') + '" autocomplete="off"></label>' +
-      '<button type="button" class="btn-save" data-act="ph-send">Send ' + plural(drafts.length, 'photo', 'photos') + '</button>' +
+      '<div class="eng-form"><button type="button" class="btn-save" data-act="ph-send"' + (S.sendingPhotos ? ' disabled' : '') + '>' + (S.sendingPhotos ? 'Sending…' : 'Send ' + plural(drafts.length, 'photo', 'photos')) + '</button>' +
       '<span class="muted small">Shrunk before sending. No signal? They wait on the phone and send later.</span></div>'
       : '') + '</section>' +
     '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' +
-    (S.photos ? photoFeedHtml(S.photos.photos) : '<p class="empty">Loading…</p>') + '</div></section>' +
+    (S.photos ? photoFeedHtml(S.photos.photos, { ask: true }) : '<p class="empty">Loading…</p>') + '</div></section>' +
     (S.photoSel ? '<section class="card eng-card eng-pad" id="phPanel">' + photoPanelHtml() + '</section>' : '');
+}
+// "Ask about this photo": the question form opens with that photo already attached.
+function askAboutPhoto(id) {
+  S.ask = { text: '', work: 'continuing', other: 'no', which: '', photoIds: [id] };
+  S.engTab = 'queries'; S.engQuery = ''; S.engRegister = false;
+  window.scrollTo(0, 0);
+  renderEng();
 }
 
 // Owners → project → Site: the dated photo feed, with the opened photo beside it.
@@ -1933,6 +1948,7 @@ function queryClick(act, el) {
   else if (act === 'eq-register') { S.engRegister = true; renderEng(); }
   else if (act === 'ask-chip') { S.ask[el.dataset.f] = v; renderEng(); }
   else if (act === 'ask-send') engSendAsk();
+  else if (act === 'ask-unattach') { S.ask.photoIds = (S.ask.photoIds || []).filter((x) => x !== id); renderEng(); }
   else if (act === 'er-send') engSendReply(id);
   else if (act === 'q-open') { S.qSel = id; S.qc = null; renderAll(); const th = $('qThread'); if (th && phone.matches) th.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   else if (act === 'q-view') { S.qView = v; renderAll(); }
@@ -1975,7 +1991,8 @@ function photoClick(act, el) {
   else if (act === 'ph-delete') {
     if (S.confirmPhotoDel === el.dataset.id) deletePhotoNow(el.dataset.id); else { S.confirmPhotoDel = el.dataset.id; redraw(); }
   } else if (act === 'ph-reload') { if (S.photosFor) { S.thumbs = {}; loadPhotos(S.photosFor); } }
-  else if (act === 'ph-send') sendDrafts(S.engProject, S.photoCaption || '');
+  else if (act === 'ph-send') sendDrafts(S.engProject);
+  else if (act === 'ph-ask') askAboutPhoto(el.dataset.id);
   else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
   else if (act === 'out-drop') {
     Promise.all(OUT.items.filter((x) => x.error).map((x) => idbDel('outbox', x.id))).then(refreshOutbox);
@@ -2051,6 +2068,16 @@ function queryThreadHtml(q, owner) {
   return h;
 }
 
+// One query in a list (engineer's and owners'): who and when, its state, the question, work status, and a small photo.
+function queryCardHtml(q, act, on) {
+  const ph = q.photoIds && q.photoIds[0];
+  return '<button type="button" class="q-card' + (on ? ' on' : '') + (ph ? ' has-ph' : '') + '" data-act="' + act + '" data-id="' + esc(q.id) + '">' +
+    (ph ? '<span class="q-thumb">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
+    '<span class="q-card-main"><span class="q-card-top"><span class="muted small">' +
+    esc(nameOfEmail(q.askedBy) + ' · ' + (q.askedAt.slice(0, 10) === todayIso() ? 'today ' + q.askedAt.slice(11, 16) : niceDay(q.askedAt.slice(0, 10)))) + '</span><span class="pill pill-' + queryState(q).cls + '">' +
+    esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(workText(q)) + '</span></span></button>';
+}
+
 // Owners: reply, ask for a clearer photo, close as Answered / Change approved, task + follow-up task.
 function ownerComposerHtml(q) {
   if (!S.qc || S.qc.qid !== q.id) {
@@ -2117,12 +2144,15 @@ function engComposerHtml(q) {
   return '<div class="q-compose"><label for="erText">Your reply</label><textarea id="erText" data-er="text" rows="2">' + esc(r.text) + '</textarea>' +
     (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""></span>').join('') + '</div>' : '') +
     '<div class="ph-pick"><label class="btn-outline ph-pick-btn">Add photo<input type="file" accept="image/*" data-q-pick="reply:' + esc(q.id) + '" hidden></label>' +
-    '<button type="button" class="btn-save" data-act="er-send" data-id="' + esc(q.id) + '">Send reply</button></div></div>';
+    '<button type="button" class="btn-save" data-act="er-send" data-id="' + esc(q.id) + '"' + (r.sending ? ' disabled' : '') + '>' + (r.sending ? 'Sending…' : 'Send reply') + '</button></div></div>';
 }
 function engSendReply(qid) {
   const r = S.engReply, q = S.queries.queries.find((x) => x.id === qid);
   const drafts = S.drafts.filter((d) => d.purpose === 'reply:' + qid);
-  if (!q || (!String(r.text || '').trim() && !drafts.length)) { engSnack('Type a reply or add a photo.', true); return; }
+  if (!q || r.sending) return;
+  if (!String(r.text || '').trim() && !drafts.length) { engSnack('Type a reply or add a photo.', true); return; }
+  r.sending = true;
+  renderEng();
   let chain = Promise.resolve();
   drafts.forEach((d) => {
     chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: q.project, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a query'))
@@ -2143,40 +2173,44 @@ function engQueriesHtml() {
     const q = S.queries && S.queries.queries.find((x) => x.id === S.engQuery);
     if (!q) { S.engQuery = ''; return engQueriesHtml(); }
     return '<button type="button" class="link-btn" data-act="eq-back">← All queries</button>' +
-      '<section class="card eng-card eng-pad q-thread"><h2 class="eng-h2" style="padding-left:0">' + esc(q.project) + ' · ' + esc(q.text.slice(0, 60)) + '</h2>' + queryThreadHtml(q, false) + '</section>';
+      '<section class="card eng-card eng-pad q-thread"><h2 class="eng-h2" style="padding-left:0">' + esc(engProjName(q.project)) + ' · ' + esc(q.text.slice(0, 60)) + '</h2>' + queryThreadHtml(q, false) + '</section>';
   }
   if (S.engRegister) return engRegisterHtml(proj);
-  const a = S.ask || (S.ask = { text: '', work: 'continuing', other: 'no', which: '' });
+  const a = S.ask || (S.ask = { text: '', work: 'continuing', other: 'no', which: '', photoIds: [] });
+  a.photoIds = a.photoIds || [];
   const drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
   const chip = (field, v, label, red) => '<button type="button" class="q-chip' + (a[field] === v ? (red ? ' on red' : ' on') : '') + '" data-act="ask-chip" data-f="' + field + '" data-v="' + esc(v) + '" aria-pressed="' + (a[field] === v) + '">' + esc(label) + '</button>';
   const teams = ((S.site && S.site.people) || []).filter((p) => p.kind === 'labour').slice(0, 6).map((p) => p.name + (p.trade ? ' · ' + p.trade : '')).concat(['Electrician', 'Other']);
   const list = ((S.queries && S.queries.queries) || []).filter((q) => q.project === proj);
-  return '<section class="card eng-card" id="askForm"><h2 class="eng-h2">Ask a question · ' + esc(proj) + '</h2><div class="eng-form">' +
+  return '<section class="card eng-card" id="askForm"><h2 class="eng-h2">Ask a question · ' + esc(engProjName(proj)) + '</h2><div class="eng-form">' +
     '<div class="ph-pick" style="padding:0"><label class="btn-save ph-pick-btn">Take photo<input type="file" accept="image/*" capture="environment" data-q-pick="query" hidden></label>' +
     '<label class="btn-outline ph-pick-btn">From gallery<input type="file" accept="image/*" multiple data-q-pick="query" hidden></label></div>' +
-    (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
+    (drafts.length || a.photoIds.length ? '<div class="q-photos">' +
+      a.photoIds.map((id) => '<span class="q-photo">' + (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="">' : '<span class="ph-wait"></span>') + '<button type="button" class="q-x" data-act="ask-unattach" data-id="' + esc(id) + '" aria-label="Remove photo">×</button></span>').join('') +
+      drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
     '<label>Your question<textarea id="askText" data-ask="text" rows="3">' + esc(a.text) + '</textarea></label>' +
     '<div><span class="lbl">Meanwhile, the work is</span><div class="q-chips2">' + chip('work', 'hold', 'On hold', true) + chip('work', 'continuing', 'Continuing') + '</div>' +
     '<span class="muted small">' + (a.work === 'hold' ? 'Shows in red for Shruthi and Savan until someone replies.' : 'They will reply when they can.') + '</span></div>' +
     '<div><span class="lbl">Does another team need to come in?</span><div class="q-chips3">' + chip('other', 'no', 'No') + chip('other', 'yes', 'Yes') + chip('other', 'not_sure', 'Not sure') + '</div>' +
     (a.other === 'yes' ? '<div class="q-chipwrap">' + teams.map((t) => chip('which', t, t)).join('') + '</div>' : '') + '</div>' +
-    '<button type="button" class="eng-big" data-act="ask-send">Send to Shruthi and Savan</button></div></section>' +
-    '<section class="card eng-card"><h2 class="eng-h2">Queries · ' + esc(proj) + '</h2>' +
-    (list.length ? list.map((q) => '<button type="button" class="q-card" data-act="eq-open" data-id="' + esc(q.id) + '"><span class="q-card-top"><span class="muted small">' +
-      esc(nameOfEmail(q.askedBy) + ' · ' + (q.askedAt.slice(0, 10) === todayIso() ? 'today ' + q.askedAt.slice(11, 16) : niceDay(q.askedAt.slice(0, 10)))) + '</span><span class="pill pill-' + queryState(q).cls + '">' +
-      esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(workText(q)) + '</span></button>').join('') : '<p class="empty eng-pad">No queries on this project yet.</p>') +
+    '<button type="button" class="eng-big" data-act="ask-send"' + (a.sending ? ' disabled' : '') + '>' + (a.sending ? 'Sending…' : 'Send to Shruthi and Savan') + '</button></div></section>' +
+    '<section class="card eng-card"><h2 class="eng-h2">Queries · ' + esc(engProjName(proj)) + '</h2>' +
+    (list.length ? list.map((q) => queryCardHtml(q, 'eq-open')).join('') : '<p class="empty eng-pad">No queries on this project yet.</p>') +
     '<p class="eng-pad"><button type="button" class="link-btn" data-act="eq-register">Change register</button></p></section>';
 }
 function engSendAsk() {
   const a = S.ask, proj = S.engProject, text = String(a.text || '').trim();
+  if (a.sending) return; // a second tap while sending does nothing
   if (!text) { engSnack('Type your question.', true); return; }
+  a.sending = true;
+  renderEng();
   const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
   let chain = Promise.resolve();
   drafts.forEach((d) => {
     chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: proj, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a question'))
       .then(() => idbDel('drafts', d.id));
   });
-  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamWhich: a.other === 'yes' ? a.which : '', photoIds: drafts.map((d) => d.id) }], 'Question'))
+  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamWhich: a.other === 'yes' ? a.which : '', photoIds: (a.photoIds || []).concat(drafts.map((d) => d.id)) }], 'Question'))
     .then(loadDrafts).then(() => {
       S.ask = null;
       engSnack(navigator.onLine ? 'Sent. Shruthi and Savan get a notification; you get one when they reply.' : 'Saved on your phone. It will send by itself when there’s signal.');
@@ -2230,9 +2264,7 @@ function projectQueriesHtml(p) {
   if (view === 'register') return toggle + '<section class="card">' + registerRowsHtml(S.queries.register.filter((r) => r.project === p.code), isOwner()) + '</section>';
   if (!S.qSel || !list.some((q) => q.id === S.qSel)) S.qSel = list.length && !phone.matches ? list[0].id : '';
   const sel = list.find((q) => q.id === S.qSel);
-  const cards = list.map((q) => '<button type="button" class="q-card' + (q.id === S.qSel ? ' on' : '') + '" data-act="q-open" data-id="' + esc(q.id) + '"><span class="q-card-top"><span class="muted small">' +
-    esc(nameOfEmail(q.askedBy) + ' · ' + (q.askedAt.slice(0, 10) === todayIso() ? 'today ' + q.askedAt.slice(11, 16) : niceDay(q.askedAt.slice(0, 10)))) + '</span><span class="pill pill-' + queryState(q).cls + '">' +
-    esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(workText(q)) + '</span></button>').join('') || '<p class="empty">No queries on this project yet.</p>';
+  const cards = list.map((q) => queryCardHtml(q, 'q-open', q.id === S.qSel)).join('') || '<p class="empty">No queries on this project yet.</p>';
   return toggle + '<div class="pgrid"><nav class="pside q-list" aria-label="Query list">' + cards + '</nav>' +
     '<article class="pmain card q-thread" id="qThread">' + (sel ? queryThreadHtml(sel, isOwner()) : '<p class="empty">Pick a query.</p>') + '</article></div>';
 }
@@ -2544,6 +2576,9 @@ if (!sessionToken()) {
   try { siteCache = JSON.parse(stored(SITE_KEY) || 'null'); } catch (_) { siteCache = null; }
   if (siteCache && S.me && siteCache.email === S.me.email && S.me.role === 'site_engineer') {
     showEngineer(S.me, siteCache.site);
+    boot(true);
+  } else if (S.me && S.me.role === 'site_engineer') {
+    showEngineer(S.me, null);
     boot(true);
   } else if (cache && S.me && cache.email === S.me.email) {
     S.sheetUrl = cache.sheetUrl || '';
