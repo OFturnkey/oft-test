@@ -300,8 +300,24 @@ function LedgerCore() {
     return t.join(' ');
   }
 
+  // Trades for labour and vendors, and the trade a Details text points to ("Painting & polish" → Painting), or ''.
+  var TRADES = ['POP', 'Carpentry', 'Painting', 'Specialist finishes', 'Flooring', 'Aluminium & glass', 'Lighting', 'Metal ceiling',
+    'Signage', 'Tiling', 'Plumbing', 'Furniture', 'Others'];
+  var TRADE_WORDS = [
+    ['Metal ceiling', /metal ceiling|baffle|grid ceiling/i], ['Specialist finishes', /special|texture|stucco|wallpaper|venetian|micro ?cement/i],
+    ['POP', /\bpop\b|plaster of paris|gypsum|false ceiling/i], ['Carpentry', /carpent|joiner|wood ?work|modular/i],
+    ['Painting', /paint|polish/i], ['Flooring', /floor|vinyl|carpet|epoxy|laminate/i], ['Aluminium & glass', /alumin|glass|glaz/i],
+    ['Lighting', /light|electric/i], ['Signage', /sign/i], ['Tiling', /\btil(e|es|ing)\b|granite|marble/i],
+    ['Plumbing', /plumb|sanitary/i], ['Furniture', /furniture|sofa|upholster/i]
+  ];
+  function tradeFromDetail(detail) {
+    var s = String(detail || '');
+    for (var i = 0; i < TRADE_WORDS.length; i++) if (TRADE_WORDS[i][1].test(s)) return TRADE_WORDS[i][0];
+    return '';
+  }
+
   return {
-    MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT,
+    MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT, TRADES: TRADES, tradeFromDetail: tradeFromDetail,
     pad: pad, iso: iso, fromIso: fromIso, nice: nice, cap: cap, inr: inr, short: short, amountOf: amountOf, amountWords: amountWords,
     buildDir: buildDir, storeFor: storeFor, activeCodes: activeCodes, whoCodes: whoCodes,
     projName: projName, clientName: clientName, whoName: whoName, modeLabel: modeLabel, taskTitle: taskTitle, describe: describe, teamName: teamName,
