@@ -190,17 +190,26 @@ function decorateBusy() {
 
 // Things arriving in the background (devices, queries, photos, the outbox) redraw the screen, but never while
 // someone is typing: that would move the cursor or swap a button under a finger. It redraws when they leave the box.
+// "Typing" means keys pressed in a text box within the last few seconds: a cursor merely left in a box (the code
+// bar after saving, say) must not hold back updates for good.
+const TYPING_PAUSE_MS = 3000;
+let lastTyped = 0;
+document.addEventListener('input', () => { lastTyped = Date.now(); }, true);
 function isTyping() {
   const a = document.activeElement;
-  return !!a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(checkbox|radio|file|button|submit|date)$/i.test(a.type)));
+  const textBox = !!a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(checkbox|radio|file|button|submit|date)$/i.test(a.type)));
+  return textBox && Date.now() - lastTyped < TYPING_PAUSE_MS;
 }
 let redrawWaiting = false;
 function bgRedraw() {
-  if (isTyping()) { redrawWaiting = true; return; }
+  if (isTyping()) {
+    if (!redrawWaiting) { redrawWaiting = true; setTimeout(() => { redrawWaiting = false; bgRedraw(); }, TYPING_PAUSE_MS + 100); }
+    return;
+  }
   redrawWaiting = false;
   if (S.engineer) renderEng(); else if (S.started) renderAll();
 }
-document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() => { if (!isTyping()) bgRedraw(); }, 0); });
+document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() => { if (!isTyping()) { redrawWaiting = false; bgRedraw(); } }, 0); });
 
 // One request to the server: { a, s, args } goes in as plain text (no cookies, so the phone's Google
 // accounts play no part); { ok, result } or { ok: false, error, signin } comes back.
