@@ -389,7 +389,7 @@ function engClick(act, el) {
   if (photoClick(act, el) || queryClick(act, el)) return;
   if (act === 'eng-tab') {
     S.engTab = el.dataset.tab; S.engQuery = ''; S.engRegister = false; window.scrollTo(0, 0);
-    if (S.engTab === 'queries' && S.queries) loadQueries();
+    if ((S.engTab === 'queries' || S.engTab === 'today') && S.queries) loadQueries();
     if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
     renderEng();
   }
@@ -459,18 +459,27 @@ function renderEng() {
   }
 }
 function renderEngInner() {
-  const projs = engProjects();
-  if (!S.engProject || !projs.some((p) => p.code === S.engProject)) S.engProject = projs.length ? projs[0].code : '';
-  $('engProject').innerHTML = projs.length ? projs.map((p) => '<option value="' + esc(p.code) + '"' + (p.code === S.engProject ? ' selected' : '') + '>' + esc(engProjName(p.code)) + '</option>').join('') : '<option>Loading…</option>';
-  $('engNav').innerHTML = ENG_TABS.map((t) => '<button type="button" class="eng-tab' + (S.engTab === t[0] ? ' on' : '') + '" data-act="eng-tab" data-tab="' + t[0] +
+  // The bottom bar first, and on its own: nothing below can stop it showing.
+  const nav = $('engNav');
+  nav.hidden = false;
+  nav.innerHTML = ENG_TABS.map((t) => '<button type="button" class="eng-tab' + (S.engTab === t[0] ? ' on' : '') + '" data-act="eng-tab" data-tab="' + t[0] +
     '" aria-pressed="' + (S.engTab === t[0]) + '">' + esc(t[1]) + '</button>').join('');
   const main = $('engMain');
-  if (!S.site) main.innerHTML = '<p class="empty">Opening…</p>';
-  else if (S.engTab === 'today') main.innerHTML = engTodayHtml();
-  else if (S.engTab === 'photos') main.innerHTML = engPhotosHtml();
-  else if (S.engTab === 'queries') main.innerHTML = engQueriesHtml();
-  else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
-    '<p class="empty">This comes in the next test version.</p></section>';
+  try {
+    const projs = engProjects();
+    if (!S.engProject || !projs.some((p) => p.code === S.engProject)) S.engProject = projs.length ? projs[0].code : '';
+    $('engProject').innerHTML = projs.length ? projs.map((p) => '<option value="' + esc(p.code) + '"' + (p.code === S.engProject ? ' selected' : '') + '>' + esc(engProjName(p.code)) + '</option>').join('') : '<option>Loading…</option>';
+    if (!S.site) main.innerHTML = '<p class="empty">Opening…</p>';
+    else if (S.engTab === 'today') main.innerHTML = engTodayHtml();
+    else if (S.engTab === 'photos') main.innerHTML = engPhotosHtml();
+    else if (S.engTab === 'queries') main.innerHTML = engQueriesHtml();
+    else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
+      '<p class="empty">This comes in the next test version.</p></section>';
+  } catch (err) {
+    console.error(err);
+    main.innerHTML = '<section class="card eng-card eng-pad"><p class="err" role="alert">Something on this screen didn’t load: ' + esc(cleanErr(err && err.message)) +
+      '</p><button type="button" class="btn-outline" data-act="reload">Open again</button></section>';
+  }
 }
 function engTodayHtml() {
   const now = new Date(), t = todayIso();
@@ -488,9 +497,11 @@ function engTodayHtml() {
     '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + '>' +
     '<span class="eng-task-text"><span>' + esc(LC.cap(x.note)) + '</span><span class="eng-meta">' + esc(projName(x.project)) +
     ' · ' + (x.due < t && !x.done ? 'overdue, was due ' : 'due ') + esc(niceDay(x.due)) +
-    (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + (x.pending ? ' · <span class="sending">Sending…</span>' : '') + '</span></span></label>';
+    (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + (x.pending ? ' · <span class="sending">Sending…</span>' : '') + '</span>' +
+    taskSourceHtml(x.source) + '</span></label>';
   const a = S.engAdd || (S.engAdd = { note: '', due: '', err: '' });
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
+    engNeedsHtml() +
     '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">Ask a question</button>' +
     '<section class="card eng-card"><h2 class="eng-h2">My tasks <span class="muted">· ' + open.length + '</span></h2>' +
     (open.length ? open.map(row).join('') : '<p class="empty eng-pad">Nothing on your list.</p>') +
@@ -501,6 +512,40 @@ function engTodayHtml() {
     '<button type="button" class="btn-save" data-act="eng-add">Add to my tasks · ' + esc(engProjName(S.engProject)) + '</button>' +
     (a.err ? '<p class="err" role="alert">' + esc(a.err) + '</p>' : '') + '</div></section>' +
     '<p class="foot eng-foot">Signed in as ' + esc(S.me.email) + '. <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>';
+}
+// Engineer home, above My tasks: clearer photos Shruthi or Savan asked for (take it right here; gone once sent),
+// and their replies to his questions until he opens them.
+function engNeedsHtml() {
+  if (!S.queries) { if (!S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); } return ''; }
+  const me = S.me.email, mine = S.queries.queries.filter((q) => q.askedBy === me);
+  const sending = (qid) => waiting('replyQuery').some((w) => w.args[0] === qid && (w.args[3] || []).length);
+  const photoAsks = mine.filter((q) => q.status === 'waiting_photo' && !sending(q.id));
+  const replies = mine.filter((q) => q.status !== 'waiting_photo' && isNewQ(q) && q.last && (q.last.what === 'reply' || q.last.what === 'closed'));
+  if (!photoAsks.length && !replies.length) return '';
+  const msgs = (q) => S.queries.messages.filter((m) => m.queryId === q.id);
+  const asked = (q) => { const m = msgs(q).filter((x) => x.kind === 'photo_request').pop(); return m ? LC.cap(m.text.replace(/^Please send a clearer photo[:.]?\s*/i, '').trim()) : ''; };
+  const photoItem = (q) => {
+    const drafts = S.drafts.filter((d) => d.purpose === 'reply:' + q.id), r = S.engReply && S.engReply.qid === q.id ? S.engReply : {};
+    return '<div class="eng-need"><button type="button" class="eng-need-main" data-act="eq-open" data-id="' + esc(q.id) + '"><b>Send a clearer photo: ' + esc(shortText(q.text)) + '</b>' +
+      '<span class="muted small">' + esc([asked(q), engProjName(q.project)].filter(Boolean).join(' · ')) + '</span></button>' +
+      (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
+      photoPickHtml('reply:' + q.id) +
+      (drafts.length ? '<button type="button" class="eng-big" data-act="need-send" data-id="' + esc(q.id) + '"' + (r.sending ? ' disabled' : '') + '>' +
+        (r.sending ? 'Sending…' : 'Send ' + plural(drafts.length, 'photo', 'photos')) + '</button>' : '') + '</div>';
+  };
+  const replyItem = (q) => {
+    const by = nameOfEmail(q.last.by), m = msgs(q).filter((x) => x.kind === 'reply' && x.by !== me && x.text).pop();
+    const head = q.last.what === 'closed' ? (q.outcome === 'change' ? 'Change approved' + (q.changeNo ? ' ' + q.changeNo : '') : 'Answered') + ' by ' + by : 'Reply from ' + by;
+    return '<button type="button" class="eng-need eng-need-main" data-act="eq-open" data-id="' + esc(q.id) + '"><b><span class="new-dot" aria-label="New"></span>' + esc(head + (m ? ': ' + m.text.slice(0, 120) : '')) + '</b>' +
+      '<span class="muted small">' + esc(shortText(q.text) + ' · ' + engProjName(q.project) + ' · ' + ageText(q.last.at) + ' ago') + '</span></button>';
+  };
+  return '<section class="card eng-card eng-needs"><h2 class="eng-h2">Needs you <span class="muted">· ' + (photoAsks.length + replies.length) + '</span></h2>' +
+    photoAsks.map(photoItem).join('') + replies.map(replyItem).join('') + '</section>';
+}
+// Every place a photo can be added: the camera, or the gallery.
+function photoPickHtml(purpose) {
+  return '<div class="ph-pick"><label class="btn-save ph-pick-btn">Take photo<input type="file" accept="image/*" capture="environment" data-q-pick="' + esc(purpose) + '" hidden></label>' +
+    '<label class="btn-outline ph-pick-btn">From gallery<input type="file" accept="image/*" multiple data-q-pick="' + esc(purpose) + '" hidden></label></div>';
 }
 // Goes through the phone's outbox: on the list at once ("Sending…"), saved on the server in the background.
 function engAddTask() {
@@ -944,9 +989,10 @@ function moneyItem(e) {
     '<span class="item-meta">' + esc(projName(e.project)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() + itemActions(e) + '</div>';
 }
 function taskItem(e) {
-  return '<div class="item">' + tickBtn(e) + mainOpen(e) + '<span' + (e.done ? ' style="text-decoration:line-through"' : '') + '>' +
+  return '<div class="item">' + tickBtn(e) + '<div class="tcard-body">' + mainOpen(e) + '<span' + (e.done ? ' style="text-decoration:line-through"' : '') + '>' +
     badge(e.type, true) + ' ' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() + itemActions(e) + '</div>';
+    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() +
+    taskSourceHtml(e.source) + '</div>' + itemActions(e) + '</div>';
 }
 function voidedItem(e) {
   return '<div class="item voided">' + badge(e.type) +
@@ -971,8 +1017,8 @@ function renderDay() {
 }
 
 function remItem(e) {
-  return '<div class="rem-item">' + badge(e.type, true) + mainOpen(e) + '<span style="font-size:13px">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · due ' + esc(LC.nice(e.due)) + byTag(e) + '</span>' + mainClose() +
+  return '<div class="rem-item">' + badge(e.type, true) + '<div class="tcard-body">' + mainOpen(e) + '<span style="font-size:13px">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · due ' + esc(LC.nice(e.due)) + byTag(e) + '</span>' + mainClose() + taskSourceHtml(e.source) + '</div>' +
     (canWrite() ? '<span class="item-actions">' + editBtn(e) + '<button type="button" class="btn-sm" data-act="done" data-id="' + esc(e.id) + '">Done</button></span>' : '') + '</div>';
 }
 
@@ -1029,10 +1075,10 @@ function renderProjects() {
 
 /* ---------- tasks tab ---------- */
 function taskCard(e) {
-  return '<div class="tcard' + (e.done ? ' done' : '') + '">' + tickBtn(e) + mainOpen(e) + '<span class="tcard-title">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+  return '<div class="tcard' + (e.done ? ' done' : '') + '">' + tickBtn(e) + '<div class="tcard-body">' + mainOpen(e) + '<span class="tcard-title">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
     '<span class="tcard-meta">' + badge(e.type, true) + '<span>' + esc(projName(e.project)) + forTag(e) + '</span><span>· due ' + esc(LC.nice(e.due)) + '</span>' +
     (e.added_by ? '<span class="by" title="Added by ' + esc(userName(e.added_by)) + '">' + esc(initials(e.added_by)) + '</span>' : '') + '</span>' +
-    '<span class="raw">' + esc(e.raw_code) + '</span>' + mainClose() + (isOwner() ? '<span class="item-actions">' + editBtn(e) + '</span>' : '') + '</div>';
+    '<span class="raw">' + esc(e.raw_code) + '</span>' + mainClose() + taskSourceHtml(e.source) + '</div>' + (isOwner() ? '<span class="item-actions">' + editBtn(e) + '</span>' : '') + '</div>';
 }
 function renderTasks() {
   const t = todayIso(), in7 = addDays(t, 7);
@@ -1600,9 +1646,7 @@ function todayAllHtml(list) {
     if (mine) items = items.filter((n) => n.act === 'needs-query' || (n.act === 'done' && isMine(findEntry(n.id) || {})));
     const shown = items.slice(0, 5);
     return '<section class="card tday"><button type="button" class="tday-h" data-act="proj-tab" data-code="' + esc(p.code) + '"><b>' + esc(p.name || p.code) + '</b><span class="muted small">' + esc(projectLine(p)) + '</span></button>' +
-      (shown.length ? shown.map((n) => '<div class="need"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="need-text"><b>' + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span></span>' +
-        (canWrite() ? '<button type="button" class="btn-outline" data-act="' + (n.act === 'needs-query' ? 'today-query' : 'done') + '" data-id="' + esc(n.id) + '" data-code="' + esc(p.code) + '">' + esc(n.label) + '</button>' : '') + '</div>').join('')
-        : '<p class="empty">Nothing urgent.</p>') +
+      (shown.length ? shown.map((n) => needLineHtml(n, n.act === 'needs-query' ? 'today-query' : 'done', p.code)).join('') : '<p class="empty">Nothing urgent.</p>') +
       (items.length > shown.length ? '<p class="muted small">+ ' + (items.length - shown.length) + ' more · open the project</p>' : '') + '</section>';
   }).join('');
   return '<div class="phead"><h2 id="proj-h" class="view-title">Today <span class="muted" style="font-size:16px;font-weight:400">' + esc(niceDay(todayIso())) + '</span></h2></div>' +
@@ -1708,6 +1752,15 @@ function saveProjInfo() {
     S.projEdit = null;
     snack(f.code + ' saved.');
   }, (msg) => { if (S.projEdit) S.projEdit.err = msg; });
+}
+// Typing Details fills in Trade ("Painting & polish" → Painting) until a trade is picked by hand.
+function autoTrade(f, selectId) {
+  if (f.trade && !f.tradeAuto) return;
+  const tr = LC.tradeFromDetail(f.detail);
+  f.trade = tr;
+  f.tradeAuto = !!tr;
+  const sel = $(selectId);
+  if (sel) sel.value = tr;
 }
 function tradeSelect(id, attrs, cur) {
   return '<select id="' + id + '" ' + attrs + '><option value="">—</option>' +
@@ -1844,7 +1897,7 @@ function outboxSent(item, res) {
     if (S.photos && S.photos.project === p.project && res && res.photo && !S.photos.photos.some((x) => x.id === res.photo.id)) S.photos.photos.unshift(res.photo);
     if (res && res.photo && p.thumb) S.thumbs[res.photo.id] = 'data:image/jpeg;base64,' + p.thumb;
   }
-  if ((item.action === 'askQuery' || item.action === 'replyQuery') && res && res.queries) { S.queries = res; loadThumbs(queryPhotoIds()); }
+  if ((item.action === 'askQuery' || item.action === 'replyQuery') && res && res.queries) setQueries(res);
   bgRedraw();
 }
 function renderNetStrip() {
@@ -1933,13 +1986,62 @@ function loadPhotos(project, then) {
     bgRedraw();
   }, (err) => { if (err.signin) signedOut(err.message); else if (S.engineer) engSnack(cleanErr(err.message), true); else snack(cleanErr(err.message), { error: true }); });
 }
+// Each preview is asked for once (a removed photo has none, and must not be asked for again on every redraw).
+const THUMB_ASKED = new Set();
 function loadThumbs(ids) {
-  const need = ids.filter((i) => !S.thumbs[i]);
+  const need = Array.from(new Set(ids)).filter((i) => i && !S.thumbs[i] && !THUMB_ASKED.has(i)).slice(0, 40);
   if (!need.length) return;
+  need.forEach((i) => THUMB_ASKED.add(i));
   api('photoThumbs', [need]).then((res) => {
     Object.assign(S.thumbs, res.thumbs || {});
     bgRedraw();
-  }, () => { /* previews come next time */ });
+  }, () => { need.forEach((i) => THUMB_ASKED.delete(i)); /* previews come next time */ });
+}
+// A small picture wanted on screen: fetched in one batch after this redraw.
+let thumbWant = [];
+function wantThumb(id) {
+  if (!id || S.thumbs[id] || THUMB_ASKED.has(id)) return;
+  if (!thumbWant.length) setTimeout(() => { const ids = thumbWant; thumbWant = []; loadThumbs(ids); }, 0);
+  thumbWant.push(id);
+}
+// Where an app-made task came from: "From query C-01 · Colour change" or "From photo · Study · Wed 21 Oct", with a
+// small picture. Tapping it opens the query or the photo.
+function taskSources() { return (S.engineer ? S.site && S.site.taskSources : S.data && S.data.taskSources) || {}; }
+function shortText(t) { const s = String(t || '').split(/[.!?\n]/)[0].trim() || String(t || '').trim(); return s.length > 40 ? s.slice(0, 38) + '…' : s; }
+function taskSourceHtml(src) {
+  const s = src && taskSources()[src];
+  if (!s) return '';
+  const label = s.kind === 'query' ? 'From query ' + (s.changeNo ? s.changeNo + ' · ' : '· ') + shortText(s.text)
+    : 'From photo · ' + [s.area || 'Site photo', s.at ? niceDay(s.at.slice(0, 10)) : ''].filter(Boolean).join(' · ');
+  wantThumb(s.photoId);
+  return '<button type="button" class="tsrc" data-act="task-src" data-src="' + esc(src) + '">' +
+    (s.photoId ? '<span class="tsrc-ph">' + (S.thumbs[s.photoId] ? '<img src="' + S.thumbs[s.photoId] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
+    '<span class="tsrc-text">' + esc(label) + '</span></button>';
+}
+// Opens a task's source: owners go to the project's query or site photo; engineers to Queries or Photos.
+function openTaskSource(src) {
+  const s = taskSources()[src];
+  if (!s) return;
+  window.scrollTo(0, 0);
+  if (S.engineer) {
+    S.engProject = s.project; S.engRegister = false;
+    if (s.kind === 'query') { S.engTab = 'queries'; S.engQuery = s.id; markSeenQ(s.id); if (!S.queries) loadQueries(); }
+    else {
+      S.engTab = 'photos'; S.engQuery = '';
+      if (S.photosFor !== s.project) { S.photosFor = s.project; S.photos = null; loadPhotos(s.project); }
+      openPhoto(s.id);
+    }
+    renderEng();
+    return;
+  }
+  S.tab = 'projects'; S.projTab = s.project;
+  if (s.kind === 'query') { S.projSec = 'queries'; S.qView = 'list'; S.qSel = s.id; S.qc = null; }
+  else {
+    S.projSec = 'site';
+    if (S.photosFor !== s.project) { S.photosFor = s.project; S.photos = null; S.photoSel = ''; loadPhotos(s.project); }
+    openPhoto(s.id);
+  }
+  renderAll();
 }
 function thumbImg(p, cls) {
   const src = S.thumbs[p.id];
@@ -1976,17 +2078,19 @@ function photoPanelHtml() {
   const full = S.fullPhoto && S.fullPhoto.id === p.id ? '<img class="ph-big" src="' + S.fullPhoto.url + '" alt="' + esc(p.area || 'Site photo') + '">'
     : '<span class="ph-big-wrap">' + thumbImg(p, 'ph-big') + '<span class="ph-hint">Loading full size…</span></span>';
   const c = S.photoComment || (S.photoComment = { text: '', due: addDays(todayIso(), 2), err: '' });
+  if (c.who === undefined) c.who = owner ? defaultTaskFor(p.by, p.project) : '';
   const canDelete = owner || (p.by === (S.me && S.me.email) && Date.now() - Date.parse(p.at.replace(' ', 'T') + ':00+05:30') < 86400000);
   return full +
     '<div class="ph-info"><b>' + esc(p.area || 'Site photo') + '</b><span class="muted">' + esc(nameOf(p.by)) + ' · ' + esc(niceDay(photoDay(p.at)) + ' ' + p.at.slice(11, 16)) +
     (p.caption ? ' · ' + esc(p.caption) : '') + '</span></div>' +
     comments.map((x) => '<div class="ph-comment"><b>' + esc(nameOf(x.by)) + '</b> <span class="muted">' + esc(niceDay(x.at.slice(0, 10)) + ' ' + x.at.slice(11, 16)) + '</span><div>' + esc(x.text) + '</div>' +
-      (x.taskId ? '<span class="ph-task">Task for the site engineer</span>' : '') + '</div>').join('') +
+      (x.taskId ? '<span class="ph-task">Task for ' + esc(taskForName(x.taskFor)) + '</span>' : '') + '</div>').join('') +
     '<div class="ph-form"><label for="phComment">Comment on this photo</label><textarea id="phComment" data-pc="text" rows="2">' + esc(c.text) + '</textarea>' +
-    (owner ? '<label class="ph-due">Task due <input type="date" data-pc="due" value="' + esc(c.due) + '"></label>' : '') +
+    (owner ? '<div class="ph-taskrow"><label class="q-for">Task for' + taskForSelect('id="phWho" data-pc="who"', p.project, p.by, c.who) + '</label>' +
+      '<label class="ph-due">Task due <input type="date" data-pc="due" value="' + esc(c.due) + '"></label></div>' : '') +
     '<div class="ph-btns"><button type="button" class="btn-outline" data-act="ph-comment">Comment</button>' +
-    (owner ? '<button type="button" class="btn-accent" data-act="ph-task">Comment + make it a task</button>' : '') + '</div>' +
-    (owner ? '<span class="muted small">The task goes to the site engineer with this photo, due in 2 days unless you change the date.</span>' : '') +
+    (owner ? '<button type="button" class="btn-accent" data-act="ph-task">Comment + task for ' + esc(c.who ? taskForName(c.who) : '…') + '</button>' : '') + '</div>' +
+    (owner ? '<span class="muted small">The task goes with this photo, due in 2 days unless you change the date.</span>' : '') +
     (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
     (canDelete ? '<button type="button" class="link-btn ph-del" data-act="ph-delete" data-id="' + esc(p.id) + '">' + (S.confirmPhotoDel === p.id ? 'Confirm: remove this photo?' : 'Remove photo') + '</button>' : '') + '</div>';
 }
@@ -2002,11 +2106,12 @@ function sendPhotoComment(makeTask) {
   const c = S.photoComment, p = S.photos && S.photos.photos.find((x) => x.id === S.photoSel);
   if (!c || !p) return;
   if (!String(c.text || '').trim()) { c.err = 'Type a comment.'; if (S.engineer) renderEng(); else renderAll(); return; }
-  api('commentPhoto', [p.id, c.text, !!makeTask, makeTask ? c.due : '']).then((res) => {
+  if (makeTask && !c.who) { c.err = 'Pick who the task is for.'; renderAll(); return; }
+  api('commentPhoto', [p.id, c.text, !!makeTask, makeTask ? c.due : '', makeTask ? c.who : '']).then((res) => {
     S.photos = res;
     S.photoComment = null;
     if (S.engineer) { engSnack('Comment sent.'); renderEng(); }
-    else { snack(makeTask ? 'Comment sent and made a task for the site engineer.' : 'Comment sent.'); if (makeTask) refresh(true); renderAll(); }
+    else { snack(makeTask ? 'Comment sent and made a task for ' + taskForName(c.who) + '.' : 'Comment sent.'); if (makeTask) refresh(true); renderAll(); }
   }, (err) => { c.err = cleanErr(err.message); if (S.engineer) renderEng(); else renderAll(); });
 }
 function deletePhotoNow(id) {
@@ -2049,7 +2154,8 @@ function pendingPhotosHtml(proj) {
 }
 // "Ask about this photo": the question form opens with that photo already attached.
 function askAboutPhoto(id) {
-  S.ask = { text: '', work: 'continuing', other: 'no', which: '', photoIds: [id] };
+  const ph = S.photos && S.photos.photos.find((x) => x.id === id);
+  S.ask = { text: '', area: (ph && ph.area) || '', work: 'continuing', other: 'no', team: '', which: '', photoIds: [id] };
   S.engTab = 'queries'; S.engQuery = ''; S.engRegister = false;
   window.scrollTo(0, 0);
   renderEng();
@@ -2069,7 +2175,8 @@ function queryClick(act, el) {
   const id = el.dataset.id, v = el.dataset.v;
   if (act === 'lightbox') showLightbox(id);
   else if (act === 'lightbox-close') hideLightbox();
-  else if (act === 'eq-open') { S.engQuery = id; window.scrollTo(0, 0); renderEng(); }
+  else if (act === 'eq-open') { S.engTab = 'queries'; S.engQuery = id; S.engRegister = false; markSeenQ(id); window.scrollTo(0, 0); renderEng(); }
+  else if (act === 'need-send') { if (!S.engReply || S.engReply.qid !== id) S.engReply = { qid: id, text: '' }; engSendReply(id); }
   else if (act === 'eq-back') { S.engQuery = ''; S.engRegister = false; renderEng(); }
   else if (act === 'eq-register') { S.engRegister = true; renderEng(); }
   else if (act === 'ask-chip') { S.ask[el.dataset.f] = v; renderEng(); }
@@ -2091,6 +2198,7 @@ function queryClick(act, el) {
   else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'ph-open-site') { S.projSec = 'site'; openPhoto(id); renderAll(); }
+  else if (act === 'task-src') openTaskSource(el.dataset.src);
   else return false;
   return true;
 }
@@ -2119,7 +2227,7 @@ function photoClick(act, el) {
   else if (act === 'ph-task') sendPhotoComment(true);
   else if (act === 'ph-delete') {
     if (S.confirmPhotoDel === el.dataset.id) deletePhotoNow(el.dataset.id); else { S.confirmPhotoDel = el.dataset.id; redraw(); }
-  } else if (act === 'ph-reload') { if (S.photosFor) { S.thumbs = {}; loadPhotos(S.photosFor); } }
+  } else if (act === 'ph-reload') { if (S.photosFor) { S.thumbs = {}; THUMB_ASKED.clear(); loadPhotos(S.photosFor); } }
   else if (act === 'ph-send') sendDrafts(S.engProject);
   else if (act === 'ph-ask') askAboutPhoto(el.dataset.id);
   else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
@@ -2137,15 +2245,15 @@ function initialsOfName(n) { const w = String(n || '').replace(/@.*/, '').split(
 function redraw() { if (S.engineer) renderEng(); else if (S.started) renderAll(); }
 function loadQueries(then) {
   api('listQueries', ['']).then((res) => {
-    S.queries = res;
-    loadThumbs(queryPhotoIds());
+    setQueries(res);
     if (then) then();
     bgRedraw();
   }, (err) => { if (err.signin) signedOut(err.message); });
 }
 function queryPhotoIds() {
   if (!S.queries) return [];
-  const ids = [];
+  // The pictures on the query cards first, then the rest of each thread.
+  const ids = S.queries.queries.map((q) => q.lastPhotoId).filter(Boolean);
   S.queries.queries.forEach((q) => ids.push.apply(ids, q.photoIds));
   S.queries.messages.forEach((m) => ids.push.apply(ids, m.photoIds));
   return ids.slice(0, 40);
@@ -2158,14 +2266,57 @@ function ageText(stamp) {
 }
 function queryTasks(q) { return ((S.queries && S.queries.tasks) || []).filter((t) => t.queryId === q.id); }
 function queryState(q) {
-  if (q.status === 'closed') return { text: (q.outcome === 'change' ? 'Change approved' + (q.changeNo ? ' ' + q.changeNo : '') : 'Answered') + (queryTasks(q).length ? ' + task' : ''), cls: 'ok' };
+  if (q.status === 'closed') return { text: 'Closed · ' + (q.outcome === 'change' ? 'Change approved' + (q.changeNo ? ' ' + q.changeNo : '') : 'Answered') + (queryTasks(q).length ? ' + task' : ''), cls: 'ok' };
   if (q.status === 'waiting_photo') return { text: 'Waiting for photo', cls: 'wait' };
   return { text: 'Waiting ' + ageText(q.askedAt), cls: q.workOnHold ? 'bad' : 'wait' };
 }
+// The team a query needs, as the Directory has it now ("Raju · Painting"); a typed name as typed.
+function teamLabel(q) {
+  const people = (S.engineer ? S.site && S.site.people : S.data && S.data.people) || [];
+  const typed = String(q.otherTeamWhich || '').split(' · ')[0].trim().toLowerCase();
+  const p = people.find((x) => x.code === q.otherTeamCode) || (typed ? people.filter((x) => x.kind === 'labour' && x.name.trim().toLowerCase() === typed) : []).find((x, i, a) => a.length === 1);
+  return p ? p.name + (p.trade ? ' · ' + p.trade : '') : (q.otherTeamWhich || 'another team');
+}
 // lower: "work on hold · needs Raju · Painting" for the middle of a line (the team keeps its capitals).
+// A closed query no longer says whether work is on hold.
 function workText(q, lower) {
-  return (q.workOnHold ? (lower ? 'work on hold' : 'Work on hold') : (lower ? 'work continuing' : 'Work continuing')) +
-    (q.otherTeam === 'yes' ? ' · needs ' + (q.otherTeamWhich || 'another team') : q.otherTeam === 'not_sure' ? ' · another team? not sure' : '');
+  const team = q.otherTeam === 'yes' ? 'needs ' + teamLabel(q) : q.otherTeam === 'not_sure' ? 'another team? not sure' : '';
+  if (q.status === 'closed') return team && !lower ? LC.cap(team) : team;
+  return (q.workOnHold ? (lower ? 'work on hold' : 'Work on hold') : (lower ? 'work continuing' : 'Work continuing')) + (team ? ' · ' + team : '');
+}
+// What happened last on a query: "New photo from Venky · 2 min ago".
+function lastText(q) {
+  const l = q.last;
+  if (!l) return nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago';
+  const me = l.by === (S.me && S.me.email), who = me ? 'you' : nameOfEmail(l.by);
+  const t = l.what === 'photo' ? 'New photo from ' + who : l.what === 'reply' ? 'Reply from ' + who
+    : l.what === 'photo_request' ? (me ? 'You' : who) + ' asked for a clearer photo'
+    : l.what === 'closed' ? (q.outcome === 'change' ? 'Change approved by ' : 'Answered by ') + who : 'Asked by ' + who;
+  return t + ' · ' + ageText(l.at) + ' ago';
+}
+// Something happened on it (by someone else) since I last opened it: highlighted until opened. "Seen" is a
+// fingerprint of the thread as it was when opened (latest time, number of messages, state).
+function seenMark(q, messages) {
+  return (q.last ? q.last.at : q.askedAt) + '|' + (messages || S.queries.messages).filter((m) => m.queryId === q.id).length + '|' + q.status;
+}
+function isNewQ(q) {
+  const l = q.last;
+  if (!l || !S.me || l.by === S.me.email) return false;
+  return ((S.queries && S.queries.seen) || {})[q.id] !== seenMark(q);
+}
+function markSeenQ(id) {
+  const q = S.queries && S.queries.queries.find((x) => x.id === id);
+  if (!q || !isNewQ(q)) return;
+  const mark = seenMark(q);
+  S.queries.seen = Object.assign({}, S.queries.seen || {}, { [id]: mark });
+  api('markSeen', [id, mark]).catch(() => { /* still marked on this device; the server learns next time */ });
+}
+// New query data from the server; a query opened on this device meanwhile stays opened.
+function setQueries(res) {
+  const local = (S.queries && S.queries.seen) || {}, seen = Object.assign({}, res.seen || {});
+  res.queries.forEach((q) => { const m = seenMark(q, res.messages); if (local[q.id] === m) seen[q.id] = m; });
+  S.queries = Object.assign(res, { seen: seen });
+  loadThumbs(queryPhotoIds());
 }
 function photoStrip(ids) {
   if (!ids || !ids.length) return '';
@@ -2180,8 +2331,10 @@ function bubble(email, when, body) {
 function queryThreadHtml(q, owner) {
   const msgs = S.queries.messages.filter((m) => m.queryId === q.id);
   const tasks = queryTasks(q);
-  let h = '<div class="q-pills"><span class="pill ' + (q.workOnHold ? 'pill-bad' : 'pill-blue') + '">' + (q.workOnHold ? 'Work on hold' : 'Work continuing') + '</span>' +
-    '<span class="pill">' + esc(q.otherTeam === 'yes' ? 'Needs ' + (q.otherTeamWhich || 'another team') : q.otherTeam === 'not_sure' ? 'Another team: not sure' : 'No other team needed') + '</span>' +
+  const closed = q.status === 'closed';
+  let h = '<div class="q-pills">' + (closed ? '' : '<span class="pill ' + (q.workOnHold ? 'pill-bad' : 'pill-blue') + '">' + (q.workOnHold ? 'Work on hold' : 'Work continuing') + '</span>') +
+    (q.area ? '<span class="pill">' + esc(q.area) + '</span>' : '') +
+    '<span class="pill">' + esc(q.otherTeam === 'yes' ? 'Needs ' + teamLabel(q) : q.otherTeam === 'not_sure' ? 'Another team: not sure' : 'No other team needed') + '</span>' +
     '<span class="pill pill-' + queryState(q).cls + '">' + esc(queryState(q).text) + '</span></div>';
   h += bubble(q.askedBy, q.askedAt, photoStrip(q.photoIds) + '<p>' + esc(q.text) + '</p>');
   msgs.forEach((m) => {
@@ -2201,27 +2354,29 @@ function queryThreadHtml(q, owner) {
   return h;
 }
 
-// One query in a list (engineer's and owners'): who and when, its state, the question, work status, and a small photo.
+// One query in a list (engineer's and owners'): the latest activity (highlighted until opened), its state, the
+// question, area and work status, and the latest photo.
 function queryCardHtml(q, act, on) {
-  const ph = q.photoIds && q.photoIds[0];
-  return '<button type="button" class="q-card' + (on ? ' on' : '') + (ph ? ' has-ph' : '') + '" data-act="' + act + '" data-id="' + esc(q.id) + '">' +
+  const ph = q.lastPhotoId || (q.photoIds && q.photoIds[0]), fresh = isNewQ(q);
+  const sub = [q.area, q.last && q.last.what !== 'asked' ? 'asked by ' + nameOfEmail(q.askedBy) : '', workText(q, true)].filter(Boolean).join(' · ');
+  return '<button type="button" class="q-card' + (on ? ' on' : '') + (fresh ? ' new' : '') + (ph ? ' has-ph' : '') + '" data-act="' + act + '" data-id="' + esc(q.id) + '">' +
     (ph ? '<span class="q-thumb">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
-    '<span class="q-card-main"><span class="q-card-top"><span class="muted small">' +
-    esc(nameOfEmail(q.askedBy) + ' · ' + (q.askedAt.slice(0, 10) === todayIso() ? 'today ' + q.askedAt.slice(11, 16) : niceDay(q.askedAt.slice(0, 10)))) + '</span><span class="pill pill-' + queryState(q).cls + '">' +
-    esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(workText(q)) + '</span></span></button>';
+    '<span class="q-card-main"><span class="q-card-top"><span class="q-last small">' + (fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(lastText(q)) + '</span>' +
+    '<span class="pill pill-' + queryState(q).cls + '">' + esc(queryState(q).text) + '</span></span><b>' + esc(q.text) + '</b><span class="muted small">' + esc(LC.cap(sub)) + '</span></span></button>';
 }
 
 // Owners: reply, ask for a clearer photo, close as Answered / Change approved, task + follow-up task.
 function ownerComposerHtml(q) {
   if (!S.qc || S.qc.qid !== q.id) {
-    const eng = (teamUsers().find((u) => u.email === q.askedBy && u.code) || teamUsers().find((u) => u.role === 'site_engineer' && u.code && (u.projects || []).indexOf(q.project) >= 0) || {}).code || '';
-    S.qc = { qid: q.id, text: '', outcome: 'answered', cause: '', cost: '', area: '', task: false, taskWho: eng, taskDue: addDays(todayIso(), 2), taskText: '',
+    const eng = defaultTaskFor(q.askedBy, q.project);
+    S.qc = { qid: q.id, text: '', outcome: 'answered', cause: '', cost: '', area: q.area || '', changeText: '', task: false, taskWho: eng, taskDue: addDays(todayIso(), 2), taskText: '',
       follow: false, followWho: eng, followText: '', err: '', sending: false };
   }
   const c = S.qc, causes = (S.queries && S.queries.causes) || [];
   const chip = (act, v, on, label) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" data-act="' + act + '" data-v="' + esc(v) + '" aria-pressed="' + on + '">' + esc(label) + '</button>';
-  const who = (field) => '<select data-qc="' + field + '">' + teamUsers().filter((u) => u.code).filter((u, i, a) => a.findIndex((x) => x.code === u.code) === i)
-    .map((u) => '<option value="' + esc(u.code) + '"' + (u.code === c[field] ? ' selected' : '') + '>' + esc(u.name + ' (' + u.code + ')') + '</option>').join('') + '</select>';
+  const who = (field) => '<label class="q-for">Task for' + taskForSelect('data-qc="' + field + '"', q.project, q.askedBy, c[field]) + '</label>';
+  const sendLabel = c.outcome === 'keep' ? 'Send reply'
+    : (c.outcome === 'change' ? 'Approve change' : 'Answer and close') + (c.task ? ' · task for ' + taskForName(c.taskWho) : '');
   // Asking for a clearer photo: quick choices plus your own words, then one message to the engineer.
   if (c.photoAsk) {
     c.photoHow = c.photoHow || [];
@@ -2242,6 +2397,7 @@ function ownerComposerHtml(q) {
     chip('qc-outcome', 'change', c.outcome === 'change', 'Change approved') + '</div>' +
     (c.outcome === 'change' ? '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       causes.map((x) => chip('qc-cause', x, c.cause === x, x)).join('') + '</div>' +
+      '<label>What was approved (for the change register)<input id="qcChange" data-qc="changeText" value="' + esc(c.changeText) + '" placeholder="Change colour to white"></label>' +
       '<div class="q-row2"><label>Area<input data-qc="area" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off"></label>' +
       '<label>Cost to us (optional)<input data-qc="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000" autocomplete="off"></label></div>' +
       '<span class="muted small">If the client asked for it and will pay, it belongs in Extras instead (comes with Budget).</span></div>' : '') +
@@ -2253,8 +2409,26 @@ function ownerComposerHtml(q) {
         (c.follow ? '<div class="q-taskline">' + who('followWho') + '<input data-qc="followText" value="' + esc(c.followText) + '" placeholder="Get Raju to patch and repaint around the box" autocomplete="off"></div>' : '') : '') +
       '</div>' : '') +
     (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
-    '<button type="button" class="btn-accent q-send" data-act="qc-send" data-id="' + esc(q.id) + '">Send reply</button></div>';
+    '<button type="button" class="btn-accent q-send" data-act="qc-send" data-id="' + esc(q.id) + '">' + esc(sendLabel) + '</button></div>';
 }
+// "Task for": the project's site engineers (and whoever asked or took the photo), then Shruthi and Savan.
+function taskForOptions(project, byEmail) {
+  const users = teamUsers().filter((u) => u.code);
+  return users.filter((u) => u.role === 'site_engineer' && ((u.projects || []).indexOf(project) >= 0 || u.email === byEmail))
+    .concat(users.filter((u) => u.role === 'owner'))
+    .filter((u, i, a) => a.findIndex((x) => x.code === u.code) === i);
+}
+// The engineer who asked or took the photo, else the project's engineer.
+function defaultTaskFor(byEmail, project) {
+  const opts = taskForOptions(project, byEmail);
+  return (opts.find((u) => u.email === byEmail && u.role === 'site_engineer') || opts.find((u) => u.role === 'site_engineer') || {}).code || '';
+}
+function taskForSelect(attrs, project, byEmail, cur) {
+  const opts = taskForOptions(project, byEmail);
+  return '<select ' + attrs + '>' + (cur ? '' : '<option value="">Pick…</option>') +
+    opts.map((u) => '<option value="' + esc(u.code) + '"' + (u.code === cur ? ' selected' : '') + '>' + esc(u.name + ' (' + u.code + ')') + '</option>').join('') + '</select>';
+}
+function taskForName(code) { const u = teamUsers().find((x) => x.code === code); return u ? u.name : code || 'the site engineer'; }
 const PHOTO_ASKS = ['Further back', 'Closer', 'Different angle', 'Better light'];
 // "Please send a clearer photo: further back, better light. Show the whole wall."
 function photoAskText(c) {
@@ -2274,15 +2448,19 @@ function ownerSend(photoAsk) {
   } else {
     if (c.outcome === 'change' && !c.cause) { c.err = 'Pick why this changed.'; redraw(); return; }
     if (c.task && !String(c.taskText || text).trim()) { c.err = 'Type what the task is.'; redraw(); return; }
+    if (c.task && !c.taskWho) { c.err = 'Pick who the task is for.'; redraw(); return; }
+    // The register's Change column: what was approved (typed, else the task, else the reply).
+    const changeText = String(c.changeText || '').trim() || (c.task ? String(c.taskText || '').trim() : '') || text;
+    if (c.outcome === 'change' && !changeText) { c.err = 'Type what was approved.'; redraw(); return; }
     req = api('closeQuery', [c.qid, {
-      outcome: c.outcome, reply: text, cause: c.cause, cost: c.cost, area: c.area, changeText: text,
+      outcome: c.outcome, reply: text, cause: c.cause, cost: c.cost, area: c.area, changeText: changeText,
       task: c.task ? { assignee: c.taskWho, due: c.taskDue, note: String(c.taskText || text).trim() } : null,
       followup: c.task && c.follow && String(c.followText || '').trim() ? { assignee: c.followWho, note: c.followText } : null
     }]);
   }
   c.sending = true; c.err = ''; redraw();
   req.then((res) => {
-    S.queries = res; S.qc = null;
+    setQueries(res); S.qc = null;
     snack(photoAsk ? 'Asked for a clearer photo.' : c.outcome === 'keep' ? 'Reply sent.' : 'Reply sent and the query is closed.');
     if (c.task) refresh(true);
     redraw();
@@ -2294,9 +2472,9 @@ function engComposerHtml(q) {
   const drafts = S.drafts.filter((d) => d.purpose === 'reply:' + q.id);
   const r = (S.engReply && S.engReply.qid === q.id) ? S.engReply : (S.engReply = { qid: q.id, text: '' });
   return '<div class="q-compose"><label for="erText">Your reply</label><textarea id="erText" data-er="text" rows="2">' + esc(r.text) + '</textarea>' +
-    (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""></span>').join('') + '</div>' : '') +
-    '<div class="ph-pick"><label class="btn-outline ph-pick-btn">Add photo<input type="file" accept="image/*" data-q-pick="reply:' + esc(q.id) + '" hidden></label>' +
-    '<button type="button" class="btn-save" data-act="er-send" data-id="' + esc(q.id) + '"' + (r.sending ? ' disabled' : '') + '>' + (r.sending ? 'Sending…' : 'Send reply') + '</button></div></div>';
+    (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
+    photoPickHtml('reply:' + q.id) +
+    '<button type="button" class="btn-save" data-act="er-send" data-id="' + esc(q.id) + '"' + (r.sending ? ' disabled' : '') + '>' + (r.sending ? 'Sending…' : 'Send reply') + '</button></div>';
 }
 function engSendReply(qid) {
   const r = S.engReply, q = S.queries.queries.find((x) => x.id === qid);
@@ -2307,7 +2485,7 @@ function engSendReply(qid) {
   renderEng();
   let chain = Promise.resolve();
   drafts.forEach((d) => {
-    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: q.project, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a query'))
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: q.project, batchId: qid, area: q.area || '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a query'))
       .then(() => idbDel('drafts', d.id));
   });
   chain.then(() => outboxAdd('replyQuery', [qid, String(r.text || '').trim(), 'reply', drafts.map((d) => d.id), newId()], 'Reply')).then(loadDrafts).then(() => {
@@ -2324,13 +2502,15 @@ function engQueriesHtml() {
   if (S.engQuery) {
     const q = S.queries && S.queries.queries.find((x) => x.id === S.engQuery);
     if (!q) { S.engQuery = ''; return engQueriesHtml(); }
+    markSeenQ(q.id);
     return '<button type="button" class="link-btn" data-act="eq-back">← All queries</button>' +
       '<section class="card eng-card eng-pad q-thread"><h2 class="eng-h2" style="padding-left:0">' + esc(engProjName(q.project)) + ' · ' + esc(q.text.slice(0, 60)) + '</h2>' + queryThreadHtml(q, false) + '</section>';
   }
   if (S.engRegister) return engRegisterHtml(proj);
-  const a = S.ask || (S.ask = { text: '', work: 'continuing', other: 'no', team: '', which: '', photoIds: [] });
+  const a = S.ask || (S.ask = { text: '', area: '', work: 'continuing', other: 'no', team: '', which: '', photoIds: [] });
   a.photoIds = a.photoIds || [];
   const drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
+  const areas = ((S.site && S.site.areas) || {})[proj] || [];
   const chip = (field, v, label, red) => '<button type="button" class="q-chip' + (a[field] === v ? (red ? ' on red' : ' on') : '') + '" data-act="ask-chip" data-f="' + field + '" data-v="' + esc(v) + '" aria-pressed="' + (a[field] === v) + '">' + esc(label) + '</button>';
   const list = ((S.queries && S.queries.queries) || []).filter((q) => q.project === proj);
   return '<section class="card eng-card" id="askForm"><h2 class="eng-h2">Ask a question · ' + esc(engProjName(proj)) + '</h2><div class="eng-form">' +
@@ -2339,6 +2519,8 @@ function engQueriesHtml() {
     (drafts.length || a.photoIds.length ? '<div class="q-photos">' +
       a.photoIds.map((id) => '<span class="q-photo">' + (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="">' : '<span class="ph-wait"></span>') + '<button type="button" class="q-x" data-act="ask-unattach" data-id="' + esc(id) + '" aria-label="Remove photo">×</button></span>').join('') +
       drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
+    '<label>Area · pick or type<input id="askArea" list="askAreaList" data-ask="area" value="' + esc(a.area || '') + '" placeholder="e.g. Cabin 3"></label>' +
+    '<datalist id="askAreaList">' + areas.map((x) => '<option value="' + esc(x) + '">').join('') + '</datalist>' +
     '<label>Your question<textarea id="askText" data-ask="text" rows="3">' + esc(a.text) + '</textarea></label>' +
     '<div><span class="lbl">Meanwhile, the work is</span><div class="q-chips2">' + chip('work', 'hold', 'On hold', true) + chip('work', 'continuing', 'Continuing') + '</div>' +
     '<span class="muted small">' + (a.work === 'hold' ? 'Shows in red for Shruthi and Savan until someone replies.' : 'They will reply when they can.') + '</span></div>' +
@@ -2371,6 +2553,8 @@ function teamPickHtml(a) {
 function engSendAsk() {
   const a = S.ask, proj = S.engProject, text = String(a.text || '').trim();
   if (a.sending) return; // a second tap while sending does nothing
+  const area = String(a.area || '').trim();
+  if (!area) { engSnack('Pick or type the area.', true); return; }
   if (!text) { engSnack('Type your question.', true); return; }
   if (a.other === 'yes' && !a.team) { engSnack('Pick which team needs to come in.', true); return; }
   if (a.other === 'yes' && a.team === TEAM_OTHER && !String(a.which || '').trim()) { engSnack('Type the team’s name.', true); return; }
@@ -2382,11 +2566,14 @@ function engSendAsk() {
   const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
   let chain = Promise.resolve();
   drafts.forEach((d) => {
-    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: proj, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a question'))
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: proj, batchId: qid, area: area, caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a question'))
       .then(() => idbDel('drafts', d.id));
   });
-  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamCode: teamCode, otherTeamWhich: which, photoIds: (a.photoIds || []).concat(drafts.map((d) => d.id)) }], 'Question'))
+  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, area: area, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamCode: teamCode, otherTeamWhich: which, photoIds: (a.photoIds || []).concat(drafts.map((d) => d.id)) }], 'Question'))
     .then(loadDrafts).then(() => {
+      // A new area is offered next time straight away (the server keeps it for the project too).
+      const all = S.site.areas || (S.site.areas = {}), list = all[proj] || (all[proj] = []);
+      if (!list.some((x) => x.toLowerCase() === area.toLowerCase())) list.push(area);
       S.ask = null;
       engSnack(navigator.onLine ? 'Sent. Shruthi and Savan get a notification; you get one when they reply.' : 'Saved on your phone. It will send by itself when there’s signal.');
       renderEng();
@@ -2430,8 +2617,7 @@ function printRegister(proj) {
 function projectQueriesHtml(p) {
   if (!S.queries && !S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); }
   if (!S.queries) return '<p class="empty">Loading…</p>';
-  const list = S.queries.queries.filter((q) => q.project === p.code)
-    .sort((a, b) => ((a.status === 'closed') - (b.status === 'closed')) || ((b.workOnHold && b.status !== 'closed') - (a.workOnHold && a.status !== 'closed')) || (a.askedAt < b.askedAt ? 1 : -1));
+  const list = S.queries.queries.filter((q) => q.project === p.code).sort(byLastActivity);
   const view = S.qView || 'list';
   const toggle = '<div class="q-toolbar"><div class="seg" role="group" aria-label="View"><button type="button" class="seg-b' + (view === 'list' ? ' on' : '') + '" data-act="q-view" data-v="list">Queries</button>' +
     '<button type="button" class="seg-b' + (view === 'register' ? ' on' : '') + '" data-act="q-view" data-v="register">Change register</button></div>' +
@@ -2439,31 +2625,43 @@ function projectQueriesHtml(p) {
   if (view === 'register') return toggle + '<section class="card">' + registerRowsHtml(S.queries.register.filter((r) => r.project === p.code), isOwner()) + '</section>';
   if (!S.qSel || !list.some((q) => q.id === S.qSel)) S.qSel = list.length && !phone.matches ? list[0].id : '';
   const sel = list.find((q) => q.id === S.qSel);
+  if (sel) markSeenQ(sel.id); // on screen = opened
   const cards = list.map((q) => queryCardHtml(q, 'q-open', q.id === S.qSel)).join('') || '<p class="empty">No queries on this project yet.</p>';
   return toggle + '<div class="pgrid"><nav class="pside q-list" aria-label="Query list">' + cards + '</nav>' +
     '<article class="pmain card q-thread" id="qThread">' + (sel ? queryThreadHtml(sel, isOwner()) : '<p class="empty">Pick a query.</p>') + '</article></div>';
 }
 // "Needs you" on a project's overview: open queries (work on hold first), tasks overdue or due today, new photos.
+function byLastActivity(a, b) {
+  const x = (a.last && a.last.at) || a.askedAt, y = (b.last && b.last.at) || b.askedAt;
+  return x < y ? 1 : x > y ? -1 : 0;
+}
 function needsFor(code) {
   const out = [], t = todayIso();
-  ((S.queries && S.queries.queries) || []).filter((q) => q.project === code && q.status !== 'closed').forEach((q) => out.push({
-    kind: 'Query', cls: q.workOnHold || q.status === 'open' ? 'bad' : 'wait', title: q.text,
-    sub: nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago · ' + workText(q, true) + (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
-    act: 'needs-query', id: q.id, label: 'Reply', hold: q.workOnHold
+  // Open queries, latest activity first ("New photo from Venky · 2 min ago"), highlighted until opened.
+  ((S.queries && S.queries.queries) || []).filter((q) => q.project === code && q.status !== 'closed').sort(byLastActivity).forEach((q) => out.push({
+    kind: 'Query', cls: q.workOnHold || q.status === 'open' ? 'bad' : 'wait', title: q.text, fresh: isNewQ(q), photo: q.lastPhotoId,
+    sub: lastText(q) + ' · ' + [q.area, workText(q, true)].filter(Boolean).join(' · ') + (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
+    act: 'needs-query', id: q.id, label: 'Reply'
   }));
   live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).forEach((e) => out.push({
-    kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'blue', title: LC.taskTitle(S.dir, e),
+    kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'blue', title: LC.taskTitle(S.dir, e), src: e.source,
     sub: (isMine(e) ? 'Yours' : 'For ' + (e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by))) + ' · due ' + niceDay(e.due), act: 'done', id: e.id, label: 'Done'
   }));
-  return out.sort((a, b) => (b.hold === true) - (a.hold === true));
+  return out;
+}
+// One Needs you line (project overview and Today): tag, what, latest activity or whose task, where it came from.
+function needLineHtml(n, btnAct, code) {
+  return '<div class="need' + (n.fresh ? ' new' : '') + '"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span>' +
+    (n.photo ? '<span class="need-thumb">' + (S.thumbs[n.photo] ? '<img src="' + S.thumbs[n.photo] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
+    '<span class="need-text"><b>' + (n.fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span>' +
+    (n.src ? taskSourceHtml(n.src) : '') + '</span>' +
+    (canWrite() ? '<button type="button" class="btn-outline" data-act="' + btnAct + '" data-id="' + esc(n.id) + '"' + (code ? ' data-code="' + esc(code) + '"' : '') + '>' + esc(n.label) + '</button>' : '') + '</div>';
 }
 function needsHtml(code) {
   const items = needsFor(code);
   return '<section class="card needs" aria-labelledby="needs-h"><div class="sec-head"><h3 id="needs-h">Needs you <span class="muted">· ' + items.length + '</span></h3>' +
     (items.length ? '' : '<span class="sec-note">Everything else is moving on its own</span>') + '</div>' +
-    (items.length ? items.map((n) => '<div class="need"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="need-text"><b>' + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span></span>' +
-      (canWrite() ? '<button type="button" class="btn-outline" data-act="' + n.act + '" data-id="' + esc(n.id) + '">' + esc(n.label) + '</button>' : '') + '</div>').join('')
-      : '<p class="empty">Nothing needs you on this project right now.</p>') + '</section>';
+    (items.length ? items.map((n) => needLineHtml(n, n.act)).join('') : '<p class="empty">Nothing needs you on this project right now.</p>') + '</section>';
 }
 function hasNeeds(code) { return needsFor(code).length > 0; }
 
@@ -2645,10 +2843,14 @@ document.addEventListener('input', (ev) => {
     const k = t.dataset.form;
     S.forms[k][t.dataset.field] = t.value;
     S.errs[k] = '';
+    if (t.dataset.field === 'trade') S.forms[k].tradeAuto = false;
+    if (t.dataset.field === 'detail' && PANELS[k] && PANELS[k].trade) autoTrade(S.forms[k], 'dir-' + k + '-trade');
     $('dmsg-' + k).innerHTML = dirMsgHtml(k);
   } else if (t.dataset.edit && S.dirEdit) {
     S.dirEdit[t.dataset.edit] = t.value;
     S.dirEdit.err = '';
+    if (t.dataset.edit === 'trade') S.dirEdit.tradeAuto = false;
+    if (t.dataset.edit === 'detail' && PANELS[S.dirEdit.kind] && PANELS[S.dirEdit.kind].trade) autoTrade(S.dirEdit, 'edit-trade');
     $('editMsg').innerHTML = editMsgHtml();
   } else if (t.dataset.pi && S.projEdit) {
     S.projEdit[t.dataset.pi] = t.value;
@@ -2660,6 +2862,7 @@ document.addEventListener('input', (ev) => {
   } else if (t.dataset.qc && S.qc) {
     S.qc[t.dataset.qc] = t.value;
     S.qc.err = '';
+    if (t.dataset.qc === 'taskWho') redraw(); // the button names the person
     if (S.qc.photoAsk && $('qcAskPreview')) $('qcAskPreview').textContent = 'The engineer will get: “' + photoAskText(S.qc) + '”';
   } else if (t.dataset.qcCheck && S.qc) {
     S.qc[t.dataset.qcCheck] = t.checked;
@@ -2679,6 +2882,7 @@ document.addEventListener('input', (ev) => {
   } else if (t.dataset.pc) {
     S.photoComment = S.photoComment || { text: '', due: addDays(todayIso(), 2), err: '' };
     S.photoComment[t.dataset.pc] = t.value;
+    if (t.dataset.pc === 'who') renderAll(); // the button names the person
   } else if (t.dataset.ea && S.engAdd) {
     S.engAdd[t.dataset.ea] = t.value;
   } else if (t.id === 'engProject') {
