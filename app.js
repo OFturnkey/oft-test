@@ -151,6 +151,20 @@ function stored(key) { try { return localStorage.getItem(key); } catch (_) { ret
 function sessionToken() { return stored(SESSION_KEY) || ''; }
 const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
 
+// Things arriving in the background (devices, queries, photos, the outbox) redraw the screen, but never while
+// someone is typing: that would move the cursor or swap a button under a finger. It redraws when they leave the box.
+function isTyping() {
+  const a = document.activeElement;
+  return !!a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(checkbox|radio|file|button|submit|date)$/i.test(a.type)));
+}
+let redrawWaiting = false;
+function bgRedraw() {
+  if (isTyping()) { redrawWaiting = true; return; }
+  redrawWaiting = false;
+  if (S.engineer) renderEng(); else if (S.started) renderAll();
+}
+document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() => { if (!isTyping()) bgRedraw(); }, 0); });
+
 // One request to the server: { a, s, args } goes in as plain text (no cookies, so the phone's Google
 // accounts play no part); { ok, result } or { ok: false, error, signin } comes back.
 function api(action, args) {
@@ -519,11 +533,11 @@ function loadDevices() {
   api('devices', []).then((res) => {
     S.devices = res.devices;
     S.devicesErr = '';
-    if (S.tab === 'dir') renderAll();
+    if (S.tab === 'dir') bgRedraw();
   }, (err) => {
     if (err.signin) { signedOut(err.message); return; }
     S.devicesErr = cleanErr(err.message);
-    if (S.tab === 'dir') renderAll();
+    if (S.tab === 'dir') bgRedraw();
   });
 }
 function devicesPanelHtml() {
@@ -1653,7 +1667,7 @@ function teamPanelHtml() {
     ? '<div class="dform">' +
       '<div class="fld"><label for="ma-name">Name</label><input id="ma-name" data-ma="name" value="' + esc(a.name) + '" placeholder="Venky" autocomplete="off"></div>' +
       '<div class="fld code"><label for="ma-code">Code</label><input id="ma-code" data-ma="code" value="' + esc(a.code) + '" placeholder="VNK" maxlength="4" autocapitalize="characters" autocomplete="off"></div>' +
-      '<div class="fld"><label for="ma-email">Google account</label><input id="ma-email" data-ma="email" type="email" value="' + esc(a.email) + '" placeholder="name@gmail.com" autocomplete="off"></div>' +
+      '<div class="fld"><label for="ma-email">Google account</label><input id="ma-email" data-ma="email" type="text" inputmode="email" autocapitalize="none" spellcheck="false" value="' + esc(a.email) + '" placeholder="name@gmail.com" autocomplete="off"></div>' +
       '<div class="fld" style="flex:1 1 100%"><span class="lbl">Projects</span>' + projBoxes(a.projects, 'ma') + '</div>' +
       '<button type="button" class="btn-accent" data-act="ma-add">Add site engineer</button>' +
       (a.err ? '<p class="err" role="alert" style="flex:1 1 100%">' + esc(a.err) + '</p>' : '') + '</div>'
@@ -1721,7 +1735,7 @@ function outboxAdd(action, args, label, meta) {
   return idbPut('outbox', item).then(() => { refreshOutbox(); flushOutbox(); });
 }
 function refreshOutbox() {
-  return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); if (S.engineer) renderEng(); }, () => { /* no storage: nothing waiting */ });
+  return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); if (S.engineer) bgRedraw(); }, () => { /* no storage: nothing waiting */ });
 }
 // Items of one kind still waiting on this phone (drawn as "Sending…").
 function waiting(action) { return OUT.items.filter((x) => x.action === action && !x.error && S.me && x.email === S.me.email); }
@@ -1753,7 +1767,7 @@ function outboxSent(item, res) {
     if (res && res.photo && p.thumb) S.thumbs[res.photo.id] = 'data:image/jpeg;base64,' + p.thumb;
   }
   if ((item.action === 'askQuery' || item.action === 'replyQuery') && res && res.queries) { S.queries = res; loadThumbs(queryPhotoIds()); }
-  if (S.engineer) renderEng(); else if (S.started) renderAll();
+  bgRedraw();
 }
 function renderNetStrip() {
   const el = $('netStrip'), mine = OUT.items.filter((x) => S.me && x.email === S.me.email);
@@ -1838,7 +1852,7 @@ function loadPhotos(project, then) {
     S.photos = res;
     if (then) then();
     loadThumbs(res.photos.slice(0, 40).map((p) => p.id));
-    if (S.engineer) renderEng(); else renderAll();
+    bgRedraw();
   }, (err) => { if (err.signin) signedOut(err.message); else if (S.engineer) engSnack(cleanErr(err.message), true); else snack(cleanErr(err.message), { error: true }); });
 }
 function loadThumbs(ids) {
@@ -1846,7 +1860,7 @@ function loadThumbs(ids) {
   if (!need.length) return;
   api('photoThumbs', [need]).then((res) => {
     Object.assign(S.thumbs, res.thumbs || {});
-    if (S.engineer) renderEng(); else renderAll();
+    bgRedraw();
   }, () => { /* previews come next time */ });
 }
 function thumbImg(p, cls) {
@@ -1903,7 +1917,7 @@ function openPhoto(id) {
   S.photoComment = null;
   if (!S.fullPhoto || S.fullPhoto.id !== id) {
     S.fullPhoto = null;
-    api('photoFull', [id]).then((res) => { if (S.photoSel === id) { S.fullPhoto = res; if (S.engineer) renderEng(); else renderAll(); } }, () => { /* the preview stays */ });
+    api('photoFull', [id]).then((res) => { if (S.photoSel === id) { S.fullPhoto = res; bgRedraw(); } }, () => { /* the preview stays */ });
   }
 }
 function sendPhotoComment(makeTask) {
@@ -2046,7 +2060,7 @@ function loadQueries(then) {
     S.queries = res;
     loadThumbs(queryPhotoIds());
     if (then) then();
-    redraw();
+    bgRedraw();
   }, (err) => { if (err.signin) signedOut(err.message); });
 }
 function queryPhotoIds() {
