@@ -2162,8 +2162,9 @@ function queryState(q) {
   if (q.status === 'waiting_photo') return { text: 'Waiting for photo', cls: 'wait' };
   return { text: 'Waiting ' + ageText(q.askedAt), cls: q.workOnHold ? 'bad' : 'wait' };
 }
-function workText(q) {
-  return (q.workOnHold ? 'Work on hold' : 'Work continuing') +
+// lower: "work on hold · needs Raju · Painting" for the middle of a line (the team keeps its capitals).
+function workText(q, lower) {
+  return (q.workOnHold ? (lower ? 'work on hold' : 'Work on hold') : (lower ? 'work continuing' : 'Work continuing')) +
     (q.otherTeam === 'yes' ? ' · needs ' + (q.otherTeamWhich || 'another team') : q.otherTeam === 'not_sure' ? ' · another team? not sure' : '');
 }
 function photoStrip(ids) {
@@ -2447,7 +2448,7 @@ function needsFor(code) {
   const out = [], t = todayIso();
   ((S.queries && S.queries.queries) || []).filter((q) => q.project === code && q.status !== 'closed').forEach((q) => out.push({
     kind: 'Query', cls: q.workOnHold || q.status === 'open' ? 'bad' : 'wait', title: q.text,
-    sub: nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago · ' + workText(q).toLowerCase() + (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
+    sub: nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago · ' + workText(q, true) + (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
     act: 'needs-query', id: q.id, label: 'Reply', hold: q.workOnHold
   }));
   live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).forEach((e) => out.push({
