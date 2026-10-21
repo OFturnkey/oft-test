@@ -625,3 +625,6 @@ h2, h3 { margin: 0; }
 /* A button whose save is still running */
 .busy, button.busy:disabled { opacity: 0.55; cursor: progress; }
 
+
+.pplace { font-size: 13px; color: #5E605C; }
+
