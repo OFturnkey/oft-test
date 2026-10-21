@@ -188,6 +188,22 @@ function decorateBusy() {
   });
 }
 
+// No browser autofill on any of the app's text boxes. Chrome ignores autocomplete="off" when it guesses a box is
+// part of an address (it offered a PIN code in the project bar), but leaves alone a box whose autocomplete value it
+// doesn't recognise. Every box gets that value as soon as it appears, on every screen.
+const NO_FILL = 'oft-no-fill';
+function noAutofill(root) {
+  if (!root.querySelectorAll) return;
+  const boxes = Array.from(root.querySelectorAll('input, textarea'));
+  if (root.matches('input, textarea')) boxes.push(root);
+  boxes.forEach((el) => {
+    const text = el.tagName === 'TEXTAREA' || /^(text|search|email|tel|url|number)?$/i.test(el.getAttribute('type') || '');
+    if (text && el.getAttribute('autocomplete') !== NO_FILL) el.setAttribute('autocomplete', NO_FILL);
+  });
+}
+noAutofill(document.body);
+new MutationObserver((list) => list.forEach((m) => m.addedNodes.forEach(noAutofill))).observe(document.body, { childList: true, subtree: true });
+
 // Things arriving in the background (devices, queries, photos, the outbox) redraw the screen, but never while
 // someone is typing: that would move the cursor or swap a button under a finger. It redraws when they leave the box.
 // "Typing" means keys pressed in a text box within the last few seconds: a cursor merely left in a box (the code
@@ -1621,8 +1637,8 @@ function projCodeSave(proj) {
 }
 
 function projectOverviewHtml(p) {
-  const pbar = canWrite() ? '<div class="card pbar"><div class="pbar-row"><label for="pcode" class="sr-only">Quick entry for ' + esc(p.code) + '</label>' +
-    '<input id="pcode" data-pcode="' + esc(p.code) + '" value="' + esc(S.pcode || '') + '" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Type anything for ' + esc(p.code) + ', e.g. MT 26/11 check cove gap  or  P ALM 12k C">' +
+  const pbar = canWrite() ? '<div class="card pbar"><div class="pbar-row"><label for="projBar" class="sr-only">Quick entry for ' + esc(p.code) + '</label>' +
+    '<input id="projBar" data-pcode="' + esc(p.code) + '" value="' + esc(S.pcode || '') + '" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Type anything for ' + esc(p.code) + ', e.g. MT 26/11 check cove gap  or  P ALM 12k C">' +
     '<button type="button" class="btn-save" data-act="pcode-save" data-code="' + esc(p.code) + '">Add</button></div>' +
     '<div id="pcodePreview" class="pbar-prev">' + projCodePreview(p.code) + '</div></div>' : '';
   const needs = pbar + needsHtml(p.code);
@@ -2311,11 +2327,10 @@ function engQueriesHtml() {
       '<section class="card eng-card eng-pad q-thread"><h2 class="eng-h2" style="padding-left:0">' + esc(engProjName(q.project)) + ' · ' + esc(q.text.slice(0, 60)) + '</h2>' + queryThreadHtml(q, false) + '</section>';
   }
   if (S.engRegister) return engRegisterHtml(proj);
-  const a = S.ask || (S.ask = { text: '', work: 'continuing', other: 'no', which: '', photoIds: [] });
+  const a = S.ask || (S.ask = { text: '', work: 'continuing', other: 'no', team: '', which: '', photoIds: [] });
   a.photoIds = a.photoIds || [];
   const drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
   const chip = (field, v, label, red) => '<button type="button" class="q-chip' + (a[field] === v ? (red ? ' on red' : ' on') : '') + '" data-act="ask-chip" data-f="' + field + '" data-v="' + esc(v) + '" aria-pressed="' + (a[field] === v) + '">' + esc(label) + '</button>';
-  const teams = ((S.site && S.site.people) || []).filter((p) => p.kind === 'labour').slice(0, 6).map((p) => p.name + (p.trade ? ' · ' + p.trade : '')).concat(['Electrician', 'Other']);
   const list = ((S.queries && S.queries.queries) || []).filter((q) => q.project === proj);
   return '<section class="card eng-card" id="askForm"><h2 class="eng-h2">Ask a question · ' + esc(engProjName(proj)) + '</h2><div class="eng-form">' +
     '<div class="ph-pick" style="padding:0"><label class="btn-save ph-pick-btn">Take photo<input type="file" accept="image/*" capture="environment" data-q-pick="query" hidden></label>' +
@@ -2327,7 +2342,7 @@ function engQueriesHtml() {
     '<div><span class="lbl">Meanwhile, the work is</span><div class="q-chips2">' + chip('work', 'hold', 'On hold', true) + chip('work', 'continuing', 'Continuing') + '</div>' +
     '<span class="muted small">' + (a.work === 'hold' ? 'Shows in red for Shruthi and Savan until someone replies.' : 'They will reply when they can.') + '</span></div>' +
     '<div><span class="lbl">Does another team need to come in?</span><div class="q-chips3">' + chip('other', 'no', 'No') + chip('other', 'yes', 'Yes') + chip('other', 'not_sure', 'Not sure') + '</div>' +
-    (a.other === 'yes' ? '<div class="q-chipwrap">' + teams.map((t) => chip('which', t, t)).join('') + '</div>' : '') + '</div>' +
+    (a.other === 'yes' ? teamPickHtml(a) : '') + '</div>' +
     '<button type="button" class="eng-big" data-act="ask-send"' + (a.sending ? ' disabled' : '') + '>' + (a.sending ? 'Sending…' : 'Send to Shruthi and Savan') + '</button></div></section>' +
     '<section class="card eng-card"><h2 class="eng-h2">Queries · ' + esc(engProjName(proj)) + '</h2>' +
     waiting('askQuery').map((w) => w.args[0]).filter((x) => x.project === proj).map((x) => '<div class="q-card"><span class="q-card-main"><span class="q-card-top"><span class="muted small">You · just now</span>' +
@@ -2335,10 +2350,32 @@ function engQueriesHtml() {
     (list.length ? list.map((q) => queryCardHtml(q, 'eq-open')).join('') : (waiting('askQuery').some((w) => w.args[0].project === proj) ? '' : '<p class="empty eng-pad">No queries on this project yet.</p>')) +
     '<p class="eng-pad"><button type="button" class="link-btn" data-act="eq-register">Change register</button></p></section>';
 }
+// "Which team?": Directory labour by trade, so the query links to the real team. Typing a name is the fallback.
+const TEAM_OTHER = '__typed';
+function teamPickHtml(a) {
+  const labour = ((S.site && S.site.people) || []).filter((p) => p.kind === 'labour')
+    .sort((x, y) => (x.trade || '~').localeCompare(y.trade || '~') || x.name.localeCompare(y.name));
+  const opt = (v, label) => '<option value="' + esc(v) + '"' + (a.team === v ? ' selected' : '') + '>' + esc(label) + '</option>';
+  const groups = [];
+  labour.forEach((p) => {
+    const g = p.trade || 'Trade not set';
+    if (!groups.length || groups[groups.length - 1].name !== g) groups.push({ name: g, people: [] });
+    groups[groups.length - 1].people.push(p);
+  });
+  return '<label class="q-team">Which team?<select id="askTeam" data-ask-team="1">' + opt('', 'Pick a team…') +
+    groups.map((g) => '<optgroup label="' + esc(g.name) + '">' + g.people.map((p) => opt(p.code, p.name + ' · ' + g.name)).join('') + '</optgroup>').join('') +
+    opt(TEAM_OTHER, 'Not in the list: type the name') + '</select></label>' +
+    (a.team === TEAM_OTHER ? '<label class="q-team">Team name<input id="askWhich" data-ask="which" value="' + esc(a.which) + '" placeholder="e.g. AC fitter"></label>' : '');
+}
 function engSendAsk() {
   const a = S.ask, proj = S.engProject, text = String(a.text || '').trim();
   if (a.sending) return; // a second tap while sending does nothing
   if (!text) { engSnack('Type your question.', true); return; }
+  if (a.other === 'yes' && !a.team) { engSnack('Pick which team needs to come in.', true); return; }
+  if (a.other === 'yes' && a.team === TEAM_OTHER && !String(a.which || '').trim()) { engSnack('Type the team’s name.', true); return; }
+  const teamCode = a.other === 'yes' && a.team !== TEAM_OTHER ? a.team : '';
+  const teamPerson = teamCode && ((S.site && S.site.people) || []).find((p) => p.code === teamCode);
+  const which = a.other !== 'yes' ? '' : teamPerson ? teamPerson.name + (teamPerson.trade ? ' · ' + teamPerson.trade : '') : String(a.which || '').trim();
   a.sending = true;
   renderEng();
   const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
@@ -2347,7 +2384,7 @@ function engSendAsk() {
     chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: proj, batchId: qid, area: '', caption: '', linkedTo: 'query:' + qid, full: d.full, thumb: d.thumb }], 'Photo for a question'))
       .then(() => idbDel('drafts', d.id));
   });
-  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamWhich: a.other === 'yes' ? a.which : '', photoIds: (a.photoIds || []).concat(drafts.map((d) => d.id)) }], 'Question'))
+  chain.then(() => outboxAdd('askQuery', [{ id: qid, project: proj, text: text, workOnHold: a.work === 'hold', otherTeam: a.other, otherTeamCode: teamCode, otherTeamWhich: which, photoIds: (a.photoIds || []).concat(drafts.map((d) => d.id)) }], 'Question'))
     .then(loadDrafts).then(() => {
       S.ask = null;
       engSnack(navigator.onLine ? 'Sent. Shruthi and Savan get a notification; you get one when they reply.' : 'Saved on your phone. It will send by itself when there’s signal.');
@@ -2626,6 +2663,9 @@ document.addEventListener('input', (ev) => {
   } else if (t.dataset.qcCheck && S.qc) {
     S.qc[t.dataset.qcCheck] = t.checked;
     renderAll();
+  } else if (t.dataset.askTeam && S.ask) {
+    S.ask.team = t.value;
+    renderEng();
   } else if (t.dataset.ask && S.ask) {
     S.ask[t.dataset.ask] = t.value;
   } else if (t.dataset.er && S.engReply) {
