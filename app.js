@@ -26,13 +26,13 @@ const blankPf = () => ({ project: '', who: '', period: 'month', from: '', to: ''
 const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#FFFFFF" stroke-width="2" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg>';
 const ARROW_L = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>';
 const ARROW_R = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3l5 5-5 5"></path></svg>';
-const blankForm = () => ({ code: '', name: '', detail: '', trade: '' });
+const blankForm = () => ({ code: '', name: '', detail: '', trade: '', location: '' });
 function tradeOf(code) { const p = ((S.data && S.data.people) || []).find((x) => x.code === code); return p ? p.trade || '' : ''; }
 
 const PANELS = {
   project: {
     title: 'Projects & clients', desc: 'One code per site. In codes, CL always means this project’s client.',
-    nameLabel: 'Site name', namePh: 'Site D', detailLabel: 'Client name', detailPh: 'Client name', codePh: 'SD',
+    nameLabel: 'Site name', namePh: 'NEST', detailLabel: 'Client name', detailPh: 'Client name', codePh: 'SD', location: true,
     detailOf: (r, k) => projectDetailOf(Object.assign({ code: k }, r))
   },
   labour: {
@@ -169,15 +169,22 @@ function withBusy(el, fn) {
     if (!INFLIGHT[key].n) delete INFLIGHT[key]; else decorateBusy();
   }
 }
-// Puts the busy look on buttons whose save is still running (also after the screen redraws).
+// Puts the busy look on buttons whose save is still running (also after the screen redraws), and takes it off
+// again when the save is done. Buttons that are never redrawn (Refresh and Print in the header) need the latter.
 function decorateBusy() {
+  document.querySelectorAll('.busy').forEach((el) => {
+    if (INFLIGHT[actKey(el)]) return;
+    el.classList.remove('busy');
+    el.disabled = false;
+    if (el.dataset.busyText !== undefined) { el.textContent = el.dataset.busyText; delete el.dataset.busyText; }
+  });
   if (!Object.keys(INFLIGHT).length) return;
   document.querySelectorAll('[data-act]').forEach((el) => {
     const b = INFLIGHT[actKey(el)];
-    if (!b || !b.n) return;
+    if (!b || !b.n || el.classList.contains('busy')) return;
     el.disabled = true;
     el.classList.add('busy');
-    if (el.tagName === 'BUTTON' && b.label) el.textContent = b.label;
+    if (el.tagName === 'BUTTON' && b.label) { el.dataset.busyText = el.textContent; el.textContent = b.label; }
   });
 }
 
@@ -222,7 +229,7 @@ function api(action, args) {
     return res.result;
   }).finally(() => {
     clearTimeout(timer);
-    if (busyKey && INFLIGHT[busyKey] && --INFLIGHT[busyKey].n <= 0) delete INFLIGHT[busyKey];
+    if (busyKey && INFLIGHT[busyKey] && --INFLIGHT[busyKey].n <= 0) { delete INFLIGHT[busyKey]; setTimeout(decorateBusy, 0); }
   });
 }
 
@@ -384,7 +391,7 @@ function showEngineer(me, site) {
   renderEnvStrip();
 }
 // Engineer screens use the site's name (E-City) everywhere: the picker, task lines, headings.
-function engProjName(code) { return code; }
+function engProjName(code) { const p = ((S.site && S.site.projects) || []).find((x) => x.code === code); return p && p.name ? p.name : code; }
 function engMe() { return ((S.site && S.site.users) || []).find((u) => u.email === S.me.email) || { projects: [], code: '' }; }
 function engProjects() {
   // His own projects first, then the rest (engineers can see every project, to help each other).
@@ -1084,6 +1091,7 @@ function editRowHtml(kind) {
     '<div class="fld"><label for="edit-name">' + esc(P.nameLabel) + '</label><input id="edit-name" data-edit="name" value="' + esc(ed.name) + '" autocomplete="off"></div>' +
     (P.detailLabel ? '<div class="fld"><label for="edit-detail">' + esc(P.detailLabel) + '</label><input id="edit-detail" data-edit="detail" value="' + esc(ed.detail) + '" autocomplete="off"></div>' : '') +
     (P.trade ? '<div class="fld"><label for="edit-trade">Trade</label>' + tradeSelect('edit-trade', 'data-edit="trade"', ed.trade) + '</div>' : '') +
+    (P.location ? '<div class="fld"><label for="edit-location">Location</label><input id="edit-location" data-edit="location" value="' + esc(ed.location || '') + '" autocomplete="off"></div>' : '') +
     '<button type="button" class="btn-accent" data-act="dir-save">Save</button>' +
     '<button type="button" class="btn-outline" data-act="dir-cancel">Cancel</button>' +
     '<div id="editMsg" class="dmsg" style="flex:1 1 100%">' + editMsgHtml() + '</div></div></div>';
@@ -1093,7 +1101,7 @@ function rowHtml(kind, k, rec) {
   const n = usage(kind, k), conf = S.confirmDel === kind + ':' + k;
   const label = !canDelete(kind, k) ? 'Archive' : conf ? 'Confirm delete?' : 'Delete';
   return '<div class="drow"><div class="drow-view"><span class="code-tag">' + esc(k) + '</span>' +
-    '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, rec))) + '</b><span>' + esc(PANELS[kind].detailOf(rec, k)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
+    '<div class="drow-text"><b>' + esc(LC.cap(recName(kind, rec)) || 'No site name yet') + '</b><span>' + esc(PANELS[kind].detailOf(rec, k)) + ' · ' + plural(n, 'entry', 'entries') + '</span></div>' +
     (isOwner()
       ? '<button type="button" class="btn-sm" data-act="dir-edit" data-kind="' + kind + '" data-code="' + esc(k) + '" aria-label="Edit ' + esc(k) + '">Edit</button>' +
         (kind === 'project' ? '<button type="button" class="btn-sm" data-act="pi-edit" data-code="' + esc(k) + '">Stage &amp; dates</button>' : '') +
@@ -1118,6 +1126,7 @@ function panelHtml(kind) {
     (P.detailLabel ? '<div class="fld"><label for="dir-' + kind + '-detail">' + esc(P.detailLabel) + '</label><input id="dir-' + kind + '-detail" data-form="' + kind + '" data-field="detail" value="' + esc(f.detail) +
       '" placeholder="' + esc(P.detailPh) + '" autocomplete="off"></div>' : '') +
     (P.trade ? '<div class="fld"><label for="dir-' + kind + '-trade">Trade</label>' + tradeSelect('dir-' + kind + '-trade', 'data-form="' + kind + '" data-field="trade"', f.trade) + '</div>' : '') +
+    (P.location ? '<div class="fld"><label for="dir-' + kind + '-location">Location</label><input id="dir-' + kind + '-location" data-form="' + kind + '" data-field="location" value="' + esc(f.location || '') + '" placeholder="E-City" autocomplete="off"></div>' : '') +
     '<button type="button" class="btn-accent" data-act="dir-add" data-kind="' + kind + '">Add</button></div>' +
     '<div class="dmsg" id="dmsg-' + kind + '">' + dirMsgHtml(kind) + '</div>';
   h += '<div>' + act.map((k) => (S.dirEdit && S.dirEdit.kind === kind && S.dirEdit.code === k ? editRowHtml(kind) : rowHtml(kind, k, store[k])) +
@@ -1194,8 +1203,8 @@ function addCodeFromForm(kind) {
   const code = f.code.trim().toUpperCase(), name = f.name.trim(), detail = f.detail.trim(), trade = PANELS[kind].trade ? f.trade : '';
   const issue = LC.codeIssue(kind, code, S.dir, null);
   if (issue) { S.errs[kind] = issue; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
-  if (!name) { S.errs[kind] = kind === 'mode' ? 'Give the mode a label.' : 'Give it a name.'; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
-  call('addCode', [kind, code, name, detail, trade], () => {
+  if (!name && kind !== 'project') { S.errs[kind] = kind === 'mode' ? 'Give the mode a label.' : 'Give it a name.'; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
+  call('addCode', [kind, code, name, detail, trade, kind === 'project' ? f.location.trim() : ''], () => {
     S.forms[kind] = blankForm();
     S.errs[kind] = '';
     snack(code + ' added. It works in the code box now.');
@@ -1207,7 +1216,7 @@ function startDirEdit(kind, code) {
   if (!r) return;
   S.dirEdit = {
     kind: kind, code: code, newCode: code, name: recName(kind, r) || '',
-    detail: kind === 'project' ? (r.client || '') : kind === 'mode' ? '' : (r.detail || ''), trade: tradeOf(code), err: ''
+    detail: kind === 'project' ? (r.client || '') : kind === 'mode' ? '' : (r.detail || ''), trade: tradeOf(code), location: kind === 'project' ? ((projInfo(code) || {}).location || '') : '', err: ''
   };
 }
 
@@ -1216,14 +1225,14 @@ function saveDirEdit() {
   if (!ed) return;
   const nu = ed.newCode.trim().toUpperCase(), name = ed.name.trim(), detail = ed.detail.trim();
   const issue = nu !== ed.code ? LC.codeIssue(ed.kind, nu, S.dir, ed.code) : '';
-  if (issue || !name) {
+  if (issue || (!name && ed.kind !== 'project')) {
     ed.err = issue || 'The name can’t be empty.';
     $('editMsg').innerHTML = editMsgHtml();
     return;
   }
   const old = ed.code, kind = ed.kind;
   const hadFilter = kind === 'project' && S.project === old;
-  call('editCode', [kind, old, nu, name, detail, PANELS[kind].trade ? ed.trade : undefined], (res) => {
+  call('editCode', [kind, old, nu, name, detail, PANELS[kind].trade ? ed.trade : undefined, kind === 'project' ? String(ed.location || '').trim() : undefined], (res) => {
     S.dirEdit = null;
     if (nu !== old) {
       if (hadFilter) S.project = nu;
@@ -1519,7 +1528,7 @@ function stagePill(stage) { return '<span class="stage-pill st-' + esc(stage) + 
 // "Execution · Day 38 of 113 · Handover Sun 7 Feb · Site engineer Venky"
 // The project is called by its code everywhere; the site name (its location, e.g. E-City) leads this line.
 function projectLine(p) {
-  const bits = (p.name ? [p.name] : []).concat([STAGE_LABEL[p.stage]]);
+  const bits = [STAGE_LABEL[p.stage]];
   const t = todayIso(), n = dayNumber(p, t);
   if (p.stage === 'execution' && n !== null) {
     if (n < 1) bits.push((p.day1 ? 'Site starts ' : 'Planned start ') + niceDay(day1Of(p)));
@@ -1538,7 +1547,7 @@ function renderProjectsView() {
   if (!S.projTab || (S.projTab !== '_today' && !list.some((p) => p.code === S.projTab))) S.projTab = '_today';
   const p = projInfo(S.projTab);
   const tabs = list.map((x) => '<button type="button" class="ptab' + (x.code === S.projTab ? ' on' : '') + '" data-act="proj-tab" data-code="' + esc(x.code) +
-    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.code) + '</span>' + stagePill(x.stage) +
+    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.name || x.code) + '</span>' + stagePill(x.stage) +
     (isOwner() && hasNeeds(x.code) ? '<span class="red-dot" title="Needs you"></span>' : '') + '</button>').join('');
   const todayTab = '<button type="button" class="ptab' + (S.projTab === '_today' ? ' on' : '') + '" data-act="proj-tab" data-code="_today" aria-pressed="' + (S.projTab === '_today') + '"><span class="ptab-name">Today</span></button>';
   if (!p) {
@@ -1552,7 +1561,7 @@ function renderProjectsView() {
     : '<span class="psec off" title="Comes in a later step">' + esc(s[1]) + '</span>').join('');
   $('view-projects').innerHTML =
     '<nav class="ptabs" aria-label="Projects">' + todayTab + tabs + '</nav>' +
-    '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.code) + '</h2>' +
+    '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.name || p.code) + '</h2>' + placeLine(p) +
     '<div class="psub">' + esc(projectLine(p)) + '</div></div>' +
     '<nav class="psecs" aria-label="Project sections">' + nav + '</nav>' +
     (S.projSec === 'site' ? projectSiteHtml(p) : S.projSec === 'queries' ? projectQueriesHtml(p) : projectOverviewHtml(p));
@@ -1565,7 +1574,7 @@ function todayAllHtml(list) {
     let items = needsFor(p.code);
     if (mine) items = items.filter((n) => n.act === 'needs-query' || (n.act === 'done' && isMine(findEntry(n.id) || {})));
     const shown = items.slice(0, 5);
-    return '<section class="card tday"><button type="button" class="tday-h" data-act="proj-tab" data-code="' + esc(p.code) + '"><b>' + esc(p.code) + '</b><span class="muted small">' + esc(projectLine(p)) + '</span></button>' +
+    return '<section class="card tday"><button type="button" class="tday-h" data-act="proj-tab" data-code="' + esc(p.code) + '"><b>' + esc(p.name || p.code) + '</b><span class="muted small">' + esc(projectLine(p)) + '</span></button>' +
       (shown.length ? shown.map((n) => '<div class="need"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="need-text"><b>' + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span></span>' +
         (canWrite() ? '<button type="button" class="btn-outline" data-act="' + (n.act === 'needs-query' ? 'today-query' : 'done') + '" data-id="' + esc(n.id) + '" data-code="' + esc(p.code) + '">' + esc(n.label) + '</button>' : '') + '</div>').join('')
         : '<p class="empty">Nothing urgent.</p>') +
@@ -1636,9 +1645,14 @@ function projectOverviewHtml(p) {
 }
 
 /* ---------- Directory additions: project stage & dates, trade, team ---------- */
+// Under the project heading: where it is and whose it is ("E-City · Client: Mr Rao").
+function placeLine(p) {
+  const bits = [p.location, p.client ? 'Client: ' + p.client : ''].filter(Boolean);
+  return bits.length ? '<div class="pplace">' + esc(bits.join(' · ')) + '</div>' : '';
+}
 function projectDetailOf(r) {
   const p = projInfo(r.code || '') || {};
-  return 'Client: ' + (r.client || '—') + (p.stage ? ' · ' + STAGE_LABEL[p.stage] : '');
+  return ['Client: ' + (r.client || '—'), p.location, p.stage ? STAGE_LABEL[p.stage] : ''].filter(Boolean).join(' · ');
 }
 function projInfoFormHtml(code) {
   const p = projInfo(code) || {}, f = S.projEdit;
