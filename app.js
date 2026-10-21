@@ -452,6 +452,8 @@ function forgetDevice() {
 }
 // The server says this device is no longer signed in (signed out from another device, or unused for months).
 function signedOut(message) {
+  // Already signed out here (e.g. a background refresh answering after "Sign out of this device"): nothing to do.
+  if (!sessionToken() && !$('gate').hidden) return;
   forgetDevice();
   showSignIn(message || 'This device has been signed out. Please sign in again.', { chooseAccount: true });
 }
