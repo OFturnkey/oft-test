@@ -616,3 +616,8 @@ h2, h3 { margin: 0; }
 .q-card-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 auto; }
 .q-thumb { flex: none; width: 64px; height: 48px; border-radius: 8px; overflow: hidden; background: #E4E4DE; }
 .q-thumb img, .q-thumb .ph-wait { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Saved on the phone, still sending */
+.sending { font-size: 11px; font-weight: 600; color: #5E4500; background: #FFEDB3; border-radius: 999px; padding: 1px 8px; }
+.ph-badge.sending { background: #FFEDB3; color: #5E4500; }
+
