@@ -582,6 +582,8 @@ h2, h3 { margin: 0; }
 .q-chips2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 4px 0; }
 .q-chips3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 4px 0; }
 .q-chipwrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.eng-form label.q-team { margin-top: 10px; }
+.q-team select { border: 1px solid #C9CAC3; border-radius: 10px; padding: 0 12px; min-height: 48px; font: inherit; font-size: 15px; color: #1C1E1D; background: #FFFFFF; }
 .ptable.reg td { vertical-align: top; }
 .lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(28, 30, 29, 0.92); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
