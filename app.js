@@ -151,6 +151,36 @@ function stored(key) { try { return localStorage.getItem(key); } catch (_) { ret
 function sessionToken() { return stored(SESSION_KEY) || ''; }
 const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
 
+/* Double clicks. A button that sends something to the server turns lighter, says "Saving…" (or Sending…, Asking…)
+ * and ignores clicks until the server has answered. Works for every button: whatever server request a click starts
+ * is counted against that button (api() below). The server also ignores a repeat within a few seconds. */
+const INFLIGHT = {};
+let CURRENT_KEY = null;
+const BUSY_LABEL = { 'qc-photo-send': 'Asking…', 'qc-send': 'Sending…', 'er-send': 'Sending…', 'ask-send': 'Sending…', 'ph-comment': 'Sending…',
+  'ph-task': 'Sending…', 'ph-send': 'Sending…', 'brief-preview': 'Loading…', refresh: 'Updating…', 'pcode-save': 'Saving…', save: 'Saving…' };
+function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code || d.email || d.kind || d.v || ''); }
+function withBusy(el, fn) {
+  const key = actKey(el);
+  if (INFLIGHT[key]) return; // still saving: a second click does nothing
+  INFLIGHT[key] = { label: BUSY_LABEL[el.dataset.act] || 'Saving…', n: 0 };
+  CURRENT_KEY = key;
+  try { fn(); } finally {
+    CURRENT_KEY = null;
+    if (!INFLIGHT[key].n) delete INFLIGHT[key]; else decorateBusy();
+  }
+}
+// Puts the busy look on buttons whose save is still running (also after the screen redraws).
+function decorateBusy() {
+  if (!Object.keys(INFLIGHT).length) return;
+  document.querySelectorAll('[data-act]').forEach((el) => {
+    const b = INFLIGHT[actKey(el)];
+    if (!b || !b.n) return;
+    el.disabled = true;
+    el.classList.add('busy');
+    if (el.tagName === 'BUTTON' && b.label) el.textContent = b.label;
+  });
+}
+
 // Things arriving in the background (devices, queries, photos, the outbox) redraw the screen, but never while
 // someone is typing: that would move the cursor or swap a button under a finger. It redraws when they leave the box.
 function isTyping() {
@@ -168,6 +198,8 @@ document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() =
 // One request to the server: { a, s, args } goes in as plain text (no cookies, so the phone's Google
 // accounts play no part); { ok, result } or { ok: false, error, signin } comes back.
 function api(action, args) {
+  const busyKey = CURRENT_KEY;
+  if (busyKey && INFLIGHT[busyKey]) INFLIGHT[busyKey].n++;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 90000);
   const t0 = performance.now();
@@ -186,8 +218,12 @@ function api(action, args) {
     S.timing = { action: action, server: res.ms, total: Math.round(performance.now() - t0) };
     renderEnvStrip();
     if (!res.ok) { const e = new Error(res.error || 'Something went wrong.'); e.signin = !!res.signin; throw e; }
+    if (res.result && res.result.duplicate) { const e = new Error('That was already saved.'); e.dup = true; throw e; }
     return res.result;
-  }).finally(() => clearTimeout(timer));
+  }).finally(() => {
+    clearTimeout(timer);
+    if (busyKey && INFLIGHT[busyKey] && --INFLIGHT[busyKey].n <= 0) delete INFLIGHT[busyKey];
+  });
 }
 
 // Ledger actions: show "Syncing…", then fresh data (every write answers with it) or the error.
@@ -202,6 +238,7 @@ function call(fn, args, onOk, onFail) {
   }, (err) => {
     S.pending--;
     if (err.signin) { signedOut(err.message); return; }
+    if (err.dup) { renderAll(); return; } // a repeat of a save that already went through
     const msg = cleanErr(err.message);
     if (onFail) onFail(msg); else snack(msg, { error: true });
     renderAll();
@@ -347,7 +384,7 @@ function showEngineer(me, site) {
   renderEnvStrip();
 }
 // Engineer screens use the site's name (E-City) everywhere: the picker, task lines, headings.
-function engProjName(code) { const p = ((S.site && S.site.projects) || []).find((x) => x.code === code); return p && p.name ? p.name : code; }
+function engProjName(code) { return code; }
 function engMe() { return ((S.site && S.site.users) || []).find((u) => u.email === S.me.email) || { projects: [], code: '' }; }
 function engProjects() {
   // His own projects first, then the rest (engineers can see every project, to help each other).
@@ -383,6 +420,7 @@ function renderEng() {
   let s0 = null, s1 = null;
   try { if (fid && typeof a.selectionStart === 'number') { s0 = a.selectionStart; s1 = a.selectionEnd; } } catch (_) { /* not a text field */ }
   renderEngInner();
+  decorateBusy();
   if (fid) {
     const el = $(fid);
     if (el && document.activeElement !== el) { el.focus({ preventScroll: true }); try { if (s0 !== null) el.setSelectionRange(s0, s1); } catch (_) { /* ignore */ } }
@@ -1479,8 +1517,9 @@ function liveProjects() {
 }
 function stagePill(stage) { return '<span class="stage-pill st-' + esc(stage) + '">' + esc(STAGE_LABEL[stage] || stage) + '</span>'; }
 // "Execution · Day 38 of 113 · Handover Sun 7 Feb · Site engineer Venky"
+// The project is called by its code everywhere; the site name (its location, e.g. E-City) leads this line.
 function projectLine(p) {
-  const bits = [STAGE_LABEL[p.stage]];
+  const bits = (p.name ? [p.name] : []).concat([STAGE_LABEL[p.stage]]);
   const t = todayIso(), n = dayNumber(p, t);
   if (p.stage === 'execution' && n !== null) {
     if (n < 1) bits.push((p.day1 ? 'Site starts ' : 'Planned start ') + niceDay(day1Of(p)));
@@ -1499,7 +1538,7 @@ function renderProjectsView() {
   if (!S.projTab || (S.projTab !== '_today' && !list.some((p) => p.code === S.projTab))) S.projTab = '_today';
   const p = projInfo(S.projTab);
   const tabs = list.map((x) => '<button type="button" class="ptab' + (x.code === S.projTab ? ' on' : '') + '" data-act="proj-tab" data-code="' + esc(x.code) +
-    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.name || x.code) + '</span>' + stagePill(x.stage) +
+    '" aria-pressed="' + (x.code === S.projTab) + '"><span class="ptab-name">' + esc(x.code) + '</span>' + stagePill(x.stage) +
     (isOwner() && hasNeeds(x.code) ? '<span class="red-dot" title="Needs you"></span>' : '') + '</button>').join('');
   const todayTab = '<button type="button" class="ptab' + (S.projTab === '_today' ? ' on' : '') + '" data-act="proj-tab" data-code="_today" aria-pressed="' + (S.projTab === '_today') + '"><span class="ptab-name">Today</span></button>';
   if (!p) {
@@ -1513,7 +1552,7 @@ function renderProjectsView() {
     : '<span class="psec off" title="Comes in a later step">' + esc(s[1]) + '</span>').join('');
   $('view-projects').innerHTML =
     '<nav class="ptabs" aria-label="Projects">' + todayTab + tabs + '</nav>' +
-    '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.name || p.code) + ' <span class="code-tag">' + esc(p.code) + '</span></h2>' +
+    '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.code) + '</h2>' +
     '<div class="psub">' + esc(projectLine(p)) + '</div></div>' +
     '<nav class="psecs" aria-label="Project sections">' + nav + '</nav>' +
     (S.projSec === 'site' ? projectSiteHtml(p) : S.projSec === 'queries' ? projectQueriesHtml(p) : projectOverviewHtml(p));
@@ -1526,7 +1565,7 @@ function todayAllHtml(list) {
     let items = needsFor(p.code);
     if (mine) items = items.filter((n) => n.act === 'needs-query' || (n.act === 'done' && isMine(findEntry(n.id) || {})));
     const shown = items.slice(0, 5);
-    return '<section class="card tday"><button type="button" class="tday-h" data-act="proj-tab" data-code="' + esc(p.code) + '"><b>' + esc(p.name || p.code) + '</b><span class="muted small">' + esc(projectLine(p)) + '</span></button>' +
+    return '<section class="card tday"><button type="button" class="tday-h" data-act="proj-tab" data-code="' + esc(p.code) + '"><b>' + esc(p.code) + '</b><span class="muted small">' + esc(projectLine(p)) + '</span></button>' +
       (shown.length ? shown.map((n) => '<div class="need"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="need-text"><b>' + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span></span>' +
         (canWrite() ? '<button type="button" class="btn-outline" data-act="' + (n.act === 'needs-query' ? 'today-query' : 'done') + '" data-id="' + esc(n.id) + '" data-code="' + esc(p.code) + '">' + esc(n.label) + '</button>' : '') + '</div>').join('')
         : '<p class="empty">Nothing urgent.</p>') +
@@ -2001,7 +2040,10 @@ function queryClick(act, el) {
   else if (act === 'q-open') { S.qSel = id; S.qc = null; renderAll(); const th = $('qThread'); if (th && phone.matches) th.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   else if (act === 'q-view') { S.qView = v; renderAll(); }
   else if (act === 'q-print') printRegister(el.dataset.code);
-  else if (act === 'qc-photo') ownerSend(true);
+  else if (act === 'qc-photo') { S.qc.photoAsk = true; S.qc.err = ''; renderAll(); }
+  else if (act === 'qc-photo-cancel') { S.qc.photoAsk = false; S.qc.photoHow = []; renderAll(); }
+  else if (act === 'qc-how') { const h = S.qc.photoHow || (S.qc.photoHow = []); const i = h.indexOf(v); if (i >= 0) h.splice(i, 1); else h.push(v); renderAll(); }
+  else if (act === 'qc-photo-send') ownerSend(true);
   else if (act === 'qc-send') ownerSend(false);
   else if (act === 'qc-outcome') { S.qc.outcome = v; S.qc.err = ''; renderAll(); }
   else if (act === 'qc-cause') { S.qc.cause = v; S.qc.err = ''; renderAll(); }
@@ -2050,7 +2092,6 @@ function photoClick(act, el) {
 
 /* ---------- site queries (shared by engineers and owners) ---------- */
 S.queries = null;
-const QUERY_DEFAULT_PHOTO_ASK = 'Photo isn’t clear. Please send one from further back.';
 function teamUsers() { return ((S.engineer ? S.site && S.site.users : S.data && S.data.users) || []); }
 function nameOfEmail(email) { const u = teamUsers().find((x) => x.email === email); return u ? u.name : email; }
 function initialsOfName(n) { const w = String(n || '').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean); return ((w[0] || '').charAt(0) + (w[1] || '').charAt(0)).toUpperCase() || '?'; }
@@ -2141,8 +2182,20 @@ function ownerComposerHtml(q) {
   const chip = (act, v, on, label) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" data-act="' + act + '" data-v="' + esc(v) + '" aria-pressed="' + on + '">' + esc(label) + '</button>';
   const who = (field) => '<select data-qc="' + field + '">' + teamUsers().filter((u) => u.code).filter((u, i, a) => a.findIndex((x) => x.code === u.code) === i)
     .map((u) => '<option value="' + esc(u.code) + '"' + (u.code === c[field] ? ' selected' : '') + '>' + esc(u.name + ' (' + u.code + ')') + '</option>').join('') + '</select>';
+  // Asking for a clearer photo: quick choices plus your own words, then one message to the engineer.
+  if (c.photoAsk) {
+    c.photoHow = c.photoHow || [];
+    return '<div class="q-compose"><div class="muted small">What would make the photo clearer? Pick any, add your own words if you like.</div><div class="chip-group">' +
+      PHOTO_ASKS.map((x) => chip('qc-how', x, c.photoHow.indexOf(x) >= 0, x)).join('') + '</div>' +
+      '<textarea id="qcText" data-qc="text" rows="2" placeholder="e.g. show the whole wall, with the desk in it">' + esc(c.text) + '</textarea>' +
+      '<div class="muted small" id="qcAskPreview">The engineer will get: “' + esc(photoAskText(c)) + '”</div>' +
+      (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
+      '<div class="ph-btns"><button type="button" class="btn-accent" data-act="qc-photo-send" data-id="' + esc(q.id) + '">Ask for the photo</button>' +
+      '<button type="button" class="btn-outline" data-act="qc-photo-cancel">Cancel</button></div></div>';
+  }
   return '<div class="q-compose"><div class="q-row"><label for="qcText">Your reply</label>' +
-    '<button type="button" class="btn-outline" data-act="qc-photo">Ask for a clearer photo</button></div>' +
+    (q.status === 'waiting_photo' ? '<span class="pill pill-wait">Waiting for a new photo</span>'
+      : '<button type="button" class="btn-outline" data-act="qc-photo">Ask for a clearer photo</button>') + '</div>' +
     '<textarea id="qcText" data-qc="text" rows="2">' + esc(c.text) + '</textarea>' +
     '<div class="muted small">How does this close?</div><div class="chip-group">' +
     chip('qc-outcome', 'keep', c.outcome === 'keep', 'Reply only, keep open') + chip('qc-outcome', 'answered', c.outcome === 'answered', 'Answered') +
@@ -2160,14 +2213,21 @@ function ownerComposerHtml(q) {
         (c.follow ? '<div class="q-taskline">' + who('followWho') + '<input data-qc="followText" value="' + esc(c.followText) + '" placeholder="Get Raju to patch and repaint around the box" autocomplete="off"></div>' : '') : '') +
       '</div>' : '') +
     (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
-    '<button type="button" class="btn-accent q-send" data-act="qc-send"' + (c.sending ? ' disabled' : '') + '>' + (c.sending ? 'Sending…' : 'Send reply') + '</button></div>';
+    '<button type="button" class="btn-accent q-send" data-act="qc-send" data-id="' + esc(q.id) + '">Send reply</button></div>';
+}
+const PHOTO_ASKS = ['Further back', 'Closer', 'Different angle', 'Better light'];
+// "Please send a clearer photo: further back, better light. Show the whole wall."
+function photoAskText(c) {
+  const how = (c.photoHow || []).map((x) => x.toLowerCase());
+  const own = String(c.text || '').trim();
+  return 'Please send a clearer photo' + (how.length ? ': ' + how.join(', ') : '') + '.' + (own ? ' ' + own : '');
 }
 function ownerSend(photoAsk) {
   const c = S.qc;
   if (!c) return;
   const text = String(c.text || '').trim();
   let req;
-  if (photoAsk) req = api('replyQuery', [c.qid, text || QUERY_DEFAULT_PHOTO_ASK, 'photo_request', [], newId()]);
+  if (photoAsk) req = api('replyQuery', [c.qid, photoAskText(c), 'photo_request', [], newId()]);
   else if (c.outcome === 'keep') {
     if (!text) { c.err = 'Type a reply.'; redraw(); return; }
     req = api('replyQuery', [c.qid, text, 'reply', [], newId()]);
@@ -2374,6 +2434,7 @@ function renderAll() {
   else if (S.tab === 'tasks') renderTasks();
   else renderDir();
   placeCodebar();
+  decorateBusy();
   if (id) {
     const el = $(id);
     if (el && document.activeElement !== el) {
@@ -2387,6 +2448,9 @@ function renderAll() {
 document.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');
   if (!el || el.disabled) return;
+  withBusy(el, () => onAct(el));
+});
+function onAct(el) {
   const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
   // Buttons on the opening / sign-in screens work before any ledger data has loaded.
   if (act === 'reload') { location.reload(); return; }
@@ -2507,7 +2571,7 @@ document.addEventListener('click', (ev) => {
     default: return;
   }
   renderAll();
-});
+}
 
 document.addEventListener('input', (ev) => {
   const t = ev.target;
@@ -2535,6 +2599,7 @@ document.addEventListener('input', (ev) => {
   } else if (t.dataset.qc && S.qc) {
     S.qc[t.dataset.qc] = t.value;
     S.qc.err = '';
+    if (S.qc.photoAsk && $('qcAskPreview')) $('qcAskPreview').textContent = 'The engineer will get: “' + photoAskText(S.qc) + '”';
   } else if (t.dataset.qcCheck && S.qc) {
     S.qc[t.dataset.qcCheck] = t.checked;
     renderAll();
