@@ -310,7 +310,11 @@ function engClick(act, el) {
     if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
     renderEng();
   }
-  else if (act === 'eng-done') engCall('setDone', [el.dataset.id, el.checked], (res) => engSnack(el.checked ? 'Ticked off.' : 'Back on your list.'));
+  else if (act === 'eng-done') {
+    // Instant on screen; saved through the outbox.
+    outboxAdd('setDone', [el.dataset.id, el.checked], 'Tick');
+    engSnack(el.checked ? 'Ticked off.' : 'Back on your list.');
+  }
   else if (act === 'eng-add') engAddTask();
 }
 function showEngineer(me, site) {
@@ -360,6 +364,17 @@ function engSnack(text, error) {
 }
 const ENG_TABS = [['today', 'Today'], ['queries', 'Queries'], ['photos', 'Photos'], ['schedule', 'Schedule']];
 function renderEng() {
+  // Keep the cursor where it was: the screen redraws when things arrive in the background.
+  const a = document.activeElement, fid = a && a.id;
+  let s0 = null, s1 = null;
+  try { if (fid && typeof a.selectionStart === 'number') { s0 = a.selectionStart; s1 = a.selectionEnd; } } catch (_) { /* not a text field */ }
+  renderEngInner();
+  if (fid) {
+    const el = $(fid);
+    if (el && document.activeElement !== el) { el.focus({ preventScroll: true }); try { if (s0 !== null) el.setSelectionRange(s0, s1); } catch (_) { /* ignore */ } }
+  }
+}
+function renderEngInner() {
   const projs = engProjects();
   if (!S.engProject || !projs.some((p) => p.code === S.engProject)) S.engProject = projs.length ? projs[0].code : '';
   $('engProject').innerHTML = projs.length ? projs.map((p) => '<option value="' + esc(p.code) + '"' + (p.code === S.engProject ? ' selected' : '') + '>' + esc(engProjName(p.code)) + '</option>').join('') : '<option>Loading…</option>';
@@ -377,7 +392,11 @@ function engTodayHtml() {
   const now = new Date(), t = todayIso();
   const greet = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
   const name = (engMe().name || S.me.email).split(/\s+/)[0];
-  const tasks = ((S.site && S.site.tasks) || []).slice().sort(byDue);
+  // Tasks from the server, plus ones added on this phone that are still sending; ticks still sending show at once.
+  const tasks = ((S.site && S.site.tasks) || []).map((x) => Object.assign({}, x));
+  waiting('addEntry').forEach((w) => { if (w.meta && !tasks.some((x) => x.id === w.meta.id)) tasks.push({ id: w.meta.id, note: w.meta.note, project: w.meta.project, due: w.meta.due, done: false, added_by: S.me.email, pending: true }); });
+  waiting('setDone').forEach((w) => { const x = tasks.find((y) => y.id === w.args[0]); if (x) { x.done = !!w.args[1]; x.pending = true; } });
+  tasks.sort(byDue);
   const open = tasks.filter((x) => !x.done), done = tasks.filter((x) => x.done).slice(-5).reverse();
   const projName = engProjName;
   const who = (email) => { const u = ((S.site && S.site.users) || []).find((x) => x.email === email); return u ? u.name : email; };
@@ -385,7 +404,7 @@ function engTodayHtml() {
     '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + '>' +
     '<span class="eng-task-text"><span>' + esc(LC.cap(x.note)) + '</span><span class="eng-meta">' + esc(projName(x.project)) +
     ' · ' + (x.due < t && !x.done ? 'overdue, was due ' : 'due ') + esc(niceDay(x.due)) +
-    (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + '</span></span></label>';
+    (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + (x.pending ? ' · <span class="sending">Sending…</span>' : '') + '</span></span></label>';
   const a = S.engAdd || (S.engAdd = { note: '', due: '', err: '' });
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
     '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">Ask a question</button>' +
@@ -395,25 +414,26 @@ function engTodayHtml() {
     '<section class="card eng-card"><h2 class="eng-h2">Add a task for yourself</h2>' +
     '<div class="eng-form"><label>What to do<input id="engAddNote" data-ea="note" value="' + esc(a.note) + '" autocomplete="off" placeholder="Check cove light level at reception"></label>' +
     '<label>Due (optional)<input id="engAddDue" data-ea="due" type="date" value="' + esc(a.due) + '"></label>' +
-    '<button type="button" class="btn-save" data-act="eng-add"' + (a.saving ? ' disabled' : '') + '>' + (a.saving ? 'Saving…' : 'Add to my tasks · ' + esc(engProjName(S.engProject))) + '</button>' +
+    '<button type="button" class="btn-save" data-act="eng-add">Add to my tasks · ' + esc(engProjName(S.engProject)) + '</button>' +
     (a.err ? '<p class="err" role="alert">' + esc(a.err) + '</p>' : '') + '</div></section>' +
     '<p class="foot eng-foot">Signed in as ' + esc(S.me.email) + '. <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>';
 }
+// Goes through the phone's outbox: on the list at once ("Sending…"), saved on the server in the background.
 function engAddTask() {
   const a = S.engAdd, note = String(a.note || '').trim();
-  if (a.saving) return; // a second tap while saving does nothing
+  if (!note && Date.now() - (S.engAddedAt || 0) < 2000) return; // the second tap of a double tap
   if (!note) { a.err = 'Type what to do.'; renderEng(); return; }
   if (!S.engProject) { a.err = 'Pick a project at the top.'; renderEng(); return; }
   const due = a.due ? LC.fromIso(a.due) : null;
   const code = 'MT ' + S.engProject + (due ? ' ' + due.getDate() + '/' + (due.getMonth() + 1) : '') + ' ' + note;
   // dd/mm takes the year of the day it is noted on, so a due date in another year is noted on that date.
   const sel = a.due && a.due.slice(0, 4) !== todayIso().slice(0, 4) ? a.due : todayIso();
-  a.saving = true; a.err = '';
+  const cid = 'e_' + newId().replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 12);
+  S.engAdd = { note: '', due: '', err: '' };
+  S.engAddedAt = Date.now();
+  outboxAdd('addEntry', [code, sel, cid], 'Task', { id: cid, note: note, project: S.engProject, due: a.due || todayIso() });
+  engSnack('Added to your tasks.');
   renderEng();
-  engCall('addEntry', [code, sel], () => {
-    S.engAdd = { note: '', due: '', err: '' };
-    engSnack('Added to your tasks.');
-  }, (msg) => { S.engAdd.saving = false; S.engAdd.err = msg; });
 }
 function isStandalone() { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
 // How this device is listed under "Signed-in devices".
@@ -1693,13 +1713,16 @@ function newId() { return (crypto.randomUUID ? crypto.randomUUID() : Date.now().
 
 const OUT = { items: [], sending: false, online: navigator.onLine, lastError: '' };
 // Adds a request to the outbox and tries to send it straight away.
-function outboxAdd(action, args, label) {
-  const item = { id: newId(), action: action, args: args, label: label, email: S.me ? S.me.email : '', createdAt: Date.now(), error: '' };
+// meta: what to draw on screen while the item waits ("Sending…"), e.g. a task's text and due date.
+function outboxAdd(action, args, label, meta) {
+  const item = { id: newId(), action: action, args: args, label: label, meta: meta || null, email: S.me ? S.me.email : '', createdAt: Date.now(), error: '' };
   return idbPut('outbox', item).then(() => { refreshOutbox(); flushOutbox(); });
 }
 function refreshOutbox() {
-  return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); }, () => { /* no storage: nothing waiting */ });
+  return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); if (S.engineer) renderEng(); }, () => { /* no storage: nothing waiting */ });
 }
+// Items of one kind still waiting on this phone (drawn as "Sending…").
+function waiting(action) { return OUT.items.filter((x) => x.action === action && !x.error && S.me && x.email === S.me.email); }
 // Sends waiting items one by one. Stops at the first network problem (tries again on signal); an item the
 // server refuses is kept aside with the reason, so it can't block the rest.
 function flushOutbox() {
@@ -1721,6 +1744,7 @@ function flushOutbox() {
 }
 // What to refresh on screen once something from the outbox has arrived.
 function outboxSent(item, res) {
+  if (res && res.site) { S.site = res.site; if (S.me) store(SITE_KEY, JSON.stringify({ email: S.me.email, site: res.site })); }
   if (item.action === 'uploadPhoto') {
     const p = item.args[0];
     if (S.photos && S.photos.project === p.project && res && res.photo && !S.photos.photos.some((x) => x.id === res.photo.id)) S.photos.photos.unshift(res.photo);
@@ -1912,14 +1936,22 @@ function engPhotosHtml() {
     '<datalist id="areaList">' + areas.map((a) => '<option value="' + esc(a) + '">').join('') + '</datalist>' +
     (drafts.length ? '<p class="muted small eng-pad">' + plural(drafts.length, 'photo', 'photos') + ' · pick an area or type a new one. New areas are saved for this project.</p>' +
       drafts.map((d) => '<div class="ph-draft"><img src="data:image/jpeg;base64,' + d.thumb + '" alt="">' +
-        '<label>Area · pick or type<input list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.area || '') + '" autocomplete="off"></label>' +
+        '<label>Area · pick or type<input id="da-' + esc(d.id) + '" list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.area || '') + '" autocomplete="off"></label>' +
         '<button type="button" class="icon-btn" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove this photo">×</button></div>').join('') +
       '<div class="eng-form"><button type="button" class="btn-save" data-act="ph-send"' + (S.sendingPhotos ? ' disabled' : '') + '>' + (S.sendingPhotos ? 'Sending…' : 'Send ' + plural(drafts.length, 'photo', 'photos')) + '</button>' +
       '<span class="muted small">Shrunk before sending. No signal? They wait on the phone and send later.</span></div>'
       : '') + '</section>' +
-    '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' +
+    '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' + pendingPhotosHtml(proj) +
     (S.photos ? photoFeedHtml(S.photos.photos, { ask: true }) : '<p class="empty">Loading…</p>') + '</div></section>' +
     (S.photoSel ? '<section class="card eng-card eng-pad" id="phPanel">' + photoPanelHtml() + '</section>' : '');
+}
+// Photos on this phone still sending: shown at the top of the feed at once.
+function pendingPhotosHtml(proj) {
+  const items = waiting('uploadPhoto').map((w) => w.args[0]).filter((p) => p.project === proj && !p.linkedTo);
+  if (!items.length) return '';
+  return '<section class="ph-day"><div class="ph-day-h"><b>Sending from this phone</b><span class="muted">' + plural(items.length, 'photo', 'photos') + '</span></div><div class="ph-grid">' +
+    items.map((p) => '<div class="ph-cell"><span class="ph-tile"><span class="ph-frame"><img class="ph-img" src="data:image/jpeg;base64,' + p.thumb + '" alt=""><span class="ph-badge sending">Sending…</span></span>' +
+      '<span class="ph-area">' + esc(p.area || '—') + '</span></span></div>').join('') + '</div></section>';
 }
 // "Ask about this photo": the question form opens with that photo already attached.
 function askAboutPhoto(id) {
@@ -2022,6 +2054,7 @@ function queryPhotoIds() {
   S.queries.messages.forEach((m) => ids.push.apply(ids, m.photoIds));
   return ids.slice(0, 40);
 }
+function stampNow() { const d = new Date(); return LC.iso(d) + ' ' + LC.pad(d.getHours()) + ':' + LC.pad(d.getMinutes()); }
 function ageText(stamp) {
   const ms = Date.now() - Date.parse(String(stamp).replace(' ', 'T') + ':00+05:30');
   const h = Math.floor(ms / 3600000);
@@ -2064,6 +2097,9 @@ function queryThreadHtml(q, owner) {
       (t.done ? ' <span class="pill pill-ok">Done</span>' : '') + '<br>' + esc(t.note) + '</div>').join('') +
       next.map((t) => '<div class="muted"><b>Then · ' + esc(t.assignee) + '</b> · appears when the task before is ticked' + (t.done ? ' · done' : '') + '<br>' + esc(t.note) + '</div>').join('') + '</div>';
   }
+  if (!owner) waiting('replyQuery').filter((w) => w.args[0] === q.id).forEach((w) => {
+    h += bubble(S.me.email, stampNow(), (w.args[1] ? '<p>' + esc(w.args[1]) + '</p>' : '') + '<span class="pill sending">Sending…</span>');
+  });
   if (q.status !== 'closed') h += owner ? ownerComposerHtml(q) : engComposerHtml(q);
   return h;
 }
@@ -2195,7 +2231,9 @@ function engQueriesHtml() {
     (a.other === 'yes' ? '<div class="q-chipwrap">' + teams.map((t) => chip('which', t, t)).join('') + '</div>' : '') + '</div>' +
     '<button type="button" class="eng-big" data-act="ask-send"' + (a.sending ? ' disabled' : '') + '>' + (a.sending ? 'Sending…' : 'Send to Shruthi and Savan') + '</button></div></section>' +
     '<section class="card eng-card"><h2 class="eng-h2">Queries · ' + esc(engProjName(proj)) + '</h2>' +
-    (list.length ? list.map((q) => queryCardHtml(q, 'eq-open')).join('') : '<p class="empty eng-pad">No queries on this project yet.</p>') +
+    waiting('askQuery').map((w) => w.args[0]).filter((x) => x.project === proj).map((x) => '<div class="q-card"><span class="q-card-main"><span class="q-card-top"><span class="muted small">You · just now</span>' +
+      '<span class="pill sending">Sending…</span></span><b>' + esc(x.text) + '</b><span class="muted small">' + esc(workText(x)) + '</span></span></div>').join('') +
+    (list.length ? list.map((q) => queryCardHtml(q, 'eq-open')).join('') : (waiting('askQuery').some((w) => w.args[0].project === proj) ? '' : '<p class="empty eng-pad">No queries on this project yet.</p>')) +
     '<p class="eng-pad"><button type="button" class="link-btn" data-act="eq-register">Change register</button></p></section>';
 }
 function engSendAsk() {
