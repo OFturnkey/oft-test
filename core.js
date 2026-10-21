@@ -90,7 +90,8 @@ function LedgerCore() {
   function whoCodes(dir) { return activeCodes(dir.people).filter(function (k) { return k !== CLIENT; }).concat([CLIENT]); }
   function listCodes(l) { return l.length > 12 ? l.slice(0, 10).join(', ') + ', …, ' + l[l.length - 1] : l.join(', '); }
 
-  function projName(dir, c) { var p = dir.projects[c]; return p ? p.name : c; }
+  // A project is called by its site name; until one is filled in, by its code.
+  function projName(dir, c) { var p = dir.projects[c]; return p && p.name ? p.name : c; }
   function clientName(dir, pc) { var p = dir.projects[pc]; return p && p.client ? p.client : projName(dir, pc) + ' client'; }
   function whoName(dir, code, pc) {
     if (code === CLIENT) return clientName(dir, pc);
