@@ -270,6 +270,7 @@ function bgRedraw() {
 }
 document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() => { if (!isTyping()) { redrawWaiting = false; bgRedraw(); } }, 0); });
 
+const BUSY_RE = /busy saving|try again in a moment|lock timeout|too many times|server error occurred|timed out|temporarily unavailable/i;
 // One request to the server: { a, s, args } goes in as plain text (no cookies, so the phone's Google
 // accounts play no part); { ok, result } or { ok: false, error, signin } comes back.
 function api(action, args) {
@@ -292,7 +293,13 @@ function api(action, args) {
   }).then((res) => {
     S.timing = { action: action, server: res.ms, total: Math.round(performance.now() - t0) };
     renderEnvStrip();
-    if (!res.ok) { const e = new Error(res.error || 'Something went wrong.'); e.signin = !!res.signin; throw e; }
+    if (!res.ok) {
+      const e = new Error(res.error || 'Something went wrong.');
+      e.signin = !!res.signin;
+      // The sheet busy for a moment, or Google slow: not a refusal. The outbox keeps the item and tries again.
+      e.retry = BUSY_RE.test(res.error || '');
+      throw e;
+    }
     if (res.result && res.result.duplicate) { const e = new Error('That was already saved.'); e.dup = true; throw e; }
     return res.result;
   }).finally(() => {
@@ -2217,6 +2224,7 @@ function flushOutbox() {
     if (!item) return null;
     return api(item.action, item.args).then((res) => idbDel('outbox', item.id).then(() => { OUT.online = true; outboxSent(item, res); return next(); }), (err) => {
       if (err.network) { OUT.online = false; return null; }
+      if (err.retry) return null; // busy for a moment: stays first in line, sent again in 30 s
       if (err.signin) { signedOut(err.message); return null; }
       item.error = cleanErr(err.message);
       return idbPut('outbox', item).then(next);
