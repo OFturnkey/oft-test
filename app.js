@@ -26,7 +26,7 @@ const blankPf = () => ({ project: '', who: '', period: 'month', from: '', to: ''
 const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#FFFFFF" stroke-width="2" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-5"></path></svg>';
 const ARROW_L = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>';
 const ARROW_R = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3l5 5-5 5"></path></svg>';
-const blankForm = () => ({ code: '', name: '', detail: '', trade: '', location: '' });
+const blankForm = () => ({ code: '', name: '', detail: '', trades: [], tradeTyped: '', location: '' });
 function tradeOf(code) { const p = ((S.data && S.data.people) || []).find((x) => x.code === code); return p ? p.trade || '' : ''; }
 
 const PANELS = {
@@ -37,13 +37,14 @@ const PANELS = {
   },
   labour: {
     title: 'Labour', desc: 'Team heads you pay for work. Payments to them count as labour.',
-    nameLabel: 'Name', namePh: 'Name', detailLabel: 'Details', detailPh: 'Electrical, false ceiling', codePh: 'ELE', trade: true,
-    detailOf: (r, k) => [tradeOf(k), r.detail].filter(Boolean).join(' · ') || 'Labour'
+    // Labour and vendors: Trade only (the sheet's old Details column stays, no longer shown or asked for).
+    nameLabel: 'Name', namePh: 'Name', detailLabel: '', detailPh: '', codePh: 'ELE', trade: true,
+    detailOf: (r, k) => tradeOf(k) || 'Labour · no trade yet'
   },
   vendor: {
     title: 'Vendors', desc: 'Shops and suppliers. Payments to them count as material.',
-    nameLabel: 'Name', namePh: 'Vendor name', detailLabel: 'Supplies', detailPh: 'Tiles, sanitaryware', codePh: 'TIL', trade: true,
-    detailOf: (r, k) => [tradeOf(k), r.detail].filter(Boolean).join(' · ') || 'Material'
+    nameLabel: 'Name', namePh: 'Vendor name', detailLabel: '', detailPh: '', codePh: 'TIL', trade: true,
+    detailOf: (r, k) => tradeOf(k) || 'Material · no trade yet'
   },
   mode: {
     title: 'Payment modes', desc: 'Used at the end of P and R codes.',
@@ -87,7 +88,7 @@ function isMine(e) { return e.assignee ? !!myCode() && e.assignee === myCode() :
 function forTag(e) { return e.assignee ? ' · <span class="for-tag">for ' + esc(LC.teamName(S.dir, e.assignee)) + '</span>' : ''; }
 function inFilter(e) { return !S.project || e.project === S.project; }
 function norm(s) { return String(s || '').trim().split(/\s+/).filter(Boolean).join(' '); }
-function byDue(a, b) { return a.due < b.due ? -1 : a.due > b.due ? 1 : 0; }
+function byDue(a, b) { return LC.byDue(a, b); }
 function findEntry(id) { return S.entries.find((e) => e.id === id); }
 function editing() { const e = S.editId ? findEntry(S.editId) : null; return e && e.status !== 'void' ? e : null; }
 function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
@@ -393,12 +394,24 @@ function engClick(act, el) {
     if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
     renderEng();
   }
-  else if (act === 'eng-done') {
-    // Instant on screen; saved through the outbox.
-    outboxAdd('setDone', [el.dataset.id, el.checked], 'Tick');
-    engSnack(el.checked ? 'Ticked off.' : 'Back on your list.');
+  else if (act === 'eng-done') engTick(el.dataset.id, el.checked);
+  else if (act === 'eng-undo') { $('engSnack').hidden = true; engTick(el.dataset.id, false); }
+  else if (act === 'eng-task-open') {
+    const x = ((S.site && S.site.tasks) || []).find((t) => t.id === el.dataset.id);
+    if (!x) return;
+    markSeenTask(x.id);
+    if (x.source && taskSources()[x.source]) openTaskSource(x.source); else renderEng();
   }
+  else if (act === 'done-send') sendDonePhotos(el.dataset.id);
+  else if (act === 'done-skip') { skipDoneOffer(el.dataset.id); renderEng(); }
   else if (act === 'eng-add') engAddTask();
+}
+// Ticks (and unticks) are instant on screen and saved through the outbox. "Ticked off" has Undo for a few
+// seconds; unticking puts the task back exactly as it was.
+function engTick(id, done) {
+  outboxAdd('setDone', [id, done], 'Tick').then(renderEng);
+  if (done) engSnack('Ticked off.', false, '<button type="button" class="undo" data-act="eng-undo" data-id="' + esc(id) + '">Undo</button>', 5000);
+  else engSnack('Back on your list.');
 }
 function showEngineer(me, site) {
   S.me = me;
@@ -437,13 +450,14 @@ function engCall(fn, args, onOk, onFail) {
   });
 }
 let engSnackTimer = null;
-function engSnack(text, error) {
+// buttonHtml: e.g. Undo; ms: how long it stays.
+function engSnack(text, error, buttonHtml, ms) {
   const el = $('engSnack');
   el.hidden = false;
   el.className = 'snack' + (error ? ' error' : '');
-  el.innerHTML = '<span class="snack-text">' + esc(text) + '</span>';
+  el.innerHTML = '<span class="snack-text">' + esc(text) + '</span>' + (buttonHtml || '');
   clearTimeout(engSnackTimer);
-  engSnackTimer = setTimeout(() => { el.hidden = true; }, error ? 8000 : 4000);
+  engSnackTimer = setTimeout(() => { el.hidden = true; }, ms || (error ? 8000 : 4000));
 }
 const ENG_TABS = [['today', 'Today'], ['queries', 'Queries'], ['photos', 'Photos'], ['schedule', 'Schedule']];
 function renderEng() {
@@ -489,16 +503,21 @@ function engTodayHtml() {
   const tasks = ((S.site && S.site.tasks) || []).map((x) => Object.assign({}, x));
   waiting('addEntry').forEach((w) => { if (w.meta && !tasks.some((x) => x.id === w.meta.id)) tasks.push({ id: w.meta.id, note: w.meta.note, project: w.meta.project, due: w.meta.due, done: false, added_by: S.me.email, pending: true }); });
   waiting('setDone').forEach((w) => { const x = tasks.find((y) => y.id === w.args[0]); if (x) { x.done = !!w.args[1]; x.pending = true; } });
-  tasks.sort(byDue);
+  tasks.sort(LC.byDue);
   const open = tasks.filter((x) => !x.done), done = tasks.filter((x) => x.done).slice(-5).reverse();
   const projName = engProjName;
   const who = (email) => { const u = ((S.site && S.site.users) || []).find((x) => x.email === email); return u ? u.name : email; };
-  const row = (x) => '<label class="eng-task' + (x.done ? ' done' : '') + (x.due < t && !x.done ? ' late' : '') + '">' +
-    '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + '>' +
-    '<span class="eng-task-text"><span>' + esc(LC.cap(x.note)) + '</span><span class="eng-meta">' + esc(projName(x.project)) +
-    ' · ' + (x.due < t && !x.done ? 'overdue, was due ' : 'due ') + esc(niceDay(x.due)) +
-    (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + (x.pending ? ' · <span class="sending">Sending…</span>' : '') + '</span>' +
-    taskSourceHtml(x.source) + '</span></label>';
+  // Only the box ticks. The text opens where the task came from (a query or a photo); a new task shows "New" until then.
+  const row = (x) => {
+    const fresh = isNewTask(x, engMe().code);
+    return '<div class="eng-task' + (x.done ? ' done' : '') + (fresh ? ' new' : '') + '">' +
+      '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + ' aria-label="Done: ' + esc(x.note) + '">' +
+      '<div class="eng-task-text"><button type="button" class="eng-task-open" data-act="eng-task-open" data-id="' + esc(x.id) + '">' +
+      (fresh ? '<span class="new-dot" aria-hidden="true"></span><b class="new-tag">New</b> ' : '') + '<span class="eng-task-note">' + esc(LC.cap(x.note)) + '</span></button>' +
+      '<span class="eng-meta">' + esc(projName(x.project)) + ' · ' + dueChip(x) +
+      (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + (x.pending ? ' · <span class="sending">Sending…</span>' : '') + '</span>' +
+      taskSourceHtml(x.source, x.id) + donePhotoHtml(x) + '</div></div>';
+  };
   const a = S.engAdd || (S.engAdd = { note: '', due: '', err: '' });
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
     engNeedsHtml() +
@@ -506,6 +525,7 @@ function engTodayHtml() {
     '<section class="card eng-card"><h2 class="eng-h2">My tasks <span class="muted">· ' + open.length + '</span></h2>' +
     (open.length ? open.map(row).join('') : '<p class="empty eng-pad">Nothing on your list.</p>') +
     (done.length ? '<div class="eng-done-h">Done recently</div>' + done.map(row).join('') : '') + '</section>' +
+    engWaitingHtml() +
     '<section class="card eng-card"><h2 class="eng-h2">Add a task for yourself</h2>' +
     '<div class="eng-form"><label>What to do<input id="engAddNote" data-ea="note" value="' + esc(a.note) + '" autocomplete="off" placeholder="Check cove light level at reception"></label>' +
     '<label>Due (optional)<input id="engAddDue" data-ea="due" type="date" value="' + esc(a.due) + '"></label>' +
@@ -520,7 +540,8 @@ function engNeedsHtml() {
   const me = S.me.email, mine = S.queries.queries.filter((q) => q.askedBy === me);
   const sending = (qid) => waiting('replyQuery').some((w) => w.args[0] === qid && (w.args[3] || []).length);
   const photoAsks = mine.filter((q) => q.status === 'waiting_photo' && !sending(q.id));
-  const replies = mine.filter((q) => q.status !== 'waiting_photo' && isNewQ(q) && q.last && (q.last.what === 'reply' || q.last.what === 'closed'));
+  // An answer that gave him a task shows as that task in My tasks ("New"), not here as well.
+  const replies = mine.filter(isNewAnswer);
   if (!photoAsks.length && !replies.length) return '';
   const msgs = (q) => S.queries.messages.filter((m) => m.queryId === q.id);
   const asked = (q) => { const m = msgs(q).filter((x) => x.kind === 'photo_request').pop(); return m ? LC.cap(m.text.replace(/^Please send a clearer photo[:.]?\s*/i, '').trim()) : ''; };
@@ -541,6 +562,68 @@ function engNeedsHtml() {
   };
   return '<section class="card eng-card eng-needs"><h2 class="eng-h2">Needs you <span class="muted">· ' + (photoAsks.length + replies.length) + '</span></h2>' +
     photoAsks.map(photoItem).join('') + replies.map(replyItem).join('') + '</section>';
+}
+// A reply or answer to his question he hasn't opened, that didn't come with a task for him.
+function isNewAnswer(q) {
+  const code = engMe().code;
+  return q.status !== 'waiting_photo' && isNewQ(q) && q.last && (q.last.what === 'reply' || q.last.what === 'closed') &&
+    !queryTasks(q).some((t) => t.assignee && t.assignee === code);
+}
+// Engineer home, under My tasks: his open questions, not tickable: on hold first (red), then the longest waiting.
+// A question leaves this list when it is closed or moves up to Needs you.
+function engWaitingHtml() {
+  if (!S.queries) return '';
+  const me = S.me.email;
+  const list = S.queries.queries.filter((q) => q.askedBy === me && q.status !== 'closed' && q.status !== 'waiting_photo' && !isNewAnswer(q))
+    .sort((a, b) => (b.workOnHold - a.workOnHold) || ((a.last ? a.last.at : a.askedAt) < (b.last ? b.last.at : b.askedAt) ? -1 : 1));
+  const sendingAsks = waiting('askQuery').map((w) => w.args[0]);
+  if (!list.length && !sendingAsks.length) return '';
+  const state = (q) => {
+    const l = q.last || { what: 'asked', by: me, at: q.askedAt };
+    const what = l.by !== me ? 'reply from ' + nameOfEmail(l.by) : l.what === 'photo' ? 'photo sent' : l.what === 'reply' ? 'you replied' : '';
+    return [q.workOnHold ? 'work on hold' : '', what, 'waiting ' + ageText(l.at)].filter(Boolean).join(' · ');
+  };
+  return '<section class="card eng-card"><h2 class="eng-h2">Waiting for an answer <span class="muted">· ' + (list.length + sendingAsks.length) + '</span></h2>' +
+    sendingAsks.map((x) => '<div class="eng-wait"><b>' + esc(x.text) + '</b><span class="muted small">' + esc(engProjName(x.project)) + ' · <span class="sending">Sending…</span></span></div>').join('') +
+    list.map((q) => '<button type="button" class="eng-wait' + (q.workOnHold ? ' hold' : '') + '" data-act="eq-open" data-id="' + esc(q.id) + '"><b>' + esc(q.text) + '</b>' +
+      '<span class="small eng-wait-state">' + esc(LC.cap(state(q))) + ' · ' + esc(engProjName(q.project)) + '</span></button>').join('') + '</section>';
+}
+// After ticking a task from a query or a photo: "Add a photo of the finished work" (optional). Owners then see
+// "Done, with photo".
+function donePhotoHtml(x) {
+  if (!x.done) return '';
+  if (x.done_photo) return '<span class="done-photo">Done, with photo</span>';
+  if (waiting('addDonePhoto').some((w) => w.args[0] === x.id)) return '<span class="done-photo">Done, with photo · <span class="sending">Sending…</span></span>';
+  if (!/^(query|photo):/.test(x.source || '') || doneOfferOff(x.id)) return '';
+  const drafts = S.drafts.filter((d) => d.purpose === 'done:' + x.id);
+  return '<div class="done-offer"><span class="small"><b>Add a photo of the finished work</b> (optional)</span>' +
+    (drafts.length ? '<div class="q-photos">' + drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
+    photoPickHtml('done:' + x.id) +
+    '<div class="ph-btns">' + (drafts.length ? '<button type="button" class="btn-save" data-act="done-send" data-id="' + esc(x.id) + '">Send ' + plural(drafts.length, 'photo', 'photos') + '</button>' : '') +
+    '<button type="button" class="link-btn" data-act="done-skip" data-id="' + esc(x.id) + '">No photo</button></div></div>';
+}
+const DONE_SKIP_KEY = 'oft.doneskip.' + CONFIG.env;
+function doneOfferOff(id) { try { return (JSON.parse(stored(DONE_SKIP_KEY) || '[]')).indexOf(id) >= 0; } catch (_) { return false; } }
+function skipDoneOffer(id) {
+  let list = [];
+  try { list = JSON.parse(stored(DONE_SKIP_KEY) || '[]'); } catch (_) { list = []; }
+  list.push(id);
+  store(DONE_SKIP_KEY, JSON.stringify(list.slice(-50)));
+}
+function sendDonePhotos(id) {
+  const x = ((S.site && S.site.tasks) || []).find((t) => t.id === id);
+  const drafts = S.drafts.filter((d) => d.purpose === 'done:' + id);
+  if (!x || !drafts.length) return;
+  const src = taskSources()[x.source] || {};
+  let chain = Promise.resolve();
+  drafts.forEach((d) => {
+    chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: x.project, batchId: id, area: src.area || '', caption: '', linkedTo: 'done:' + id, full: d.full, thumb: d.thumb }], 'Photo of finished work'))
+      .then(() => idbDel('drafts', d.id));
+  });
+  chain.then(() => outboxAdd('addDonePhoto', [id, drafts.map((d) => d.id)], 'Done, with photo')).then(loadDrafts).then(() => {
+    engSnack(navigator.onLine ? 'Photo sent. Shruthi and Savan see “Done, with photo”.' : 'Saved on your phone. It will send by itself.');
+    renderEng();
+  });
 }
 // Every place a photo can be added: the camera, or the gallery.
 function photoPickHtml(purpose) {
@@ -699,10 +782,10 @@ function renderEnvStrip() {
 let snackTimer = null;
 function snack(text, opts) {
   opts = opts || {};
-  S.snackMsg = { text: text, error: !!opts.error, undoId: opts.undoId || null };
+  S.snackMsg = { text: text, error: !!opts.error, undoId: opts.undoId || null, undoTick: opts.undoTick || null };
   renderSnack();
   clearTimeout(snackTimer);
-  snackTimer = setTimeout(() => { S.snackMsg = null; renderSnack(); }, opts.undoId ? 10000 : opts.error ? 9000 : 4500);
+  snackTimer = setTimeout(() => { S.snackMsg = null; renderSnack(); }, opts.undoId ? 10000 : opts.undoTick ? 5000 : opts.error ? 9000 : 4500);
 }
 function renderSnack() {
   const el = $('snack'), m = S.snackMsg;
@@ -712,6 +795,7 @@ function renderSnack() {
   el.setAttribute('role', m.error ? 'alert' : 'status');
   el.innerHTML = '<span class="snack-text">' + esc(m.text) + '</span>' +
     (m.undoId ? '<button type="button" class="undo" data-act="undo" data-id="' + esc(m.undoId) + '">Undo</button>' : '') +
+    (m.undoTick ? '<button type="button" class="undo" data-act="undo-tick" data-id="' + esc(m.undoTick) + '">Undo</button>' : '') +
     '<button type="button" class="close" data-act="snack-close" aria-label="Dismiss">×</button>';
 }
 
@@ -910,11 +994,14 @@ function startEdit(id) {
 function cancelEdit() { S.editId = null; S.editDate = ''; S.saveErr = ''; setCode(''); renderAll(); }
 
 /* ---------- entry actions ---------- */
+// "Ticked off" has Undo for a few seconds; unticking puts the task back exactly as it was.
 function toggleDone(id) {
   const e = findEntry(id);
   if (!e) return;
   e.done = !e.done;
   call('setDone', [id, e.done], null, (msg) => { snack(msg, { error: true }); refresh(true); });
+  if (e.done) snack('Ticked off: ' + LC.taskTitle(S.dir, e), { undoTick: id });
+  else if (S.snackMsg && S.snackMsg.undoTick === id) S.snackMsg = null;
 }
 function doVoid(id) {
   const e = findEntry(id);
@@ -990,9 +1077,9 @@ function moneyItem(e) {
 }
 function taskItem(e) {
   return '<div class="item">' + tickBtn(e) + '<div class="tcard-body">' + mainOpen(e) + '<span' + (e.done ? ' style="text-decoration:line-through"' : '') + '>' +
-    badge(e.type, true) + ' ' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() +
-    taskSourceHtml(e.source) + '</div>' + itemActions(e) + '</div>';
+    badge(e.type, true) + ' ' + newTaskTag(e) + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · ' + dueChip(e) + ' · noted ' + esc(LC.nice(e.date)) + ' · <code>' + esc(e.raw_code) + '</code>' + byTag(e) + '</span>' + mainClose() +
+    taskSourceHtml(e.source, e.id) + '</div>' + itemActions(e) + '</div>';
 }
 function voidedItem(e) {
   return '<div class="item voided">' + badge(e.type) +
@@ -1017,8 +1104,8 @@ function renderDay() {
 }
 
 function remItem(e) {
-  return '<div class="rem-item">' + badge(e.type, true) + '<div class="tcard-body">' + mainOpen(e) + '<span style="font-size:13px">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · due ' + esc(LC.nice(e.due)) + byTag(e) + '</span>' + mainClose() + taskSourceHtml(e.source) + '</div>' +
+  return '<div class="rem-item">' + badge(e.type, true) + '<div class="tcard-body">' + mainOpen(e) + '<span style="font-size:13px">' + newTaskTag(e) + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="item-meta">' + esc(projName(e.project)) + forTag(e) + ' · ' + dueChip(e) + byTag(e) + '</span>' + mainClose() + taskSourceHtml(e.source, e.id) + '</div>' +
     (canWrite() ? '<span class="item-actions">' + editBtn(e) + '<button type="button" class="btn-sm" data-act="done" data-id="' + esc(e.id) + '">Done</button></span>' : '') + '</div>';
 }
 
@@ -1074,11 +1161,19 @@ function renderProjects() {
 }
 
 /* ---------- tasks tab ---------- */
+// "New" (blue) on a task someone else gave me, until I open it (Edit, its source, or the tick).
+function newTaskTag(e) { return isNewTask(e, myCode()) ? '<span class="new-dot" aria-hidden="true"></span><b class="new-tag">New</b> ' : ''; }
+function donePhotoStrip(e) {
+  const ids = String(e.done_photo || '').split(',').filter(Boolean);
+  ids.forEach(wantThumb);
+  return ids.length ? '<div class="q-photos done-ph">' + ids.map((id) => '<button type="button" class="q-photo" data-act="lightbox" data-id="' + esc(id) + '">' +
+    (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="Finished work">' : '<span class="ph-wait"></span>') + '</button>').join('') + '</div>' : '';
+}
 function taskCard(e) {
-  return '<div class="tcard' + (e.done ? ' done' : '') + '">' + tickBtn(e) + '<div class="tcard-body">' + mainOpen(e) + '<span class="tcard-title">' + esc(LC.taskTitle(S.dir, e)) + '</span>' +
-    '<span class="tcard-meta">' + badge(e.type, true) + '<span>' + esc(projName(e.project)) + forTag(e) + '</span><span>· due ' + esc(LC.nice(e.due)) + '</span>' +
+  return '<div class="tcard' + (e.done ? ' done' : '') + (isNewTask(e, myCode()) ? ' new' : '') + '">' + tickBtn(e) + '<div class="tcard-body">' + mainOpen(e) + '<span class="tcard-title">' + newTaskTag(e) + esc(LC.taskTitle(S.dir, e)) + '</span>' +
+    '<span class="tcard-meta">' + badge(e.type, true) + '<span>' + esc(projName(e.project)) + forTag(e) + '</span>' + dueChip(e) +
     (e.added_by ? '<span class="by" title="Added by ' + esc(userName(e.added_by)) + '">' + esc(initials(e.added_by)) + '</span>' : '') + '</span>' +
-    '<span class="raw">' + esc(e.raw_code) + '</span>' + mainClose() + taskSourceHtml(e.source) + '</div>' + (isOwner() ? '<span class="item-actions">' + editBtn(e) + '</span>' : '') + '</div>';
+    '<span class="raw">' + esc(e.raw_code) + '</span>' + mainClose() + taskSourceHtml(e.source, e.id) + donePhotoStrip(e) + '</div>' + (isOwner() ? '<span class="item-actions">' + editBtn(e) + '</span>' : '') + '</div>';
 }
 function renderTasks() {
   const t = todayIso(), in7 = addDays(t, 7);
@@ -1161,7 +1256,7 @@ function editRowHtml(kind) {
     '<div class="fld code"><label for="edit-code">Code</label><input id="edit-code" data-edit="newCode" value="' + esc(ed.newCode) + '" maxlength="' + (kind === 'mode' ? 2 : 4) + '" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>' +
     '<div class="fld"><label for="edit-name">' + esc(P.nameLabel) + '</label><input id="edit-name" data-edit="name" value="' + esc(ed.name) + '" autocomplete="off"></div>' +
     (P.detailLabel ? '<div class="fld"><label for="edit-detail">' + esc(P.detailLabel) + '</label><input id="edit-detail" data-edit="detail" value="' + esc(ed.detail) + '" autocomplete="off"></div>' : '') +
-    (P.trade ? '<div class="fld"><label for="edit-trade">Trade</label>' + tradeSelect('edit-trade', 'data-edit="trade"', ed.trade) + '</div>' : '') +
+    (P.trade ? '<div class="fld fld-trade"><label for="tp-edit">Trade</label>' + tradePickHtml('edit') + '</div>' : '') +
     (P.location ? '<div class="fld"><label for="edit-location">Location</label><input id="edit-location" data-edit="location" value="' + esc(ed.location || '') + '" autocomplete="off"></div>' : '') +
     '<button type="button" class="btn-accent" data-act="dir-save">Save</button>' +
     '<button type="button" class="btn-outline" data-act="dir-cancel">Cancel</button>' +
@@ -1196,7 +1291,7 @@ function panelHtml(kind) {
     '" placeholder="' + esc(P.namePh) + '" autocomplete="off"></div>' +
     (P.detailLabel ? '<div class="fld"><label for="dir-' + kind + '-detail">' + esc(P.detailLabel) + '</label><input id="dir-' + kind + '-detail" data-form="' + kind + '" data-field="detail" value="' + esc(f.detail) +
       '" placeholder="' + esc(P.detailPh) + '" autocomplete="off"></div>' : '') +
-    (P.trade ? '<div class="fld"><label for="dir-' + kind + '-trade">Trade</label>' + tradeSelect('dir-' + kind + '-trade', 'data-form="' + kind + '" data-field="trade"', f.trade) + '</div>' : '') +
+    (P.trade ? '<div class="fld fld-trade"><label for="tp-add-' + kind + '">Trade</label>' + tradePickHtml('add-' + kind) + '</div>' : '') +
     (P.location ? '<div class="fld"><label for="dir-' + kind + '-location">Location</label><input id="dir-' + kind + '-location" data-form="' + kind + '" data-field="location" value="' + esc(f.location || '') + '" placeholder="E-City" autocomplete="off"></div>' : '') +
     '<button type="button" class="btn-accent" data-act="dir-add" data-kind="' + kind + '">Add</button></div>' +
     '<div class="dmsg" id="dmsg-' + kind + '">' + dirMsgHtml(kind) + '</div>';
@@ -1228,7 +1323,8 @@ function renderDir() {
   $('view-dir').innerHTML =
     '<div style="display:flex;flex-direction:column;gap:4px"><h2 id="dir-h" style="font-size:22px">Directory</h2>' +
     '<p class="dir-intro">' + esc(intro) + '</p></div>' +
-    '<div class="panels">' + KINDS.map(panelHtml).join('') + teamPanelHtml() + (canWrite() ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>';
+    '<div class="panels">' + KINDS.map(panelHtml).join('') + teamPanelHtml() + (canWrite() ? alertsPanelHtml() : '') + devicesPanelHtml() + '</div>' +
+    '<datalist id="tradeList">' + allTrades().map((t) => '<option value="' + esc(t) + '">').join('') + '</datalist>';
 }
 
 /* ---------- morning alerts (owners: everything; contributors: their own devices) ---------- */
@@ -1271,7 +1367,8 @@ function alertsPanelHtml() {
 
 function addCodeFromForm(kind) {
   const f = S.forms[kind];
-  const code = f.code.trim().toUpperCase(), name = f.name.trim(), detail = f.detail.trim(), trade = PANELS[kind].trade ? f.trade : '';
+  if (PANELS[kind].trade && !tradeTypedOk('add-' + kind)) { S.errs[kind] = 'Pick one of the trades offered, or add yours as a new trade.'; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
+  const code = f.code.trim().toUpperCase(), name = f.name.trim(), detail = f.detail.trim(), trade = PANELS[kind].trade ? f.trades.join(' · ') : '';
   const issue = LC.codeIssue(kind, code, S.dir, null);
   if (issue) { S.errs[kind] = issue; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
   if (!name && kind !== 'project') { S.errs[kind] = kind === 'mode' ? 'Give the mode a label.' : 'Give it a name.'; $('dmsg-' + kind).innerHTML = dirMsgHtml(kind); return; }
@@ -1287,13 +1384,15 @@ function startDirEdit(kind, code) {
   if (!r) return;
   S.dirEdit = {
     kind: kind, code: code, newCode: code, name: recName(kind, r) || '',
-    detail: kind === 'project' ? (r.client || '') : kind === 'mode' ? '' : (r.detail || ''), trade: tradeOf(code), location: kind === 'project' ? ((projInfo(code) || {}).location || '') : '', err: ''
+    detail: kind === 'project' ? (r.client || '') : '', trades: LC.tradesOf(tradeOf(code)), tradeTyped: '',
+    location: kind === 'project' ? ((projInfo(code) || {}).location || '') : '', err: ''
   };
 }
 
 function saveDirEdit() {
   const ed = S.dirEdit;
   if (!ed) return;
+  if (PANELS[ed.kind].trade && !tradeTypedOk('edit')) { ed.err = 'Pick one of the trades offered, or add yours as a new trade.'; renderAll(); return; }
   const nu = ed.newCode.trim().toUpperCase(), name = ed.name.trim(), detail = ed.detail.trim();
   const issue = nu !== ed.code ? LC.codeIssue(ed.kind, nu, S.dir, ed.code) : '';
   if (issue || (!name && ed.kind !== 'project')) {
@@ -1303,7 +1402,7 @@ function saveDirEdit() {
   }
   const old = ed.code, kind = ed.kind;
   const hadFilter = kind === 'project' && S.project === old;
-  call('editCode', [kind, old, nu, name, detail, PANELS[kind].trade ? ed.trade : undefined, kind === 'project' ? String(ed.location || '').trim() : undefined], (res) => {
+  call('editCode', [kind, old, nu, name, PANELS[kind].trade ? null : detail, PANELS[kind].trade ? ed.trades.join(' · ') : null, kind === 'project' ? String(ed.location || '').trim() : null], (res) => {
     S.dirEdit = null;
     if (nu !== old) {
       if (hadFilter) S.project = nu;
@@ -1753,18 +1852,62 @@ function saveProjInfo() {
     snack(f.code + ' saved.');
   }, (msg) => { if (S.projEdit) S.projEdit.err = msg; });
 }
-// Typing Details fills in Trade ("Painting & polish" → Painting) until a trade is picked by hand.
-function autoTrade(f, selectId) {
-  if (f.trade && !f.tradeAuto) return;
-  const tr = LC.tradeFromDetail(f.detail);
-  f.trade = tr;
-  f.tradeAuto = !!tr;
-  const sel = $(selectId);
-  if (sel) sel.value = tr;
+// Directory → Labour / Vendors → Trade, "pick or type" (like Area on photos). Typing shows the matching trades
+// (any capitals); a close spelling offers the trade that exists ("Paintng" → Painting) rather than a duplicate;
+// anything else becomes a new trade, saved for everyone. A team can have several: "Painting · Polish".
+// key: 'add-labour', 'add-vendor' or 'edit'.
+function tpObj(key) { return key === 'edit' ? S.dirEdit : S.forms[key.slice(4)]; }
+function allTrades() { return (S.data && S.data.trades) || LC.TRADES; }
+function editDistance(a, b) {
+  const d = [];
+  for (let i = 0; i <= a.length; i++) d.push([i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
 }
-function tradeSelect(id, attrs, cur) {
-  return '<select id="' + id + '" ' + attrs + '><option value="">—</option>' +
-    TRADES.map((t) => '<option' + (t === cur ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select>';
+function tradeMatch(typed) {
+  const low = String(typed || '').trim().toLowerCase(), list = allTrades();
+  if (!low) return { exact: '', offers: [] };
+  const exact = list.find((x) => x.toLowerCase() === low) || '';
+  const starts = list.filter((x) => x.toLowerCase() !== low && x.toLowerCase().indexOf(low) === 0);
+  const close = list.filter((x) => x.toLowerCase() !== low && starts.indexOf(x) < 0 && editDistance(x.toLowerCase(), low) <= (low.length <= 4 ? 1 : 2));
+  return { exact: exact, offers: starts.concat(close).slice(0, 4), close: close.length > 0 };
+}
+function tradePickHtml(key) {
+  const o = tpObj(key), trades = o.trades || (o.trades = []);
+  return '<div class="tpick">' + trades.map((t) => '<span class="tchip">' + esc(t) + '<button type="button" class="tchip-x" data-act="tp-remove" data-tp="' + key + '" data-v="' + esc(t) +
+    '" aria-label="Remove ' + esc(t) + '">×</button></span>').join('') +
+    '<input id="tp-' + key + '" data-tp="' + key + '" list="tradeList" value="' + esc(o.tradeTyped || '') + '" placeholder="' + (trades.length ? 'Add another trade' : 'Pick or type a trade') + '">' +
+    '<div class="tp-msg" id="tp-' + key + '-msg">' + tradeMsgHtml(key) + '</div></div>';
+}
+function tradeMsgHtml(key) {
+  const o = tpObj(key), typed = String(o.tradeTyped || '').trim();
+  if (!typed) return '';
+  const m = tradeMatch(typed);
+  const btn = (v, label) => '<button type="button" class="fchip" data-act="tp-add" data-tp="' + key + '" data-v="' + esc(v) + '">' + esc(label) + '</button>';
+  if (m.exact) return btn(m.exact, 'Add ' + m.exact);
+  return (m.offers.length ? '<span class="small">' + (m.close ? 'Did you mean' : 'Pick') + '</span>' + m.offers.map((x) => btn(x, x)).join('') + '<span class="small">or</span>' : '') +
+    btn(LC.cap(typed), 'Add “' + LC.cap(typed) + '” as a new trade');
+}
+function addTrade(key, v) {
+  const o = tpObj(key);
+  if (!o || !String(v || '').trim()) return;
+  const t = String(v).trim();
+  if (!o.trades.some((x) => x.toLowerCase() === t.toLowerCase())) o.trades.push(t);
+  o.tradeTyped = '';
+  renderAll();
+}
+// Enter, or saving with something still typed: an exact trade is added; a new one only when nothing close exists.
+function tradeTypedOk(key) {
+  const o = tpObj(key), typed = String(o.tradeTyped || '').trim();
+  if (!typed) return true;
+  const m = tradeMatch(typed);
+  if (m.exact) { addTrade(key, m.exact); return true; }
+  if (m.offers.length) return false;
+  addTrade(key, LC.cap(typed));
+  return true;
 }
 
 // Team: everyone who uses the app. Owners add and change site engineers; owners' own rows: name and code.
@@ -2008,13 +2151,13 @@ function wantThumb(id) {
 // small picture. Tapping it opens the query or the photo.
 function taskSources() { return (S.engineer ? S.site && S.site.taskSources : S.data && S.data.taskSources) || {}; }
 function shortText(t) { const s = String(t || '').split(/[.!?\n]/)[0].trim() || String(t || '').trim(); return s.length > 40 ? s.slice(0, 38) + '…' : s; }
-function taskSourceHtml(src) {
+function taskSourceHtml(src, taskId) {
   const s = src && taskSources()[src];
   if (!s) return '';
   const label = s.kind === 'query' ? 'From query ' + (s.changeNo ? s.changeNo + ' · ' : '· ') + shortText(s.text)
     : 'From photo · ' + [s.area || 'Site photo', s.at ? niceDay(s.at.slice(0, 10)) : ''].filter(Boolean).join(' · ');
   wantThumb(s.photoId);
-  return '<button type="button" class="tsrc" data-act="task-src" data-src="' + esc(src) + '">' +
+  return '<button type="button" class="tsrc" data-act="task-src" data-src="' + esc(src) + '"' + (taskId ? ' data-id="' + esc(taskId) + '"' : '') + '>' +
     (s.photoId ? '<span class="tsrc-ph">' + (S.thumbs[s.photoId] ? '<img src="' + S.thumbs[s.photoId] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
     '<span class="tsrc-text">' + esc(label) + '</span></button>';
 }
@@ -2084,7 +2227,8 @@ function photoPanelHtml() {
     '<div class="ph-info"><b>' + esc(p.area || 'Site photo') + '</b><span class="muted">' + esc(nameOf(p.by)) + ' · ' + esc(niceDay(photoDay(p.at)) + ' ' + p.at.slice(11, 16)) +
     (p.caption ? ' · ' + esc(p.caption) : '') + '</span></div>' +
     comments.map((x) => '<div class="ph-comment"><b>' + esc(nameOf(x.by)) + '</b> <span class="muted">' + esc(niceDay(x.at.slice(0, 10)) + ' ' + x.at.slice(11, 16)) + '</span><div>' + esc(x.text) + '</div>' +
-      (x.taskId ? '<span class="ph-task">Task for ' + esc(taskForName(x.taskFor)) + '</span>' : '') + '</div>').join('') +
+      ((x.photoIds || []).length ? ((x.photoIds.forEach(wantThumb), '') + photoStrip(x.photoIds) + '<span class="pill pill-ok">Done, with photo</span>')
+        : x.taskId ? '<span class="ph-task">Task for ' + esc(taskForName(x.taskFor)) + '</span>' : '') + '</div>').join('') +
     '<div class="ph-form"><label for="phComment">Comment on this photo</label><textarea id="phComment" data-pc="text" rows="2">' + esc(c.text) + '</textarea>' +
     (owner ? '<div class="ph-taskrow"><label class="q-for">Task for' + taskForSelect('id="phWho" data-pc="who"', p.project, p.by, c.who) + '</label>' +
       '<label class="ph-due">Task due <input type="date" data-pc="due" value="' + esc(c.due) + '"></label></div>' : '') +
@@ -2198,7 +2342,15 @@ function queryClick(act, el) {
   else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'ph-open-site') { S.projSec = 'site'; openPhoto(id); renderAll(); }
-  else if (act === 'task-src') openTaskSource(el.dataset.src);
+  else if (act === 'task-src') { if (id) markSeenTask(id); openTaskSource(el.dataset.src); }
+  else if (act === 'co-start') {
+    const q = S.queries.queries.find((x) => x.id === id), t = q ? queryTasks(q).find((x) => !x.after) : null;
+    S.co = { qid: id, cause: '', changeText: t ? LC.cap(t.note) : '', area: (q && q.area) || '', date: todayIso(), cost: '', err: '' };
+    renderAll();
+  }
+  else if (act === 'co-cause') { S.co.cause = v; S.co.err = ''; renderAll(); }
+  else if (act === 'co-cancel') { S.co = null; renderAll(); }
+  else if (act === 'co-save') saveChangeOutcome();
   else return false;
   return true;
 }
@@ -2299,24 +2451,43 @@ function lastText(q) {
 function seenMark(q, messages) {
   return (q.last ? q.last.at : q.askedAt) + '|' + (messages || S.queries.messages).filter((m) => m.queryId === q.id).length + '|' + q.status;
 }
+// What I have opened (queries, new tasks): as the server last said (ledger data, site data, query list), plus
+// whatever was opened on this device since.
+S.seenLocal = {};
+function seenMap() {
+  return Object.assign({}, (S.site && S.site.seen) || {}, (S.data && S.data.seen) || {}, (S.queries && S.queries.seen) || {}, S.seenLocal);
+}
 function isNewQ(q) {
   const l = q.last;
   if (!l || !S.me || l.by === S.me.email) return false;
-  return ((S.queries && S.queries.seen) || {})[q.id] !== seenMark(q);
+  return seenMap()[q.id] !== seenMark(q);
 }
 function markSeenQ(id) {
   const q = S.queries && S.queries.queries.find((x) => x.id === id);
   if (!q || !isNewQ(q)) return;
   const mark = seenMark(q);
-  S.queries.seen = Object.assign({}, S.queries.seen || {}, { [id]: mark });
+  S.seenLocal[id] = mark;
   api('markSeen', [id, mark]).catch(() => { /* still marked on this device; the server learns next time */ });
 }
-// New query data from the server; a query opened on this device meanwhile stays opened.
+// A task someone else gave me that I haven't opened yet: "New" (blue) until I open it.
+function isNewTask(e, code) {
+  return !!(e && !e.done && code && e.assignee === code && e.added_by && S.me && e.added_by !== S.me.email && !seenMap()['task:' + e.id]);
+}
+function markSeenTask(id) {
+  const e = S.engineer ? ((S.site && S.site.tasks) || []).find((x) => x.id === id) : S.entries.find((x) => x.id === id);
+  if (!isNewTask(e, S.engineer ? engMe().code : myCode())) return;
+  S.seenLocal['task:' + id] = '1';
+  api('markSeen', ['task:' + id, '1']).catch(() => { /* still marked on this device */ });
+}
 function setQueries(res) {
-  const local = (S.queries && S.queries.seen) || {}, seen = Object.assign({}, res.seen || {});
-  res.queries.forEach((q) => { const m = seenMark(q, res.messages); if (local[q.id] === m) seen[q.id] = m; });
-  S.queries = Object.assign(res, { seen: seen });
+  S.queries = res;
   loadThumbs(queryPhotoIds());
+}
+// How late a task is: "3 days overdue" (red), "Due today" (amber), "Due tomorrow" / "due Sat 24 Oct" (grey).
+function dueChip(e) {
+  if (e.done) return '<span class="due due-done">' + (e.done_photo ? 'Done, with photo' : 'Done') + '</span>';
+  const d = LC.dueText(e.due, todayIso());
+  return '<span class="due due-' + d.level + '">' + esc(d.text) + '</span>';
 }
 function photoStrip(ids) {
   if (!ids || !ids.length) return '';
@@ -2337,21 +2508,61 @@ function queryThreadHtml(q, owner) {
     '<span class="pill">' + esc(q.otherTeam === 'yes' ? 'Needs ' + teamLabel(q) : q.otherTeam === 'not_sure' ? 'Another team: not sure' : 'No other team needed') + '</span>' +
     '<span class="pill pill-' + queryState(q).cls + '">' + esc(queryState(q).text) + '</span></div>';
   h += bubble(q.askedBy, q.askedAt, photoStrip(q.photoIds) + '<p>' + esc(q.text) + '</p>');
-  msgs.forEach((m) => {
+  // "Waiting for a new photo" shows once, at the top; a request answered with a photo says "Photo received".
+  msgs.forEach((m, i) => {
+    const answered = m.kind === 'photo_request' && msgs.slice(i + 1).some((x) => x.by === q.askedBy && x.photoIds.length);
     h += bubble(m.by, m.at, photoStrip(m.photoIds) + (m.text ? '<p>' + esc(m.text) + '</p>' : '') +
-      (m.kind === 'photo_request' ? '<span class="pill pill-wait">Waiting for a new photo</span>' : ''));
+      (answered ? '<span class="pill pill-ok">Photo received</span>' : '') + (m.kind === 'done_photo' ? '<span class="pill pill-ok">Done, with photo</span>' : ''));
   });
   if (tasks.length) {
+    const tname = (code) => esc((S.engineer ? taskForName(code) : LC.teamName(S.dir || { team: {} }, code)) || code);
+    const state = (t) => t.done ? ' <span class="pill pill-ok">' + (t.donePhoto ? 'Done, with photo' : 'Done') + '</span>' : '';
     const first = tasks.filter((t) => !t.after), next = tasks.filter((t) => t.after);
-    h += '<div class="q-tasks">' + first.map((t, i) => '<div><b>Task ' + (i + 1) + ' · ' + esc(LC.teamName(S.dir || { team: {} }, t.assignee) || t.assignee) + ' · due ' + esc(niceDay(t.due)) + '</b>' +
-      (t.done ? ' <span class="pill pill-ok">Done</span>' : '') + '<br>' + esc(t.note) + '</div>').join('') +
-      next.map((t) => '<div class="muted"><b>Then · ' + esc(t.assignee) + '</b> · appears when the task before is ticked' + (t.done ? ' · done' : '') + '<br>' + esc(t.note) + '</div>').join('') + '</div>';
+    h += '<div class="q-tasks">' + first.map((t, i) => '<div><b>Task ' + (i + 1) + ' · ' + tname(t.assignee) + ' · ' + (t.done ? '' : dueChip(t)) + '</b>' +
+      state(t) + '<br>' + esc(t.note) + '</div>').join('') +
+      next.map((t) => '<div class="muted"><b>Then · ' + tname(t.assignee) + '</b> · ' + (t.done ? '' : 'appears when the task before is ticked') + state(t) + '<br>' + esc(t.note) + '</div>').join('') + '</div>';
   }
   if (!owner) waiting('replyQuery').filter((w) => w.args[0] === q.id).forEach((w) => {
     h += bubble(S.me.email, stampNow(), (w.args[1] ? '<p>' + esc(w.args[1]) + '</p>' : '') + '<span class="pill sending">Sending…</span>');
   });
   if (q.status !== 'closed') h += owner ? ownerComposerHtml(q) : engComposerHtml(q);
+  else if (owner) h += changeOutcomeHtml(q);
   return h;
+}
+// Owners: change how a closed query was closed (Answered ↔ Change approved). A change gets the next C-number; going
+// back to Answered voids its number (never used again).
+function changeOutcomeHtml(q) {
+  const c = S.co && S.co.qid === q.id ? S.co : null;
+  if (!c) {
+    return '<div class="q-compose q-reclose"><button type="button" class="btn-outline" data-act="co-start" data-id="' + esc(q.id) + '">' +
+      (q.outcome === 'change' ? 'Change to Answered' : 'Change to Change approved') + '</button></div>';
+  }
+  const chip = (act, v, on, label) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" data-act="' + act + '" data-v="' + esc(v) + '" aria-pressed="' + on + '">' + esc(label) + '</button>';
+  const body = q.outcome === 'change'
+    ? '<p class="small">' + esc((q.changeNo || 'Its number') + ' leaves the change register and is marked voided; the number is not used again.') + '</p>'
+    : '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
+      ((S.queries && S.queries.causes) || []).map((x) => chip('co-cause', x, c.cause === x, x)).join('') + '</div>' +
+      '<label>What was approved<input id="coText" data-co="changeText" value="' + esc(c.changeText) + '" placeholder="Change colour to white"></label>' +
+      '<div class="q-row2"><label>Area<input data-co="area" value="' + esc(c.area) + '" placeholder="Cabin 3"></label>' +
+      '<label>Date<input type="date" data-co="date" value="' + esc(c.date) + '"></label>' +
+      '<label>Cost to us (optional)<input data-co="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000"></label></div></div>';
+  return '<div class="q-compose q-reclose">' + body + (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
+    '<div class="ph-btns"><button type="button" class="btn-accent" data-act="co-save" data-id="' + esc(q.id) + '">' + (q.outcome === 'change' ? 'Change to Answered' : 'Make it a change') + '</button>' +
+    '<button type="button" class="btn-outline" data-act="co-cancel">Cancel</button></div></div>';
+}
+function saveChangeOutcome() {
+  const c = S.co;
+  if (!c) return;
+  const q = S.queries.queries.find((x) => x.id === c.qid);
+  const toChange = q.outcome !== 'change';
+  if (toChange && !c.cause) { c.err = 'Pick why this changed.'; redraw(); return; }
+  if (toChange && !String(c.changeText || '').trim()) { c.err = 'Type what was approved.'; redraw(); return; }
+  api('changeOutcome', [c.qid, toChange ? { outcome: 'change', cause: c.cause, changeText: c.changeText, area: c.area, date: c.date, cost: c.cost } : { outcome: 'answered' }]).then((res) => {
+    setQueries(res); S.co = null;
+    const nq = res.queries.find((x) => x.id === c.qid);
+    snack(toChange ? 'Now a change: ' + (nq && nq.changeNo) + ' in the change register.' : 'Now Answered. ' + (q.changeNo || 'Its number') + ' is voided.');
+    redraw();
+  }, (err) => { if (err.signin) { signedOut(err.message); return; } c.err = cleanErr(err.message); redraw(); });
 }
 
 // One query in a list (engineer's and owners'): the latest activity (highlighted until opened), its state, the
@@ -2369,13 +2580,14 @@ function queryCardHtml(q, act, on) {
 function ownerComposerHtml(q) {
   if (!S.qc || S.qc.qid !== q.id) {
     const eng = defaultTaskFor(q.askedBy, q.project);
-    S.qc = { qid: q.id, text: '', outcome: 'answered', cause: '', cost: '', area: q.area || '', changeText: '', task: false, taskWho: eng, taskDue: addDays(todayIso(), 2), taskText: '',
+    S.qc = { qid: q.id, text: '', outcome: '', cause: '', cost: '', area: q.area || '', changeText: '', task: false, taskWho: eng, taskDue: addDays(todayIso(), 2), taskText: '',
       follow: false, followWho: eng, followText: '', err: '', sending: false };
   }
   const c = S.qc, causes = (S.queries && S.queries.causes) || [];
   const chip = (act, v, on, label) => '<button type="button" class="fchip' + (on ? ' on' : '') + '" data-act="' + act + '" data-v="' + esc(v) + '" aria-pressed="' + on + '">' + esc(label) + '</button>';
   const who = (field) => '<label class="q-for">Task for' + taskForSelect('data-qc="' + field + '"', q.project, q.askedBy, c[field]) + '</label>';
-  const sendLabel = c.outcome === 'keep' ? 'Send reply'
+  // No preset: Send stays off until Reply only / Answered / Change approved is picked.
+  const sendLabel = !c.outcome ? 'Pick how this closes' : c.outcome === 'keep' ? 'Send reply'
     : (c.outcome === 'change' ? 'Approve change' : 'Answer and close') + (c.task ? ' · task for ' + taskForName(c.taskWho) : '');
   // Asking for a clearer photo: quick choices plus your own words, then one message to the engineer.
   if (c.photoAsk) {
@@ -2389,8 +2601,7 @@ function ownerComposerHtml(q) {
       '<button type="button" class="btn-outline" data-act="qc-photo-cancel">Cancel</button></div></div>';
   }
   return '<div class="q-compose"><div class="q-row"><label for="qcText">Your reply</label>' +
-    (q.status === 'waiting_photo' ? '<span class="pill pill-wait">Waiting for a new photo</span>'
-      : '<button type="button" class="btn-outline" data-act="qc-photo">Ask for a clearer photo</button>') + '</div>' +
+    (q.status === 'waiting_photo' ? '' : '<button type="button" class="btn-outline" data-act="qc-photo">Ask for a clearer photo</button>') + '</div>' +
     '<textarea id="qcText" data-qc="text" rows="2">' + esc(c.text) + '</textarea>' +
     '<div class="muted small">How does this close?</div><div class="chip-group">' +
     chip('qc-outcome', 'keep', c.outcome === 'keep', 'Reply only, keep open') + chip('qc-outcome', 'answered', c.outcome === 'answered', 'Answered') +
@@ -2401,7 +2612,7 @@ function ownerComposerHtml(q) {
       '<div class="q-row2"><label>Area<input data-qc="area" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off"></label>' +
       '<label>Cost to us (optional)<input data-qc="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000" autocomplete="off"></label></div>' +
       '<span class="muted small">If the client asked for it and will pay, it belongs in Extras instead (comes with Budget).</span></div>' : '') +
-    (c.outcome !== 'keep' ? '<div class="q-taskbox"><label class="pcheck"><input type="checkbox" data-qc-check="task"' + (c.task ? ' checked' : '') + '> Make it a task</label>' +
+    (c.outcome && c.outcome !== 'keep' ? '<div class="q-taskbox"><label class="pcheck"><input type="checkbox" data-qc-check="task"' + (c.task ? ' checked' : '') + '> Make it a task</label>' +
       (c.task ? '<div class="q-taskline">' + who('taskWho') + '<input type="date" data-qc="taskDue" value="' + esc(c.taskDue) + '">' +
         '<input data-qc="taskText" value="' + esc(c.taskText) + '" placeholder="Get the electrician to raise the switch box by 6 in" autocomplete="off"></div>' +
         '<label class="pcheck"><input type="checkbox" data-qc-check="follow"' + (c.follow ? ' checked' : '') + '> Add a follow-up task after this one</label>' +
@@ -2409,7 +2620,7 @@ function ownerComposerHtml(q) {
         (c.follow ? '<div class="q-taskline">' + who('followWho') + '<input data-qc="followText" value="' + esc(c.followText) + '" placeholder="Get Raju to patch and repaint around the box" autocomplete="off"></div>' : '') : '') +
       '</div>' : '') +
     (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
-    '<button type="button" class="btn-accent q-send" data-act="qc-send" data-id="' + esc(q.id) + '">' + esc(sendLabel) + '</button></div>';
+    '<button type="button" class="btn-accent q-send" data-act="qc-send" data-id="' + esc(q.id) + '"' + (c.outcome ? '' : ' disabled') + '>' + esc(sendLabel) + '</button></div>';
 }
 // "Task for": the project's site engineers (and whoever asked or took the photo), then Shruthi and Savan.
 function taskForOptions(project, byEmail) {
@@ -2441,6 +2652,7 @@ function ownerSend(photoAsk) {
   if (!c) return;
   const text = String(c.text || '').trim();
   let req;
+  if (!photoAsk && !c.outcome) { c.err = 'Pick how this closes.'; redraw(); return; }
   if (photoAsk) req = api('replyQuery', [c.qid, photoAskText(c), 'photo_request', [], newId()]);
   else if (c.outcome === 'keep') {
     if (!text) { c.err = 'Type a reply.'; redraw(); return; }
@@ -2536,7 +2748,9 @@ function engQueriesHtml() {
 // "Which team?": Directory labour by trade, so the query links to the real team. Typing a name is the fallback.
 const TEAM_OTHER = '__typed';
 function teamPickHtml(a) {
-  const labour = ((S.site && S.site.people) || []).filter((p) => p.kind === 'labour')
+  // Grouped by each team's first trade; the option shows them all ("Raju · Painting · Polish").
+  const first = (p) => LC.tradesOf(p.trade)[0] || '';
+  const labour = ((S.site && S.site.people) || []).filter((p) => p.kind === 'labour').map((p) => Object.assign({}, p, { trade: first(p), all: p.trade }))
     .sort((x, y) => (x.trade || '~').localeCompare(y.trade || '~') || x.name.localeCompare(y.name));
   const opt = (v, label) => '<option value="' + esc(v) + '"' + (a.team === v ? ' selected' : '') + '>' + esc(label) + '</option>';
   const groups = [];
@@ -2546,7 +2760,7 @@ function teamPickHtml(a) {
     groups[groups.length - 1].people.push(p);
   });
   return '<label class="q-team">Which team?<select id="askTeam" data-ask-team="1">' + opt('', 'Pick a team…') +
-    groups.map((g) => '<optgroup label="' + esc(g.name) + '">' + g.people.map((p) => opt(p.code, p.name + ' · ' + g.name)).join('') + '</optgroup>').join('') +
+    groups.map((g) => '<optgroup label="' + esc(g.name) + '">' + g.people.map((p) => opt(p.code, p.name + ' · ' + (p.all || g.name))).join('') + '</optgroup>').join('') +
     opt(TEAM_OTHER, 'Not in the list: type the name') + '</select></label>' +
     (a.team === TEAM_OTHER ? '<label class="q-team">Team name<input id="askWhich" data-ask="which" value="' + esc(a.which) + '" placeholder="e.g. AC fitter"></label>' : '');
 }
@@ -2591,11 +2805,14 @@ function addQueryDraftFiles(files, purpose, project) {
 }
 
 /* ---------- change register ---------- */
-function registerRowsHtml(rows, showCost) {
-  if (!rows.length) return '<p class="empty">No changes approved yet.</p>';
+// Voided numbers (a change later made Answered) are left out, with a note so the gap in the numbers is explained.
+function registerRowsHtml(all, showCost) {
+  const rows = all.filter((r) => !r.voided), voided = all.filter((r) => r.voided);
+  const note = voided.length ? '<p class="muted small reg-void">Numbers not used: ' + esc(voided.map((r) => r.no).join(', ')) + ' (changed to Answered).</p>' : '';
+  if (!rows.length) return '<p class="empty">No changes approved yet.</p>' + note;
   return '<div class="table-box"><table class="ptable reg"><thead><tr><th>No.</th><th>Date</th><th>Area</th><th>Change</th><th>Approved by</th><th>Raised from</th><th>Why' + (showCost ? ' · cost to us' : '') + '</th></tr></thead><tbody>' +
     rows.map((r) => '<tr><td class="mono">' + esc(r.no) + '</td><td>' + esc(niceDay(r.date)) + '</td><td>' + esc(r.area || '—') + '</td><td>' + esc(r.text) + '</td><td>' + esc(nameOfEmail(r.approvedBy)) +
-      '</td><td>' + esc(r.raisedFrom) + '</td><td>' + esc(r.cause) + (showCost ? ' · ' + (r.cost ? LC.inr(r.cost) : 'nil') : '') + '</td></tr>').join('') + '</tbody></table></div>';
+      '</td><td>' + esc(r.raisedFrom) + '</td><td>' + esc(r.cause) + (showCost ? ' · ' + (r.cost ? LC.inr(r.cost) : 'nil') : '') + '</td></tr>').join('') + '</tbody></table></div>' + note;
 }
 function engRegisterHtml(proj) {
   const rows = ((S.queries && S.queries.register) || []).filter((r) => r.project === proj);
@@ -2607,7 +2824,7 @@ function printRegister(proj) {
   S.paper = 'A4'; S.orient = 'landscape'; applyPageSize();
   $('printSheet').className = 'print-sheet sheet paper-A4 landscape';
   $('printSheet').innerHTML = '<div class="sh-head"><img class="sh-logo" src="' + esc(LOGO_URL) + '" alt="O F Turnkey"><div class="sh-titles"><span class="sh-title">' + esc(p.name || proj) +
-    ' · Change register</span><span class="sh-sub">' + plural(rows.length, 'approved change', 'approved changes') + '</span></div><span class="sh-date">Printed ' + esc(niceY(todayIso())) + '</span></div>' +
+    ' · Change register</span><span class="sh-sub">' + plural(rows.filter((r) => !r.voided).length, 'approved change', 'approved changes') + '</span></div><span class="sh-date">Printed ' + esc(niceY(todayIso())) + '</span></div>' +
     registerRowsHtml(rows, true);
   window.print();
   loadPrintChoices(); applyPageSize();
@@ -2643,9 +2860,10 @@ function needsFor(code) {
     sub: lastText(q) + ' · ' + [q.area, workText(q, true)].filter(Boolean).join(' · ') + (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
     act: 'needs-query', id: q.id, label: 'Reply'
   }));
-  live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).forEach((e) => out.push({
-    kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'blue', title: LC.taskTitle(S.dir, e), src: e.source,
-    sub: (isMine(e) ? 'Yours' : 'For ' + (e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by))) + ' · due ' + niceDay(e.due), act: 'done', id: e.id, label: 'Done'
+  // Tasks late or due today: most overdue first.
+  live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).sort(byDue).forEach((e) => out.push({
+    kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'wait', title: LC.taskTitle(S.dir, e), src: e.source, fresh: isNewTask(e, myCode()),
+    sub: isMine(e) ? 'Yours' : 'For ' + (e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by)), dueHtml: dueChip(e), act: 'done', id: e.id, label: 'Done'
   }));
   return out;
 }
@@ -2653,8 +2871,8 @@ function needsFor(code) {
 function needLineHtml(n, btnAct, code) {
   return '<div class="need' + (n.fresh ? ' new' : '') + '"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span>' +
     (n.photo ? '<span class="need-thumb">' + (S.thumbs[n.photo] ? '<img src="' + S.thumbs[n.photo] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
-    '<span class="need-text"><b>' + (n.fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + '</span>' +
-    (n.src ? taskSourceHtml(n.src) : '') + '</span>' +
+    '<span class="need-text"><b>' + (n.fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(n.title) + '</b><span class="muted small">' + esc(n.sub) + (n.dueHtml ? ' · ' + n.dueHtml : '') + '</span>' +
+    (n.src ? taskSourceHtml(n.src, n.id) : '') + '</span>' +
     (canWrite() ? '<button type="button" class="btn-outline" data-act="' + btnAct + '" data-id="' + esc(n.id) + '"' + (code ? ' data-code="' + esc(code) + '"' : '') + '>' + esc(n.label) + '</button>' : '') + '</div>';
 }
 function needsHtml(code) {
@@ -2809,8 +3027,9 @@ function onAct(el) {
     case 'print-go': renderPrint(); window.print(); return;
     case 'save': saveCode(); return;
     case 'cancel-edit': cancelEdit(); return;
-    case 'edit': startEdit(id); return;
+    case 'edit': markSeenTask(id); startEdit(id); return;
     case 'done': toggleDone(id); break;
+    case 'undo-tick': S.snackMsg = null; { const e = findEntry(id); if (e && e.done) toggleDone(id); } break;
     case 'void': if (prevVoid === id) doVoid(id); else S.confirmVoid = id; break;
     case 'unvoid': call('setEntryStatus', [id, 'unvoid'], () => snack('Entry is back.')); break;
     case 'show-voided': S.showVoided = !S.showVoided; break;
@@ -2820,6 +3039,8 @@ function onAct(el) {
       break;
     case 'snack-close': S.snackMsg = null; break;
     case 'dir-add': addCodeFromForm(kind); return;
+    case 'tp-add': addTrade(el.dataset.tp, el.dataset.v); return;
+    case 'tp-remove': { const o = tpObj(el.dataset.tp); if (o) o.trades = o.trades.filter((x) => x !== el.dataset.v); break; }
     case 'dir-suggest': S.forms[kind].code = code; S.errs[kind] = ''; break;
     case 'dir-edit': startDirEdit(kind, code); break;
     case 'dir-save': saveDirEdit(); return;
@@ -2839,18 +3060,22 @@ document.addEventListener('input', (ev) => {
     renderCodebar();
   } else if (t.id === 'editDate') {
     if (t.value) { S.editDate = t.value; S.armed = ''; renderCodebar(); }
+  } else if (t.dataset.tp) {
+    const o = tpObj(t.dataset.tp);
+    if (!o) return;
+    o.tradeTyped = t.value;
+    const m = tradeMatch(t.value);
+    // Picked from the list (not typed letter by letter): added straight away.
+    if (m.exact && (!ev.inputType || ev.inputType === 'insertReplacementText')) { addTrade(t.dataset.tp, m.exact); return; }
+    $('tp-' + t.dataset.tp + '-msg').innerHTML = tradeMsgHtml(t.dataset.tp);
   } else if (t.dataset.form) {
     const k = t.dataset.form;
     S.forms[k][t.dataset.field] = t.value;
     S.errs[k] = '';
-    if (t.dataset.field === 'trade') S.forms[k].tradeAuto = false;
-    if (t.dataset.field === 'detail' && PANELS[k] && PANELS[k].trade) autoTrade(S.forms[k], 'dir-' + k + '-trade');
     $('dmsg-' + k).innerHTML = dirMsgHtml(k);
   } else if (t.dataset.edit && S.dirEdit) {
     S.dirEdit[t.dataset.edit] = t.value;
     S.dirEdit.err = '';
-    if (t.dataset.edit === 'trade') S.dirEdit.tradeAuto = false;
-    if (t.dataset.edit === 'detail' && PANELS[S.dirEdit.kind] && PANELS[S.dirEdit.kind].trade) autoTrade(S.dirEdit, 'edit-trade');
     $('editMsg').innerHTML = editMsgHtml();
   } else if (t.dataset.pi && S.projEdit) {
     S.projEdit[t.dataset.pi] = t.value;
@@ -2864,6 +3089,9 @@ document.addEventListener('input', (ev) => {
     S.qc.err = '';
     if (t.dataset.qc === 'taskWho') redraw(); // the button names the person
     if (S.qc.photoAsk && $('qcAskPreview')) $('qcAskPreview').textContent = 'The engineer will get: “' + photoAskText(S.qc) + '”';
+  } else if (t.dataset.co && S.co) {
+    S.co[t.dataset.co] = t.value;
+    S.co.err = '';
   } else if (t.dataset.qcCheck && S.qc) {
     S.qc[t.dataset.qcCheck] = t.checked;
     renderAll();
@@ -2922,6 +3150,9 @@ document.addEventListener('keydown', (ev) => {
   if (t.id === 'code') {
     if (ev.key === 'Enter') { ev.preventDefault(); onEnter(); }
     else if (ev.key === 'Escape' && S.editId) cancelEdit();
+  } else if (t.dataset.tp && ev.key === 'Enter') {
+    ev.preventDefault();
+    tradeTypedOk(t.dataset.tp);
   } else if (t.dataset.form && ev.key === 'Enter') {
     ev.preventDefault();
     addCodeFromForm(t.dataset.form);
