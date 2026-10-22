@@ -433,7 +433,10 @@ function engClick(act, el) {
 }
 // Ticks (and unticks) are instant on screen and saved through the outbox. "Ticked off" has Undo for a few
 // seconds; unticking puts the task back exactly as it was.
+S.ticks = {};
 function engTick(id, done) {
+  S.ticks[id] = { done: done, at: Date.now() };
+  renderEng();
   outboxAdd('setDone', [id, done], 'Tick').then(renderEng);
   if (done) engSnack('Ticked off.', false, '<button type="button" class="undo" data-act="eng-undo" data-id="' + esc(id) + '">Undo</button>', 5000);
   else engSnack('Back on your list.');
@@ -528,6 +531,12 @@ function engTodayHtml() {
   const tasks = ((S.site && S.site.tasks) || []).map((x) => Object.assign({}, x));
   waiting('addEntry').forEach((w) => { if (w.meta && !tasks.some((x) => x.id === w.meta.id)) tasks.push({ id: w.meta.id, note: w.meta.note, project: w.meta.project, due: w.meta.due, done: false, added_by: S.me.email, pending: true }); });
   waiting('setDone').forEach((w) => { const x = tasks.find((y) => y.id === w.args[0]); if (x) { x.done = !!w.args[1]; x.pending = true; } });
+  // A tap shows at once, even before the phone's outbox has it on its list (no flicker back).
+  Object.keys(S.ticks).forEach((id) => {
+    const x = tasks.find((y) => y.id === id), k = S.ticks[id];
+    if (!x || Date.now() - k.at > 120000) { delete S.ticks[id]; return; }
+    if (x.done === k.done && !x.pending) delete S.ticks[id]; else x.done = k.done;
+  });
   tasks.sort(LC.byDue);
   const open = tasks.filter((x) => !x.done), done = tasks.filter((x) => x.done).slice(-5).reverse();
   const projName = engProjName;
@@ -2548,7 +2557,11 @@ function queryThreadHtml(q, owner) {
     const first = tasks.filter((t) => !t.after), next = tasks.filter((t) => t.after);
     h += '<div class="q-tasks">' + first.map((t, i) => '<div><b>Task ' + (i + 1) + ' · ' + tname(t.assignee) + ' · ' + (t.done ? '' : dueChip(t)) + '</b>' +
       state(t) + '<br>' + esc(t.note) + '</div>').join('') +
-      next.map((t) => '<div class="muted"><b>Then · ' + tname(t.assignee) + '</b> · ' + (t.done ? '' : 'appears when the task before is ticked') + state(t) + '<br>' + esc(t.note) + '</div>').join('') + '</div>';
+      next.map((t) => {
+        const before = tasks.find((x) => x.id === t.after);
+        return '<div class="muted"><b>Then · ' + tname(t.assignee) + '</b> · ' + (t.done ? '' : before && before.done ? 'on their list now · ' + dueChip(t) : 'appears when the task before is ticked') +
+          state(t) + '<br>' + esc(t.note) + '</div>';
+      }).join('') + '</div>';
   }
   if (!owner) waiting('replyQuery').filter((w) => w.args[0] === q.id).forEach((w) => {
     h += bubble(S.me.email, stampNow(), (w.args[1] ? '<p>' + esc(w.args[1]) + '</p>' : '') + '<span class="pill sending">Sending…</span>');
