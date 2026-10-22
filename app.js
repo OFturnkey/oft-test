@@ -210,7 +210,25 @@ function noAutofill(root) {
   });
 }
 noAutofill(document.body);
-new MutationObserver((list) => list.forEach((m) => m.addedNodes.forEach(noAutofill))).observe(document.body, { childList: true, subtree: true });
+// Photo buttons: each one handles its own photos. The camera or gallery can be open for a while, and if the screen
+// redraws meanwhile (something arrived in the background) the button is replaced; a photo coming back to the old
+// button must still be kept, not lost.
+function wirePhotoPicks(root) {
+  if (!root.querySelectorAll) return;
+  const picks = Array.from(root.querySelectorAll('input[type=file][data-ph-pick], input[type=file][data-q-pick]'));
+  if (root.matches('input[type=file][data-ph-pick], input[type=file][data-q-pick]')) picks.push(root);
+  picks.forEach((el) => {
+    if (el.oftWired) return;
+    el.oftWired = true;
+    el.addEventListener('change', () => {
+      const project = S.engProject;
+      if (el.dataset.phPick) addDraftFiles(el.files, project); else addQueryDraftFiles(el.files, el.dataset.qPick, project);
+      el.value = '';
+    });
+  });
+}
+wirePhotoPicks(document.body);
+new MutationObserver((list) => list.forEach((m) => m.addedNodes.forEach((n) => { noAutofill(n); wirePhotoPicks(n); }))).observe(document.body, { childList: true, subtree: true });
 
 // Things arriving in the background (devices, queries, photos, the outbox) redraw the screen, but never while
 // someone is typing: that would move the cursor or swap a button under a finger. It redraws when they leave the box.
@@ -3137,8 +3155,6 @@ document.addEventListener('input', (ev) => {
 
 document.addEventListener('change', (ev) => {
   const t = ev.target;
-  if (t.dataset && t.dataset.phPick) { addDraftFiles(t.files, S.engProject); t.value = ''; return; }
-  if (t.dataset && t.dataset.qPick) { addQueryDraftFiles(t.files, t.dataset.qPick, S.engProject); t.value = ''; return; }
   if (t.id === 'editDate') { S.editDate = t.value || ''; S.armed = ''; S.saveErr = ''; renderCodebar(); return; }
   if (t.id === 'alertsKey' && t.files && t.files[0]) {
     const reader = new FileReader();
