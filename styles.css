@@ -740,3 +740,6 @@ button.need-thumb { border: 0; padding: 0; cursor: pointer; }
 label.ph-pick-btn { font-size: 15px; font-weight: 600; flex-direction: row; }
 label.btn-save.ph-pick-btn { color: #FFFFFF; }
 label.btn-outline.ph-pick-btn { color: #1C1E1D; }
+/* The opened photo beside the feed (laptop) stays within the screen and scrolls on its own, so every comment can be
+   reached (and a task can open straight at its comment). */
+@media (min-width: 700px) { .ph-side { max-height: calc(100vh - 24px); overflow-y: auto; } }
