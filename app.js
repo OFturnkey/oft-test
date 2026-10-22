@@ -160,7 +160,14 @@ let CURRENT_KEY = null;
 const BUSY_LABEL = { 'qc-photo-send': 'Asking…', 'qc-send': 'Sending…', 'er-send': 'Sending…', 'ask-send': 'Sending…', 'ph-comment': 'Sending…',
   'ph-task': 'Sending…', 'ph-send': 'Sending…', 'brief-preview': 'Loading…', refresh: 'Updating…', 'pcode-save': 'Saving…', save: 'Saving…' };
 function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code || d.email || d.kind || d.v || ''); }
+// Moving around (tabs, sections, opening a query or a task) is never "busy", even when it loads something in the
+// background: the bottom bar and tabs must always answer. Only saves lock their button.
+const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
+  'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1 };
+// Background reads (and "opened") never make a button look busy.
+const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1 };
 function withBusy(el, fn) {
+  if (NAV_ACTS[el.dataset.act]) { fn(); return; }
   const key = actKey(el);
   if (INFLIGHT[key]) return; // still saving: a second click does nothing
   INFLIGHT[key] = { label: BUSY_LABEL[el.dataset.act] || 'Saving…', n: 0 };
@@ -231,7 +238,7 @@ document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() =
 // One request to the server: { a, s, args } goes in as plain text (no cookies, so the phone's Google
 // accounts play no part); { ok, result } or { ok: false, error, signin } comes back.
 function api(action, args) {
-  const busyKey = CURRENT_KEY;
+  const busyKey = QUIET_CALLS[action] ? null : CURRENT_KEY;
   if (busyKey && INFLIGHT[busyKey]) INFLIGHT[busyKey].n++;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 90000);
@@ -2110,6 +2117,9 @@ function sendDrafts(project) {
   if (missing) { engSnack('Pick or type an area for each photo.', true); return; }
   const batch = newId();
   S.sendingPhotos = true;
+  // New areas are offered straight away (Photos and Ask a question); the server keeps them for the project too.
+  const all = S.site.areas || (S.site.areas = {}), known = all[project] || (all[project] = []);
+  drafts.forEach((d) => { const a = d.area.trim(); if (!known.some((x) => x.toLowerCase() === a.toLowerCase())) known.push(a); });
   renderEng();
   let chain = Promise.resolve();
   drafts.forEach((d) => {
