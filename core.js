@@ -302,7 +302,34 @@ function LedgerCore() {
 
   // Trades for labour and vendors, and the trade a Details text points to ("Painting & polish" → Painting), or ''.
   var TRADES = ['POP', 'Carpentry', 'Painting', 'Specialist finishes', 'Flooring', 'Aluminium & glass', 'Lighting', 'Metal ceiling',
-    'Signage', 'Tiling', 'Plumbing', 'Furniture', 'Others'];
+    'Signage', 'Tiling', 'Plumbing', 'Furniture', 'Civil', 'Fabrication', 'Electrical', 'Others'];
+  // A team can have more than one trade: stored and shown as "Painting · Polish".
+  function tradesOf(s) {
+    var seen = {};
+    return String(s || '').split(/\s*[·,;]\s*/).map(function (t) { return t.trim(); }).filter(function (t) {
+      var k = t.toLowerCase();
+      if (!t || seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+  }
+
+  // How late a task is: "3 days overdue" (late), "Due today" (today), "Due tomorrow" / "due Sat 24 Oct" (later).
+  var WDS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function dueText(due, today) {
+    if (!due) return { text: 'No due date', level: 'none' };
+    var n = Math.round((fromIso(today) - fromIso(due)) / 86400000);
+    if (n > 0) return { text: n === 1 ? '1 day overdue' : n + ' days overdue', level: 'late' };
+    if (n === 0) return { text: 'Due today', level: 'today' };
+    if (n === -1) return { text: 'Due tomorrow', level: 'later' };
+    var d = fromIso(due);
+    return { text: 'due ' + WDS[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()], level: 'later' };
+  }
+  // Task order everywhere: most overdue first, then due today, then by date; no due date last.
+  function byDue(a, b) {
+    if (!a.due !== !b.due) return a.due ? -1 : 1;
+    return a.due < b.due ? -1 : a.due > b.due ? 1 : 0;
+  }
   var TRADE_WORDS = [
     ['Metal ceiling', /metal ceiling|baffle|grid ceiling/i], ['Specialist finishes', /special|texture|stucco|wallpaper|venetian|micro ?cement/i],
     ['POP', /\bpop\b|plaster of paris|gypsum|false ceiling/i], ['Carpentry', /carpent|joiner|wood ?work|modular/i],
@@ -317,7 +344,8 @@ function LedgerCore() {
   }
 
   return {
-    MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT, TRADES: TRADES, tradeFromDetail: tradeFromDetail,
+    MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT, TRADES: TRADES, tradeFromDetail: tradeFromDetail, tradesOf: tradesOf,
+    dueText: dueText, byDue: byDue,
     pad: pad, iso: iso, fromIso: fromIso, nice: nice, cap: cap, inr: inr, short: short, amountOf: amountOf, amountWords: amountWords,
     buildDir: buildDir, storeFor: storeFor, activeCodes: activeCodes, whoCodes: whoCodes,
     projName: projName, clientName: clientName, whoName: whoName, modeLabel: modeLabel, taskTitle: taskTitle, describe: describe, teamName: teamName,
