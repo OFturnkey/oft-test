@@ -2399,12 +2399,15 @@ function doJump() {
   if (Date.now() - j.at > 20000) { S.jump = null; return; }
   const panel = $('phPanel');
   if (!panel || S.photoSel !== j.photo || !S.photos || !S.photos.photos.some((p) => p.id === j.photo)) return;
-  const target = (j.task && panel.querySelector('.ph-comment[data-task="' + j.task + '"]')) || panel;
+  // The full-size photo above the comments pushes them down when it arrives: wait for it (up to 8 s).
+  if (!(S.fullPhoto && S.fullPhoto.id === j.photo) && Date.now() - j.at < 8000) return;
   j.done = true;
-  setTimeout(() => {
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => { if (S.jump === j) S.jump = null; }, 6000);
-  }, 50);
+  // Found again each time: a redraw may have replaced it. Scrolled again once the picture has its height.
+  const target = () => { const p = $('phPanel'); return p && ((j.task && p.querySelector('.ph-comment[data-task="' + j.task + '"]')) || p); };
+  const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight; };
+  setTimeout(() => { const t = target(); if (t) t.scrollIntoView({ block: 'center' }); }, 100);
+  setTimeout(() => { const t = target(); if (t && !inView(t)) t.scrollIntoView({ block: 'center' }); }, 900);
+  setTimeout(() => { if (S.jump === j) S.jump = null; }, 7000);
 }
 function thumbImg(p, cls) {
   const src = S.thumbs[p.id];
