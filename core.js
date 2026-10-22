@@ -18,7 +18,7 @@ function LedgerCore() {
     R: { label: 'Received', money: true, parts: ['project', 'who', 'amount', 'mode', 'note'] },
     F: { label: 'Follow-up', task: true, parts: ['project', 'who', 'due', 'note'] },
     // An optional @CODE gives the task to that team member: MT NST @VNK 26/11 seal pantry joint.
-    MT: { label: 'My task', task: true, noteRequired: true, parts: ['project', 'assignee', 'due', 'note'] }
+    MT: { label: 'Task', task: true, noteRequired: true, parts: ['project', 'assignee', 'due', 'note'] }
   };
 
   function pad(n) { return (n < 10 ? '0' : '') + n; }
@@ -75,7 +75,10 @@ function LedgerCore() {
   // Directory: { projects: {SA: {name, client, active}}, people: {BAB: {...}}, modes: {C: {...}}, team: {VNK: {name, role}} }
   function buildDir(data) {
     var dir = { projects: {}, people: {}, modes: {}, team: {} };
-    (data.users || []).forEach(function (u) { if (u.code && !dir.team[u.code]) dir.team[u.code] = { name: u.name || u.email, role: u.role }; });
+    // Archived people keep their code (old tasks show their name) but can't be given new tasks.
+    (data.users || []).forEach(function (u) {
+      if (u.code && (!dir.team[u.code] || (dir.team[u.code].archived && !u.archived))) dir.team[u.code] = { name: u.name || u.email, role: u.role, archived: !!u.archived };
+    });
     (data.projects || []).forEach(function (p) { dir.projects[p.code] = { name: p.name, client: p.client, active: p.active }; });
     (data.people || []).forEach(function (p) {
       dir.people[p.code] = { name: p.name, kind: p.kind, detail: p.detail, active: p.active, system: p.code === CLIENT };
@@ -168,13 +171,14 @@ function LedgerCore() {
     assignee: {
       optional: true,
       hint: function (ctx) {
-        var l = Object.keys(ctx.dir.team || {}).map(function (k) { return '@' + k; });
+        var l = Object.keys(ctx.dir.team || {}).filter(function (k) { return !ctx.dir.team[k].archived; }).map(function (k) { return '@' + k; });
         return l.length ? '@code to give it to someone (' + listCodes(l) + '), or a date dd/mm, or what to do' : 'date dd/mm (optional), then what to do';
       },
       match: function (raw) { return /^@/.test(raw); },
       read: function (raw, st, ctx) {
         var c = raw.slice(1).toUpperCase(), u = ctx.dir.team && ctx.dir.team[c];
         if (!u) return bad('no one has the code ' + (c || '…') + ' — see Directory → Team');
+        if (u.archived) return bad(u.name + ' is archived — see Directory → Team');
         st.assignee = c;
         return good('for ' + u.name);
       }
@@ -200,7 +204,7 @@ function LedgerCore() {
   // ctx = { dir, sel: 'yyyy-mm-dd' (the calendar day the code is typed on), keep?: {project, who, mode} }
   function parse(code, ctx) {
     var t = String(code || '').trim().split(/\s+/).filter(function (x) { return x; });
-    var out = { tokens: [], hint: 'P paid, R received, F follow-up, MT my task', ready: false, entry: null, problem: 'Type a code first.' };
+    var out = { tokens: [], hint: 'P paid, R received, F follow-up, MT task', ready: false, entry: null, problem: 'Type a code first.' };
     if (!t.length) return out;
     var type = t[0].toUpperCase(), def = TYPES[type];
     if (!def) {
