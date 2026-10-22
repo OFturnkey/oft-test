@@ -24,9 +24,11 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   const key = req.url.split('?')[0];
   const net = fetch(new Request(req.url, { cache: 'no-cache' })).then((res) => {
-    if (res.ok) { const copy = res.clone(); event.waitUntil(caches.open(CACHE).then((c) => c.put(key, copy))); }
+    if (res.ok) { const copy = res.clone(); return caches.open(CACHE).then((c) => c.put(key, copy)).then(() => res, () => res); }
     return res;
   });
+  // Keeps the worker alive until the network has answered and the copy is saved, even when the saved copy answered first.
+  event.waitUntil(net.catch(() => {}));
   const saved = () => caches.match(key).then((hit) => hit || caches.match('./'));
   event.respondWith(new Promise((resolve) => {
     let done = false;
