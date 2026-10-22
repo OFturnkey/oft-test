@@ -1,8 +1,10 @@
 // Service worker for the O F Turnkey site.
-// - Screens: network first, so a new version shows as soon as it is published; with no signal it answers
-//   from the last copy, so the app still opens. Data requests (to Apps Script) and fonts are not touched.
+// - Screens: network first, so a new version shows as soon as it is published; with no signal, or when the network
+//   hasn't answered within NET_WAIT_MS (a laptop waking up, weak Wi-Fi), it answers from the last copy, so the app
+//   opens at once; the fresh copy is still saved for next time. Data requests (to Apps Script) and fonts are not touched.
 // - push / notificationclick: shows alerts sent through Firebase Cloud Messaging.
 const CACHE = 'oft-screens-v1';
+const NET_WAIT_MS = 3000;
 const SCREENS = ['./', 'index.html', 'styles.css', 'config.js', 'core.js', 'app.js', 'logo.png', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/favicon-32.png'];
 
@@ -20,12 +22,19 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
-  event.respondWith(
-    fetch(new Request(req.url, { cache: 'no-cache' })).then((res) => {
-      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req.url.split('?')[0], copy)); }
-      return res;
-    }).catch(() => caches.match(req.url.split('?')[0]).then((hit) => hit || caches.match('./')))
-  );
+  const key = req.url.split('?')[0];
+  const net = fetch(new Request(req.url, { cache: 'no-cache' })).then((res) => {
+    if (res.ok) { const copy = res.clone(); event.waitUntil(caches.open(CACHE).then((c) => c.put(key, copy))); }
+    return res;
+  });
+  const saved = () => caches.match(key).then((hit) => hit || caches.match('./'));
+  event.respondWith(new Promise((resolve) => {
+    let done = false;
+    const answer = (r) => { if (!done && r) { done = true; resolve(r); } };
+    // Slow network: the saved copy answers (if there is one); the network still finishes and refreshes it.
+    const timer = setTimeout(() => saved().then(answer), NET_WAIT_MS);
+    net.then((res) => { clearTimeout(timer); answer(res); }, () => { clearTimeout(timer); saved().then((r) => { if (r) answer(r); else answer(Response.error()); }); });
+  }));
 });
 
 self.addEventListener('push', (event) => {
