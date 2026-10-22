@@ -734,3 +734,9 @@ button.need-thumb { border: 0; padding: 0; cursor: pointer; }
 .eng-wait-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
 .ptable.qsum { min-width: 560px; }
 .reg-form td { background: #F7F7F4; }
+
+/* Photo buttons (Take photo / From gallery) look the same everywhere, also inside the reply box, whose grey label style
+   must not reach them (Step 14: white text on the dark button). */
+label.ph-pick-btn { font-size: 15px; font-weight: 600; flex-direction: row; }
+label.btn-save.ph-pick-btn { color: #FFFFFF; }
+label.btn-outline.ph-pick-btn { color: #1C1E1D; }
