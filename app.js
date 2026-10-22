@@ -2260,7 +2260,9 @@ function renderNetStrip() {
   el.innerHTML = h;
   el.className = 'net-strip' + (failed.length ? ' bad' : '');
 }
-window.addEventListener('online', () => { OUT.online = true; flushOutbox(); renderNetStrip(); });
+// Signal back: send what waits, and (engineers) bring the site data up to date (areas, tasks), which may be the copy
+// saved on the phone if the app was opened without signal.
+window.addEventListener('online', () => { OUT.online = true; flushOutbox(); renderNetStrip(); if (S.engineer && sessionToken()) engCall('getSite', []); });
 window.addEventListener('offline', () => { OUT.online = false; renderNetStrip(); });
 setInterval(() => { if (OUT.items.some((x) => !x.error)) flushOutbox(); }, 30000);
 
