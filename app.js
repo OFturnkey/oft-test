@@ -3315,9 +3315,13 @@ function renderAll() {
 /* ---------- events ---------- */
 document.addEventListener('click', (ev) => {
   const el = ev.target.closest('[data-act]');
+  if (CONFIG.env === 'test') CLICKS.push({ act: el && el.dataset.act, disabled: !!(el && el.disabled), busy: el ? !!INFLIGHT[actKey(el)] : false, at: Date.now() });
   if (!el || el.disabled) return;
   withBusy(el, () => onAct(el));
 });
+// Test app only: what the automated checks can look at when a click seems to do nothing.
+const CLICKS = [];
+if (CONFIG.env === 'test') window.oftDebug = () => ({ clicks: CLICKS.slice(-10), inflight: JSON.parse(JSON.stringify(INFLIGHT)), qc: S.qc && { qid: S.qc.qid, outcome: S.qc.outcome, task: S.qc.task, sending: S.qc.sending, err: S.qc.err }, qSel: S.qSel });
 function onAct(el) {
   const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
   // Buttons on the opening / sign-in screens work before any ledger data has loaded.
