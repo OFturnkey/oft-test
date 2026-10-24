@@ -2424,7 +2424,8 @@ const OUT = { items: [], sending: false, online: navigator.onLine, lastError: ''
 // meta: what to draw on screen while the item waits ("Sending…"), e.g. a task's text and due date.
 function outboxAdd(action, args, label, meta) {
   const item = { id: newId(), action: action, args: args, label: label, meta: meta || null, email: S.me ? S.me.email : '', createdAt: Date.now(), error: '' };
-  return idbPut('outbox', item).then(() => { refreshOutbox(); flushOutbox(); });
+  // Resolves once the item is on this phone's waiting list (so a redraw then shows it as "Sending…").
+  return idbPut('outbox', item).then(() => { const listed = refreshOutbox(); flushOutbox(); return listed; });
 }
 function refreshOutbox() {
   return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); if (S.engineer) bgRedraw(); }, () => { /* no storage: nothing waiting */ });
