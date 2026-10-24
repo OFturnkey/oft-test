@@ -733,7 +733,8 @@ function engAddTask() {
   const cid = 'e_' + newId().replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 12);
   S.engAdd = { note: '', due: '', err: '' };
   S.engAddedAt = Date.now();
-  outboxAdd('addEntry', [code, sel, cid], 'Task', { id: cid, note: note, project: S.engProject, due: a.due || todayIso() });
+  // On his list at once ("Sending…"), even with the cursor still in the box (a background redraw would wait for typing).
+  outboxAdd('addEntry', [code, sel, cid], 'Task', { id: cid, note: note, project: S.engProject, due: a.due || todayIso() }).then(renderEng);
   engSnack('Added to your tasks.');
   renderEng();
 }
