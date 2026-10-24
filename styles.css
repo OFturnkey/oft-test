@@ -743,3 +743,80 @@ label.btn-outline.ph-pick-btn { color: #1C1E1D; }
 /* The opened photo beside the feed (laptop) stays within the screen and scrolls on its own, so every comment can be
    reached (and a task can open straight at its comment). */
 @media (min-width: 700px) { .ph-side { max-height: calc(100vh - 24px); overflow-y: auto; } }
+/* ---------- 25 Oct: design group A, her items 1–16, attachments ---------- */
+/* Buttons: black for a screen's main action (Add, Take photo…), green only for approve / send / save (design rule). */
+.btn-main { min-height: 40px; padding: 8px 16px; border: 0; border-radius: 6px; background: #1C1E1D; color: #FFFFFF; font-weight: 600; }
+.btn-main:disabled { opacity: 0.45; }
+label.btn-main.ph-pick-btn { color: #FFFFFF; }
+.is-sending { opacity: 0.6; }
+/* A newer version was published while this page was open; notifications asked / blocked. */
+.upd-strip { position: sticky; top: 0; z-index: 30; background: #1F3A5F; color: #FFFFFF; text-align: center; font-size: 14px; padding: 8px 16px; }
+.upd-strip button { font: inherit; font-weight: 700; color: #FFFFFF; background: none; border: 0; text-decoration: underline; cursor: pointer; min-height: 32px; }
+.notify-bar { background: #DCE7F3; color: #1F3A5F; font-size: 14px; padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; justify-content: center; text-align: center; }
+.notify-bar.blocked { background: #FFEDB3; color: #5E4500; }
+/* Phones: one slim header row (logo, name, Refresh); Print sheets moves into the Ledger tab. */
+.phone-only { display: none; }
+@media (max-width: 699px) {
+  body { font-size: 15px; }
+  .hdr-title, #printToggle { display: none; }
+  .hdr-in { flex-wrap: nowrap; }
+  .phone-only { display: inline-flex; align-self: flex-start; }
+  .btn-outline, .btn-accent, .btn-main, .btn-sm { min-height: 44px; font-size: 14px; }
+}
+/* Ledger: the right column is never taller than the calendar; both end level, Active projects right below. */
+@media (min-width: 1100px) {
+  .ledger-top { align-items: stretch; flex-wrap: nowrap; }
+  .side { position: relative; }
+  .side-in { position: absolute; inset: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 24px; }
+}
+@media (max-width: 1099px) { .side-in { display: flex; flex-direction: column; gap: 24px; } }
+@media (max-width: 699px) { .side-in { gap: 16px; } }
+.rem-more { align-self: flex-start; font-size: 13px; }
+/* Project sections: open queries count on the Queries tab. */
+.sec-count { display: inline-block; margin-left: 6px; min-width: 20px; padding: 0 6px; border-radius: 999px; background: #ECECE7; color: #3A3C39; font-size: 12px; font-weight: 600; text-align: center; }
+.sec-count.red { background: #A3271B; color: #FFFFFF; }
+.q-explain { margin: 4px 0 0; }
+/* Entry bars: a long typing box and a small Add. */
+.pbar-row { display: flex; gap: 8px; align-items: stretch; }
+.pbar-row input { flex: 1 1 auto; min-width: 0; }
+.pbar-row .pbar-add { flex: 0 0 auto; min-height: 44px; padding: 0 18px; }
+@media (max-width: 699px) { .today-bar { position: sticky; bottom: 8px; z-index: 4; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12); } }
+/* Phone Today: one compact row per item, who on the right. */
+.tday.compact { gap: 6px; }
+.tday-hc { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.need-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-top: 1px solid #ECECE7; background: transparent; padding: 10px 0; font: inherit; color: #1C1E1D; cursor: pointer; min-height: 48px; }
+.need-row .need-tag { width: 64px; font-size: 10px; }
+.nr-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nr-text b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.need-row.new .nr-text b { font-weight: 700; }
+.nr-who { flex: none; font-size: 13px; color: #5C615D; }
+/* People's circles: owners dark with their code, everyone else blue. */
+.q-av.own { background: #1C1E1D; color: #FFFFFF; }
+.ph-comment { display: flex; gap: 10px; align-items: flex-start; }
+.ph-c-body { flex: 1 1 auto; min-width: 0; }
+/* Engineer: icons over the bottom bar's labels; a smaller project pill; "Ask a question" with a camera. */
+.eng-tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding-top: 6px; }
+.eng-tab.on svg { stroke-width: 2.2; }
+.eng-big { gap: 10px; }
+.eng-proj select { max-width: 46vw; min-height: 36px; font-size: 14px; padding: 4px 12px; }
+.eng-add-open { align-self: flex-start; margin: 0 4px; min-height: 40px; }
+.eng .net-strip { top: 57px; }
+.net-strip { font-size: 13px; }
+/* Query cards: the state tag stays on one line. */
+.q-card-top { flex-wrap: wrap; }
+.q-card .pill { white-space: nowrap; }
+/* Site photos: each day its own card. */
+.ph-day.card { margin-bottom: 0; }
+/* Attachments (replies, photo comments) and PDFs in threads. */
+.att { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.att .q-photos { flex-basis: 100%; }
+.att-btn { cursor: pointer; display: inline-flex; align-items: center; }
+.att-pdf { width: auto !important; min-width: 120px; display: inline-flex; align-items: center; padding: 0 28px 0 10px; background: #F3F3F0; border-radius: 8px; }
+.att-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.file-chip { border: 1px solid #DEDED8; background: #FFFFFF; border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px; }
+/* Team: long emails wrap; the person's accounts one per line; handing over open tasks. */
+.drow-text span { overflow-wrap: anywhere; }
+.drow-email { display: block; }
+.handover { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: #3A3C39; }
+.handover select { min-height: 40px; border: 1px solid #C4C6C0; border-radius: 6px; padding: 4px 8px; background: #FFFFFF; font: inherit; }
+.drow-ho { padding: 8px 0 0 48px; }
