@@ -820,3 +820,5 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .handover { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: #3A3C39; }
 .handover select { min-height: 40px; border: 1px solid #C4C6C0; border-radius: 6px; padding: 4px 8px; background: #FFFFFF; font: inherit; }
 .drow-ho { padding: 8px 0 0 48px; }
+/* Ledger, wide screens: the Reminders card fills the column, so both columns end level. */
+@media (min-width: 1100px) { .side-in #reminders { flex: 1 1 auto; } }
