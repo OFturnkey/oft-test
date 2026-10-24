@@ -136,9 +136,16 @@ function LedgerCore() {
       }
     },
     who: {
-      hint: function (ctx) { return 'who (' + listCodes(whoCodes(ctx.dir)) + ')'; },
-      read: function (raw, st, ctx) {
+      hint: function (ctx, type) {
+        if (type === 'R') return 'who paid: CL for the client, e.g. R NST CL 50L T (or ' + listCodes(whoCodes(ctx.dir)) + ')';
+        return 'who (' + listCodes(whoCodes(ctx.dir)) + ')';
+      },
+      read: function (raw, st, ctx, type) {
         var c = raw.toUpperCase(), p = ctx.dir.people[c];
+        // An amount where the person should be: say what goes there (CL for a client's payment).
+        if (!p && amountOf(raw) !== null && (type === 'R' || type === 'P')) {
+          return bad(type === 'R' ? 'Who paid? Type CL for the client, e.g. R NST CL 50L T' : 'Who was paid? Type their code, e.g. P NST BAB 25k C');
+        }
         if (!p) return bad('unknown person — add in Directory');
         if (!p.active && !kept(ctx, 'who', c)) return bad(p.name + ' is archived — restore in Directory');
         st.who = c;
