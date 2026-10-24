@@ -17,6 +17,10 @@
 <body>
 
 <div id="envStrip" class="env-strip" role="note" hidden></div>
+<!-- A newer version was published while this page was open. -->
+<div id="updStrip" class="upd-strip" role="status" hidden>New version of O F Turnkey · <button type="button" data-act="reload">Tap to update</button></div>
+<!-- Allow notifications? / notifications are blocked. -->
+<div id="notifyBar" class="notify-bar" role="status" hidden></div>
 <!-- Things saved on this phone that haven't reached the server yet (no signal). -->
 <div id="netStrip" class="net-strip" role="status" aria-live="polite" hidden></div>
 
@@ -90,13 +94,16 @@
   <section id="printPanel" class="card print-panel" aria-labelledby="print-h" hidden></section>
 
   <div id="view-ledger" class="view">
+    <!-- Phones: Print sheets lives here (the header keeps only the name and Refresh). -->
+    <button type="button" class="btn-outline phone-only" data-act="print-toggle">Print sheets</button>
     <div class="ledger-top">
       <section id="calendar" class="card cal" aria-labelledby="cal-h"></section>
       <div id="codebarPhoneSlot" class="phone-slot"></div>
-      <aside class="side">
+      <!-- Wide screens: this column is never taller than the calendar (it scrolls inside if it must). -->
+      <aside class="side"><div class="side-in">
         <section id="dayPanel" class="card" aria-labelledby="day-h"></section>
         <section id="reminders" class="card" aria-labelledby="al-h"></section>
-      </aside>
+      </div></aside>
     </div>
     <section id="projects" class="card" aria-labelledby="pr-h"></section>
   </div>
@@ -106,6 +113,7 @@
   <section id="view-dir" class="view" aria-labelledby="dir-h" hidden></section>
 
   <p class="foot"><span id="sheetNote">Everything is stored in the <a id="sheetLink" href="#" target="_blank" rel="noopener">O F Turnkey sheet</a>. <span id="backupNote"></span></span>
+    <span id="prefNote"></span>
     <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>
 </main>
 
