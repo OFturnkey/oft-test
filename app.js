@@ -1021,7 +1021,8 @@ function renderGuide() {
   ];
   $('cbGuide').innerHTML =
     '<div class="guide-formats">' +
-    '<span><b>P / R</b>   TYPE PROJECT WHO AMOUNT MODE note       e.g. P SA BAB 25k C</span>' +
+    '<span><b>P</b>       TYPE PROJECT WHO AMOUNT MODE note       e.g. P SA BAB 25k C</span>' +
+    '<span><b>R</b>       TYPE PROJECT WHO-PAID AMOUNT MODE note  e.g. R NST CL 50L T (received from the client: CL)</span>' +
     '<span><b>F</b>       TYPE PROJECT WHO dd/mm note             e.g. F SA ZAM 18/10 gate drawings</span>' +
     '<span><b>MT</b>      task: TYPE PROJECT dd/mm what-to-do     e.g. MT SA 15/10 send revised BOQ</span>' +
     '<span><b>MT @</b>    add @code to give it to someone         e.g. MT NST @VNK 26/11 seal pantry joint (a task for Venky)</span>' +
