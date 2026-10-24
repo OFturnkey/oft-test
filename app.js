@@ -2816,7 +2816,7 @@ function changeOutcomeHtml(q) {
     : '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       ((S.queries && S.queries.causes) || []).map((x) => chip('co-cause', x, c.cause === x, x)).join('') + '</div>' +
       '<label>What was approved<input id="coText" data-co="changeText" value="' + esc(c.changeText) + '" placeholder="Change colour to white"></label>' +
-      '<div class="q-row2"><label>Area<input data-co="area" value="' + esc(c.area) + '" placeholder="Cabin 3"></label>' +
+      '<div class="q-row2"><label>Area · pick or type<input data-co="area" list="coAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3">' + areaListHtml('coAreaList', q.project) + '</label>' +
       '<label>Date<input type="date" data-co="date" value="' + esc(c.date) + '"></label>' +
       '<label>Cost to us (optional)<input data-co="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000"></label></div></div>';
   return '<div class="q-compose q-reclose">' + body + (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
@@ -2901,7 +2901,7 @@ function ownerComposerHtml(q) {
     (c.outcome === 'change' ? '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       causes.map((x) => chip('qc-cause', x, c.cause === x, x)).join('') + '</div>' +
       '<label>What was approved (for the change register)<input id="qcChange" data-qc="changeText" value="' + esc(c.changeText) + '" placeholder="Change colour to white"></label>' +
-      '<div class="q-row2"><label>Area<input data-qc="area" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off"></label>' +
+      '<div class="q-row2"><label>Area · pick or type<input data-qc="area" list="qcAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off">' + areaListHtml('qcAreaList', q.project) + '</label>' +
       '<label>Cost to us (optional)<input data-qc="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000" autocomplete="off"></label></div>' +
       '<span class="muted small">If the client asked for it and will pay, it belongs in Extras instead (comes with Budget).</span></div>' : '') +
     (c.outcome === 'answered' || c.outcome === 'change' ? '<div class="q-taskbox"><label class="pcheck"><input type="checkbox" data-qc-check="task"' + (c.task ? ' checked' : '') + '> Make it a task</label>' +
@@ -3134,10 +3134,14 @@ function registerRowsHtml(all, showCost, editable) {
         (ed ? '<tr class="reg-form"><td colspan="' + cols + '">' + registerFormHtml(S.regEdit) + '</td></tr>' : '');
     }).join('') + '</tbody></table></div>' + note;
 }
+// Every Area box picks from the project's areas (the ones on its photos and questions) or takes a new one; the server
+// saves any capitals as the project's own spelling ("reception" → "Reception").
+function areaOptions(project) { return (((S.data && S.data.areas) || (S.site && S.site.areas) || {})[project]) || []; }
+function areaListHtml(id, project) { return '<datalist id="' + id + '">' + areaOptions(project).map((a) => '<option value="' + esc(a) + '">').join('') + '</datalist>'; }
 function registerFormHtml(f) {
   const causes = (S.queries && S.queries.causes) || [];
   return '<div class="dform"><div class="fld" style="flex:2 1 260px"><label for="regText">What was approved</label><input id="regText" data-reg="text" value="' + esc(f.text) + '"></div>' +
-    '<div class="fld"><label for="regArea">Area</label><input id="regArea" data-reg="area" value="' + esc(f.area) + '" placeholder="Cabin 3"></div>' +
+    '<div class="fld"><label for="regArea">Area · pick or type</label><input id="regArea" data-reg="area" list="regAreaList" value="' + esc(f.area) + '" placeholder="Cabin 3">' + areaListHtml('regAreaList', f.project) + '</div>' +
     '<div class="fld"><label for="regCause">Why</label><select id="regCause" data-reg="cause">' + causes.map((c) => '<option' + (c === f.cause ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></div>' +
     '<div class="fld"><label for="regCost">Cost to us (optional)</label><input id="regCost" data-reg="cost" value="' + esc(f.cost) + '" inputmode="numeric" placeholder="₹3,000"></div>' +
     '<button type="button" class="btn-accent" data-act="reg-save">Save</button><button type="button" class="btn-outline" data-act="reg-cancel">Cancel</button>' +
