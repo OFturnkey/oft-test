@@ -331,9 +331,16 @@ function call(fn, args, onOk, onFail) {
     if (err.signin) { signedOut(err.message); return; }
     if (err.dup) { renderAll(); return; } // a repeat of a save that already went through
     const msg = cleanErr(err.message);
+    if (changedSnack(msg)) { if (onFail) onFail(''); renderAll(); return; }
     if (onFail) onFail(msg); else snack(msg, { error: true });
     renderAll();
   });
+}
+// Someone changed it since this screen opened it (the server refused the save): say so, with Reload.
+function changedSnack(msg) {
+  if (!/changed since you opened it/i.test(String(msg || ''))) return false;
+  snack(cleanErr(msg), { error: true, action: { act: 'changed-reload', label: 'Reload' } });
+  return true;
 }
 // Brings everything on screen up to date: ledger, queries, and the open project's photos.
 function refresh(quiet) {
@@ -433,6 +440,8 @@ function signInWith(credential) {
     store(SESSION_KEY, res.session);
     store(ME_KEY, JSON.stringify(res.me));
     S.me = res.me;
+    // The first screen's data usually comes with the sign-in (one call to the server, not two).
+    if (res.boot) { bootDone(res.boot); return; }
     // Site engineers see their own screen (with its bottom bar) at once; it fills in when the data arrives.
     if (res.me.role === 'site_engineer') { showEngineer(res.me, null); boot(true); } else boot(false);
   }, (err) => showSignIn(cleanErr(err.message), { error: true, chooseAccount: true }));
@@ -448,6 +457,14 @@ function showNoAccess(email) {
 function engClick(act, el) {
   if (photoClick(act, el) || queryClick(act, el)) return;
   if (act === 'eng-tab') {
+    // Leaving Photos with photos not sent: "Send now?" (Cancel leaves them on the phone; Today reminds them).
+    const unsent = S.drafts.filter((d) => d.project === S.engProject && !d.purpose);
+    if (S.engTab === 'photos' && el.dataset.tab !== 'photos' && unsent.length &&
+      window.confirm('You have ' + plural(unsent.length, 'photo', 'photos') + ' not sent. Send now?')) {
+      if (unsent.some((d) => !String(d.area || '').trim())) { engSnack('Pick or type an area for each photo, then Send.', true); return; }
+      sendDrafts(S.engProject);
+    }
+    if (el.dataset.proj && el.dataset.proj !== S.engProject) { S.engProject = el.dataset.proj; S.photosFor = ''; }
     S.engTab = el.dataset.tab; S.engQuery = ''; S.engRegister = false; S.engBack = ''; window.scrollTo(0, 0);
     if ((S.engTab === 'queries' || S.engTab === 'today') && S.queries) loadQueries();
     if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
@@ -601,7 +618,13 @@ function engTodayHtml() {
       taskSourceHtml(x.source, x.id) + donePhotoHtml(x) + '</div></div>';
   };
   const a = S.engAdd || (S.engAdd = { note: '', due: '', err: '' });
+  // Site photos picked but not sent (per project): "3 photos not sent yet · Send".
+  const unsent = {};
+  S.drafts.filter((d) => !d.purpose).forEach((d) => { unsent[d.project] = (unsent[d.project] || 0) + 1; });
+  const unsentHtml = Object.keys(unsent).map((p) => '<button type="button" class="eng-need eng-need-main eng-unsent" data-act="eng-tab" data-tab="photos" data-proj="' + esc(p) + '">' +
+    '<b>' + esc(plural(unsent[p], 'photo', 'photos') + ' not sent yet · Send') + '</b><span class="muted small">' + esc(engProjName(p)) + '</span></button>').join('');
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
+    (unsentHtml ? '<section class="card eng-card eng-needs">' + unsentHtml + '</section>' : '') +
     engNeedsHtml() +
     '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">' + CAMERA_ICON + '<span>Ask a question</span></button>' +
     '<section class="card eng-card"><h2 class="eng-h2">My tasks <span class="muted">· ' + open.length + '</span></h2>' +
@@ -668,9 +691,9 @@ function engWaitingHtml() {
   const state = (q) => {
     const l = q.last || { what: 'asked', by: me, at: q.askedAt };
     const what = l.by !== me ? (l.what === 'suggest' ? 'suggestion from ' : 'reply from ') + nameOfEmail(l.by) : l.what === 'photo' ? 'photo sent' : l.what === 'reply' ? 'you replied' : '';
-    return [q.area, q.workOnHold ? 'work on hold' : 'work continuing', what, 'waiting ' + ageText(l.at)].filter(Boolean).join(' · ');
+    return [q.area, q.workOnHold ? 'work on hold' : 'work continuing', what, waitSince(q) ? 'waiting ' + ageText(waitSince(q)) : ''].filter(Boolean).join(' · ');
   };
-  const thumb = (q) => { const ph = q.lastPhotoId || (q.photoIds || [])[0]; wantThumb(ph); return ph ? '<span class="q-thumb">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : ''; };
+  const thumb = (q) => { const ph = cardPhoto(q); wantThumb(ph); return ph ? '<span class="q-thumb">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : ''; };
   return '<section class="card eng-card"><h2 class="eng-h2">Waiting for an answer <span class="muted">· ' + (list.length + sendingAsks.length) + '</span></h2>' +
     sendingAsks.map((x) => '<div class="eng-wait"><span class="eng-wait-main"><b>' + esc(x.text) + '</b><span class="muted small">' + esc([x.area, engProjName(x.project)].filter(Boolean).join(' · ')) + ' · <span class="sending">Sending…</span></span></span></div>').join('') +
     list.map((q) => '<button type="button" class="eng-wait' + (q.workOnHold || waitDays(q) ? ' hold' : '') + '" data-act="eq-open" data-id="' + esc(q.id) + '">' + thumb(q) + '<span class="eng-wait-main"><b>' + esc(q.text) + '</b>' +
@@ -767,6 +790,18 @@ function signOutHere() {
     .finally(() => { forgetDevice(); showSignIn('Signed out of this device.', { chooseAccount: true }); });
 }
 
+// The server's first answer (from boot, or with the sign-in): who this is and their data.
+function bootDone(res) {
+  S.me = res.me;
+  store(ME_KEY, JSON.stringify(res.me));
+  if (res.noAccess) { forgetDevice(); showNoAccess(res.me.email); return; }
+  if (res.engineer) { store(CACHE_KEY, null); store(SITE_KEY, JSON.stringify({ email: res.me.email, site: res.site })); showEngineer(res.me, res.site); startOutbox(); return; }
+  S.sheetUrl = res.sheetUrl || '';
+  setData(res.data);
+  saveCache();
+  firstRender(true);
+  startOutbox();
+}
 // fromCache: the ledger is already on screen from this device's copy; this just brings it up to date.
 function boot(fromCache) {
   if (!fromCache) showGate('O F Turnkey', 'Opening…');
@@ -774,15 +809,7 @@ function boot(fromCache) {
   renderStatus();
   api('boot', []).then((res) => {
     S.pending--;
-    S.me = res.me;
-    store(ME_KEY, JSON.stringify(res.me));
-    if (res.noAccess) { forgetDevice(); showNoAccess(res.me.email); return; }
-    if (res.engineer) { store(CACHE_KEY, null); store(SITE_KEY, JSON.stringify({ email: res.me.email, site: res.site })); showEngineer(res.me, res.site); startOutbox(); return; }
-    S.sheetUrl = res.sheetUrl || '';
-    setData(res.data);
-    saveCache();
-    firstRender(true);
-    startOutbox();
+    bootDone(res);
   }, (err) => {
     S.pending--;
     if (err.signin) { signedOut(err.message); return; }
@@ -1147,7 +1174,7 @@ function saveCode() {
   const fail = (msg) => { S.saving = false; S.saveErr = msg; };
   if (ed) {
     const date = S.editDate || ed.date;
-    call('editEntry', [ed.id, raw, date], (res) => {
+    call('editEntry', [ed.id, raw, date, S.editBase || ''], (res) => {
       S.saving = false; S.editId = null; S.editDate = ''; setCode('');
       const e = findEntry(ed.id);
       if (e) { S.sel = sitsOn(e); const d = LC.fromIso(S.sel); S.y = d.getFullYear(); S.m = d.getMonth(); }
@@ -1170,6 +1197,7 @@ function startEdit(id) {
   const e = findEntry(id);
   if (!e || e.status === 'void' || !isOwner()) return;
   S.editId = id;
+  S.editBase = e.updated_at || ''; // the version opened: a save is refused if it changed since
   S.editDate = e.date;
   S.saveErr = '';
   setCode(e.raw_code);
@@ -1249,10 +1277,12 @@ function renderCalendar() {
     if (di === t) cls.push('today');
     if (d.getMonth() !== S.m) cls.push('out');
     let h = '<span class="cal-num">' + d.getDate() + '</span>';
-    h += mo.slice(0, 2).map((e) => '<span class="cal-chip t-' + e.type + '">' + esc(e.type + ' ' + LC.short(e.amount) + ' ' + e.who) + '</span>').join('');
+    // Cut-off lines show in full on hover (laptop); overdue tasks are red, as everywhere else.
+    h += mo.slice(0, 2).map((e) => '<span class="cal-chip t-' + e.type + '" title="' + esc(LC.describe(S.dir, e) + ' · ' + projName(e.project)) + '">' + esc(e.type + ' ' + LC.short(e.amount) + ' ' + e.who) + '</span>').join('');
     if (mo.length > 2) h += '<span class="cal-more">+' + (mo.length - 2) + ' more</span>';
     if (tk.length) {
-      h += '<span class="cal-tasks">' + tk.slice(0, 2).map((e) => '<span class="cal-task t-' + e.type + (e.done ? ' done' : '') + '"><span class="cal-box"></span><span class="cal-tt">' + e.type +
+      h += '<span class="cal-tasks">' + tk.slice(0, 2).map((e) => '<span class="cal-task t-' + e.type + (e.done ? ' done' : e.due < t ? ' late' : '') + '" title="' +
+        esc(LC.taskTitle(S.dir, e) + ' · ' + projName(e.project) + (e.done ? ' · done' : ' · ' + LC.dueText(e.due, t).text)) + '"><span class="cal-box"></span><span class="cal-tt">' + e.type +
         '</span><span class="cal-tl">' + esc(e.type === 'F' ? LC.whoName(S.dir, e.who, e.project) : LC.cap(e.note)) + '</span></span>').join('') +
         (tk.length > 2 ? '<span class="cal-more">+' + (tk.length - 2) + ' more</span>' : '') + '</span>';
     }
@@ -1332,17 +1362,19 @@ function renderReminders() {
   const t = todayIso(), in7 = addDays(t, 7);
   const open = live().filter((e) => isTask(e) && !e.done && inFilter(e)).sort(byDue);
   // Overdue and Today in full; the next 7 days as one line to the Tasks tab, so this column is no taller than the calendar.
+  // The 3 most overdue and today's, then "+ N more · All tasks →": the column ends cleanly, no scrolling inside it.
+  const late = open.filter((e) => e.due < t), today = open.filter((e) => e.due === t);
   const groups = [
-    ['Overdue', '#8C1D18', open.filter((e) => e.due < t)],
-    ['Today', '#5E4500', open.filter((e) => e.due === t)]
+    ['Overdue', '#8C1D18', late.slice(0, 3), late.length],
+    ['Today', '#5E4500', today, today.length]
   ];
-  const next = open.filter((e) => e.due > t && e.due <= in7).length;
+  const more = (late.length - Math.min(3, late.length)) + open.filter((e) => e.due > t && e.due <= in7).length;
   $('reminders').innerHTML =
     '<div class="sec-head" style="align-items:center"><h2 id="al-h">Reminders</h2>' +
     '<button type="button" class="btn-outline" style="margin-left:auto" data-act="tab" data-tab="tasks">All tasks</button></div>' +
-    groups.map((g) => '<div class="rem-group"><div class="rem-title" style="color:' + g[1] + '">' + g[0] + '<span class="mono">' + g[2].length + '</span></div>' +
+    groups.map((g) => '<div class="rem-group"><div class="rem-title" style="color:' + g[1] + '">' + g[0] + '<span class="mono">' + g[3] + '</span></div>' +
       (g[2].length ? g[2].map(remItem).join('') : '<span class="empty">None</span>') + '</div>').join('') +
-    '<button type="button" class="link-btn rem-more" data-act="tab" data-tab="tasks">' + (next ? '+ ' + next + ' more in the next 7 days · ' : 'Nothing else in the next 7 days · ') + 'All tasks →</button>';
+    '<button type="button" class="link-btn rem-more" data-act="tab" data-tab="tasks">' + (more ? '+ ' + more + ' more · ' : '') + 'All tasks →</button>';
 }
 
 function projectRow(list) {
@@ -1675,8 +1707,16 @@ function startDirEdit(kind, code) {
   S.dirEdit = {
     kind: kind, code: code, newCode: code, name: recName(kind, r) || '',
     detail: kind === 'project' ? (r.client || '') : '', trades: LC.tradesOf(tradeOf(code)), tradeTyped: '',
-    location: kind === 'project' ? ((projInfo(code) || {}).location || '') : '', err: ''
+    location: kind === 'project' ? ((projInfo(code) || {}).location || '') : '', err: '', base: dirBase(kind, code)
   };
+}
+// What the edit form opened, in the sheet's own columns: a save is refused if someone changed them since.
+function dirBase(kind, code) {
+  const d = S.data || {};
+  if (kind === 'project') { const p = (d.projects || []).find((x) => x.code === code); return p ? { site_name: p.name, client_name: p.client, location: p.location } : null; }
+  if (kind === 'mode') { const m = (d.modes || []).find((x) => x.code === code); return m ? { label: m.label } : null; }
+  const p = (d.people || []).find((x) => x.code === code);
+  return p ? { name: p.name, trade: p.trade } : null;
 }
 
 function saveDirEdit() {
@@ -1692,7 +1732,7 @@ function saveDirEdit() {
   }
   const old = ed.code, kind = ed.kind;
   const hadFilter = kind === 'project' && S.project === old;
-  call('editCode', [kind, old, nu, name, PANELS[kind].trade ? null : detail, PANELS[kind].trade ? ed.trades.join(' · ') : null, kind === 'project' ? String(ed.location || '').trim() : null], (res) => {
+  call('editCode', [kind, old, nu, name, PANELS[kind].trade ? null : detail, PANELS[kind].trade ? ed.trades.join(' · ') : null, kind === 'project' ? String(ed.location || '').trim() : null, ed.base], (res) => {
     S.dirEdit = null;
     if (nu !== old) {
       if (hadFilter) S.project = nu;
@@ -2305,7 +2345,8 @@ function teamPanelHtml() {
     return '<div class="drow' + (u.archived ? ' arch' : '') + '"><div class="drow-view">' + (u.code ? '<span class="code-tag' + (u.archived ? ' arch' : '') + '">' + esc(u.code) + '</span>' : '<span class="code-tag arch">—</span>') +
       '<div class="drow-text"><b>' + esc(u.name || u.email) + '</b><span>' + esc(ROLE_LABEL[u.role] || u.role) +
       (TEAM_ROLES.indexOf(u.role) >= 0 ? ' · ' + esc((u.projects || []).map(projName).join(', ') || 'no projects yet') : '') + '</span>' +
-      u.emails.map((e) => '<span class="drow-email">' + esc(e) + '</span>').join('') + '</div>' +
+      // A long address breaks before the @ ("venkatesh.ashrit" / "@gmail.com"), never in the middle.
+      u.emails.map((e) => '<span class="drow-email">' + esc(e.split('@')[0]) + '<wbr>@' + esc(e.split('@').slice(1).join('@')) + '</span>').join('') + '</div>' +
       (!owner ? '' : u.archived ? (canEdit(u) ? '<button type="button" class="btn-sm" data-act="me-restore" data-email="' + esc(u.email) + '">Restore</button>' : '')
         : (!mine(u) ? '<button type="button" class="btn-sm" data-act="copy-invite" data-email="' + esc(u.email) + '">Copy invite</button>' : '') +
           (canEdit(u) ? '<button type="button" class="btn-sm" data-act="me-edit" data-email="' + esc(u.email) + '">Edit</button>' : '') +
@@ -2350,8 +2391,10 @@ function saveMemberEdit() {
   const emails = g.emails.slice();
   const next = () => {
     const email = emails.shift();
-    if (!email) { S.memberEdit = null; snack(m.name + ' saved.'); renderAll(); return; }
-    call('saveMember', [{ email: email, name: m.name, code: m.code.toUpperCase(), role: m.role, projects: m.projects, handTo: email === m.email ? handTo : '' }],
+    // Then everything reloads at once (tasks handed over, a new role), so no screen shows the old codes.
+    if (!email) { S.memberEdit = null; snack(m.name + ' saved.'); renderAll(); refresh(true); return; }
+    call('saveMember', [{ email: email, name: m.name, code: m.code.toUpperCase(), role: m.role, projects: m.projects, handTo: email === m.email ? handTo : '',
+      base: (m.bases || {})[email] || null }],
       (res) => { if (res.handedOver) snack(plural(res.handedOver, 'open task', 'open tasks') + ' handed over.'); next(); },
       (msg) => { if (S.memberEdit) S.memberEdit.err = msg; });
   };
@@ -2362,14 +2405,19 @@ function saveMemberEdit() {
 function inviteText(g) {
   const link = location.origin + location.pathname.replace(/index\.html$/, '');
   const first = String(g.name || '').split(/\s+/)[0] || 'there';
-  return 'Hi ' + first + ', this is O F Turnkey, our site app' + (CONFIG.env === 'test' ? ' (TEST version)' : '') + '.\n\n' +
+  const use = g.role === 'associate' ? 'You’ll use it to see site photos and questions on your projects, answer them and give tasks to the site engineers.'
+    : g.role === 'site_engineer' ? 'You’ll use it to send site photos, ask questions and see your tasks.'
+    : 'You’ll use it for the site ledger, tasks, photos and questions.';
+  // Signed by whoever copies it ("- Shruthi").
+  const from = String(userName(S.data && S.data.user) || '').split(/\s+/)[0];
+  return 'Hi ' + first + ', this is O F Turnkey, our site app' + (CONFIG.env === 'test' ? ' (TEST version)' : '') + '.\n' + use + '\n\n' +
     '1. Open this link in Chrome on your phone: ' + link + '\n' +
+    '   If the page looks like a computer screen: Chrome menu ⋮ → untick "Desktop site".\n' +
     '2. Sign in with Google using exactly this account: ' + g.email + '\n' +
     '3. Install it: Chrome menu ⋮ → Add to Home screen (or Install app). Then open it from the new icon.\n' +
-    '4. If the page looks like a computer screen: Chrome menu ⋮ → untick "Desktop site".\n' +
-    '5. When it asks, tap Allow for notifications.\n' +
-    '6. Android: Settings → Apps → Chrome → Battery → Unrestricted, so alerts arrive on time.\n\n' +
-    'Any problem, message me.';
+    '4. When it asks, tap Allow for notifications. If Chrome ever says "Possible spam" on an O F Turnkey alert, tap it and choose Show notification (or Always allow): it is safe.\n' +
+    '5. Android: Settings → Apps → Chrome → Battery → Unrestricted, so alerts arrive on time.\n\n' +
+    'Any problem, message me.' + (from ? '\n- ' + from : '');
 }
 function copyInvite(email) {
   const g = teamGroups().find((x) => x.emails.indexOf(email) >= 0);
@@ -2523,9 +2571,12 @@ function addDraftFiles(files, project) {
   const list = Array.from(files || []);
   if (!list.length) return;
   engSnack('Getting ' + plural(list.length, 'photo', 'photos') + ' ready…');
+  // New photos start with the area of the photo before (usually the same room); each can still be changed.
+  const prev = S.drafts.filter((d) => d.project === project && !d.purpose).sort((a, b) => a.createdAt - b.createdAt).pop();
+  const area = (prev && prev.area) || '';
   let chain = Promise.resolve();
   list.forEach((f) => {
-    chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, area: '', full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
+    chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, area: area, full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
       (err) => engSnack(cleanErr(err.message), true));
   });
   chain.then(loadDrafts).then(renderEng);
@@ -2614,7 +2665,7 @@ function openTaskSource(src, taskId) {
   S.tab = 'projects'; S.projTab = s.project;
   if (s.kind === 'query') { S.projSec = 'queries'; S.qView = 'list'; S.qSel = s.id; S.qOpen = true; S.qc = null; }
   else {
-    S.projSec = 'site';
+    S.projSec = 'site'; S.photosSeenWant = s.project;
     if (S.photosFor !== s.project) { S.photosFor = s.project; S.photos = null; S.photoSel = ''; loadPhotos(s.project); }
     openPhoto(s.id);
   }
@@ -2663,9 +2714,12 @@ function photoFeedHtml(photos, opts) {
       '<div class="ph-grid">' + g.items.map((p) => '<div class="ph-cell"><button type="button" class="ph-tile' + (S.photoSel === p.id ? ' on' : '') + '" data-act="ph-open" data-id="' + esc(p.id) + '">' +
         '<span class="ph-frame">' + thumbImg(p) + (counts[p.id] ? '<span class="ph-badge">' + plural(counts[p.id], 'comment', 'comments') + '</span>' : '') + '</span>' +
         '<span class="ph-area">' + esc(p.area || '—') + '</span></button>' +
-        (opts.ask ? '<button type="button" class="link-btn ph-ask" data-act="ph-ask" data-id="' + esc(p.id) + '">Ask about this photo</button>' : '') + '</div>').join('') + '</div></section>';
+        (opts.ask ? '<button type="button" class="link-btn ph-ask" data-act="ph-ask" data-id="' + esc(p.id) + '">Ask about this photo</button>' : '') + '</div>').join('') + '</div>' +
+      // Phones and narrow windows: the opened photo right under its day (one at a time).
+      (photosInline() && g.items.some((p) => p.id === S.photoSel) ? '<div class="ph-side ph-inline" id="phPanel">' + photoPanelHtml() + '</div>' : '') + '</section>';
   }).join('');
 }
+function photosInline() { return !!S.engineer || narrowQ.matches; }
 // The opened photo: big picture, who/when/line, comments, and (owners) comment or comment + task.
 function photoPanelHtml() {
   const p = S.photos && S.photos.photos.find((x) => x.id === S.photoSel);
@@ -2757,8 +2811,7 @@ function engPhotosHtml() {
       '<span class="muted small">Shrunk before sending. No signal? They wait on the phone and send later.</span></div>'
       : '') + '</section>' +
     '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' + pendingPhotosHtml(proj) +
-    (S.photos ? photoFeedHtml(S.photos.photos, { ask: true }) : '<p class="empty">Loading…</p>') + '</div></section>' +
-    (S.photoSel ? '<section class="card eng-card eng-pad" id="phPanel">' + photoPanelHtml() + '</section>' : '');
+    (S.photos ? photoFeedHtml(S.photos.photos, { ask: true }) : '<p class="empty">Loading…</p>') + '</div></section>';
 }
 // Photos on this phone still sending: shown at the top of the feed at once.
 function pendingPhotosHtml(proj) {
@@ -2777,26 +2830,34 @@ function askAboutPhoto(id) {
   renderEng();
 }
 
-// Owners → project → Site: the dated photo feed (each day its own card), with the opened photo beside it. On a phone
-// a tapped photo opens as its own view, with "← All photos" to go back. Opening the feed clears "N new site photos".
+// Owners → project → Site: the dated photo feed (each day its own card), with the opened photo beside it (narrow:
+// under its day). Opening the feed (a tap on Site, All photos, a photo or "N new site photos") clears "N new site
+// photos"; photos arriving while the screen just stays open don't count as seen.
 function projectSiteHtml(p) {
   if (S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; loadPhotos(p.code); }
-  if (S.photos && S.photos.project === p.code) markPhotosSeen(p.code);
-  if (phone.matches && S.photoSel) {
-    return '<button type="button" class="link-btn" data-act="ph-back">← All photos</button><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section>';
-  }
+  if (S.photosSeenWant === p.code && S.photos && S.photos.project === p.code) { S.photosSeenWant = ''; markPhotosSeen(p.code); }
   return '<div class="pgrid"><div class="pmain"><div class="sec-head"><h3>Photos from site</h3>' +
     '<button type="button" class="btn-outline" data-act="ph-reload">Refresh</button></div>' +
     (S.photos ? photoFeedHtml(S.photos.photos, { cards: true }) : '<p class="empty">Loading…</p>') + '</div>' +
-    (phone.matches ? '' : '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div>') + '</div>';
+    (photosInline() ? '' : '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div>') + '</div>';
 }
 // "N new site photos" clears for this person once they have opened the project's Site photos.
 function markPhotosSeen(code) {
-  const np = S.data && S.data.newPhotos && S.data.newPhotos[code];
   const newest = S.photos && S.photos.photos[0];
-  if (!np || !np.n || !newest || S.seenLocal['photos:' + code]) return;
+  if (!newest || !newPhotosOf(code) || (S.seenLocal['photos:' + code] || '') >= newest.at) return;
   S.seenLocal['photos:' + code] = newest.at;
   api('markSeen', ['photos:' + code, newest.at]).catch(() => { /* cleared on this device; the server learns next time */ });
+}
+// "N new site photos" for a project: as the server said, or, once opened on this device and the feed is loaded,
+// counted here (photos from others since then).
+function newPhotosOf(code) {
+  const np = (S.data && S.data.newPhotos && S.data.newPhotos[code]) || null, seen = S.seenLocal['photos:' + code];
+  if (!seen) return np && np.n ? np : null;
+  if (!S.photos || S.photos.project !== code) return null;
+  const fresh = S.photos.photos.filter((x) => x.at > seen && x.by !== S.me.email);
+  if (!fresh.length) return null;
+  const uniq = (a) => Array.from(new Set(a.filter(Boolean)));
+  return { n: fresh.length, lastId: fresh[0].id, last: fresh[0].at, by: uniq(fresh.map((x) => nameOfEmail(x.by))), areas: uniq(fresh.map((x) => x.area)) };
 }
 
 // Query buttons (owners and engineers). Returns true when it handled the click.
@@ -2805,9 +2866,15 @@ function queryClick(act, el) {
   if (act === 'lightbox') showLightbox(id);
   else if (act === 'lightbox-close') hideLightbox();
   else if (act === 'eq-open') {
-    // Opened from Today (Needs you, Waiting for an answer): the back button returns there, to the same place.
-    if (S.engTab !== 'queries') { S.engBack = S.engTab; S.engBackY = window.scrollY; } else if (!S.engQuery) S.engBack = '';
-    S.engTab = 'queries'; S.engQuery = id; S.engRegister = false; markSeenQ(id); window.scrollTo(0, 0); renderEng();
+    // Opened from Today (Needs you, Waiting for an answer): on its own, and the back button returns there, to the
+    // same place. In the Queries list: under its own card (tap it again to close), scrolled to the top.
+    if (S.engTab !== 'queries') {
+      S.engBack = S.engTab; S.engBackY = window.scrollY;
+      S.engTab = 'queries'; S.engQuery = id; S.engRegister = false; markSeenQ(id); window.scrollTo(0, 0); renderEng();
+      return true;
+    }
+    if (!S.engBack && S.engQuery === id) { S.engQuery = ''; renderEng(); return true; }
+    S.engBack = ''; S.engQuery = id; S.engRegister = false; markSeenQ(id); renderEng(); scrollCardTop(id);
   }
   else if (act === 'need-send') { if (!S.engReply || S.engReply.qid !== id) S.engReply = { qid: id, text: '' }; engSendReply(id); }
   else if (act === 'eq-back') {
@@ -2820,7 +2887,12 @@ function queryClick(act, el) {
   else if (act === 'ask-send') engSendAsk();
   else if (act === 'ask-unattach') { S.ask.photoIds = (S.ask.photoIds || []).filter((x) => x !== id); renderEng(); }
   else if (act === 'er-send') engSendReply(id);
-  else if (act === 'q-open') { S.qSel = id; S.qOpen = true; S.qc = null; renderAll(); if (narrowQ.matches) window.scrollTo(0, 0); }
+  else if (act === 'q-open') {
+    // Narrow: tapping the open card closes it; another card opens under itself, scrolled to the top.
+    if (narrowQ.matches && S.qOpen && S.qSel === id) { S.qOpen = false; S.qc = null; renderAll(); return true; }
+    S.qSel = id; S.qOpen = true; S.qc = null; renderAll();
+    if (narrowQ.matches) scrollCardTop(id);
+  }
   else if (act === 'q-view') { S.qView = v; renderAll(); }
   else if (act === 'q-print') printRegister(el.dataset.code);
   else if (act === 'qc-photo') { S.qc.photoAsk = true; S.qc.err = ''; renderAll(); }
@@ -2832,7 +2904,7 @@ function queryClick(act, el) {
   else if (act === 'qc-cause') { S.qc.cause = v; S.qc.err = ''; renderAll(); }
   else if (act === 'pcode-save') projCodeSave(el.dataset.code);
   else if (act === 'tcode-save') todayCodeSave();
-  else if (act === 'np-open') { S.tab = 'projects'; S.projTab = el.dataset.code || id; S.projSec = 'site'; renderAll(); window.scrollTo(0, 0); }
+  else if (act === 'np-open') { S.tab = 'projects'; S.projTab = el.dataset.code || id; S.projSec = 'site'; S.photosSeenWant = S.projTab; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'qc-approve') approveSuggestion(id);
   else if (act === 'q-back') { S.qOpen = false; renderAll(); window.scrollTo(0, 0); }
   else if (act === 'reg-link') { S.projSec = 'queries'; S.qView = 'register'; renderAll(); window.scrollTo(0, 0); }
@@ -2840,9 +2912,9 @@ function queryClick(act, el) {
   else if (act === 'open-file') openFile(id);
   else if (act === 'att-del') { const l = S.att[el.dataset.p] || []; S.att[el.dataset.p] = l.filter((x) => x.id !== id); redraw(); }
   else if (act === 'today-mine') { S.todayMine = !!v; renderAll(); }
-  else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qOpen = true; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
-  else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qOpen = true; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); }
-  else if (act === 'ph-open-site') { S.projSec = 'site'; openPhoto(id); renderAll(); }
+  else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qOpen = true; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); if (narrowQ.matches) scrollCardTop(id); }
+  else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qOpen = true; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); if (narrowQ.matches) scrollCardTop(id); }
+  else if (act === 'ph-open-site') { S.projSec = 'site'; S.photosSeenWant = S.projTab; openPhoto(id); renderAll(); }
   else if (act === 'task-src') { if (id) markSeenTask(id); openTaskSource(el.dataset.src, id); }
   else if (act === 'co-start') {
     const q = S.queries.queries.find((x) => x.id === id), t = q ? queryTasks(q).find((x) => !x.after) : null;
@@ -2854,7 +2926,8 @@ function queryClick(act, el) {
   else if (act === 'qc-tag') { S.qc.answerTag = S.qc.answerTag === v ? '' : v; renderAll(); }
   else if (act === 'reg-edit') {
     const r = S.queries.register.find((x) => x.project === el.dataset.code && x.no === id && !x.voided);
-    if (r) S.regEdit = { project: r.project, no: r.no, text: r.text, area: r.area || '', cause: r.cause, cost: r.cost == null ? '' : String(r.cost), err: '' };
+    if (r) S.regEdit = { project: r.project, no: r.no, text: r.text, area: r.area || '', cause: r.cause, cost: r.cost == null ? '' : String(r.cost), err: '',
+      base: { text: r.text, area: r.area || '', cause: r.cause } };
     renderAll();
   }
   else if (act === 'reg-save') saveRegisterEdit();
@@ -2881,15 +2954,18 @@ function hideLightbox() { const b = $('lightbox'); if (b) b.remove(); }
 function photoClick(act, el) {
   const redraw = () => { if (S.engineer) renderEng(); else renderAll(); };
   if (act === 'ph-open') {
+    // Opened under its day: tapping the open photo again closes it.
+    if (photosInline() && S.photoSel === el.dataset.id) { S.photoSel = ''; redraw(); return true; }
+    if (!S.engineer && S.projSec === 'site') S.photosSeenWant = S.projTab;
     openPhoto(el.dataset.id);
     redraw();
     const panel = $('phPanel');
-    if (panel && window.matchMedia('(max-width: 699px)').matches) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (panel && photosInline()) panel.scrollIntoView({ block: 'start' });
   } else if (act === 'ph-comment') sendPhotoComment(false);
   else if (act === 'ph-task') sendPhotoComment(true);
   else if (act === 'ph-delete') {
     if (S.confirmPhotoDel === el.dataset.id) deletePhotoNow(el.dataset.id); else { S.confirmPhotoDel = el.dataset.id; redraw(); }
-  } else if (act === 'ph-reload') { if (S.photosFor) { S.thumbs = {}; THUMB_ASKED.clear(); loadPhotos(S.photosFor); } }
+  } else if (act === 'ph-reload') { if (S.photosFor) { if (!S.engineer) S.photosSeenWant = S.photosFor; S.thumbs = {}; THUMB_ASKED.clear(); loadPhotos(S.photosFor); } }
   else if (act === 'ph-send') sendDrafts(S.engProject);
   else if (act === 'ph-ask') askAboutPhoto(el.dataset.id);
   else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
@@ -2936,15 +3012,29 @@ function answerTagHtml(act, cur) {
 function queryState(q) {
   if (q.status === 'closed') return { text: 'Closed · ' + (q.outcome === 'change' ? 'Change approved' + (q.changeNo ? ' ' + q.changeNo : '') : 'Answered' + (q.answerTag ? ' · ' + q.answerTag : '')) + (queryTasks(q).length ? ' + task' : ''), cls: 'ok' };
   if (q.status === 'waiting_photo') return { text: 'Waiting for photo', cls: 'wait' };
-  return { text: 'Waiting ' + ageText(q.askedAt), cls: q.workOnHold || waitDays(q) ? 'bad' : 'wait' };
+  const since = waitSince(q);
+  return { text: since ? 'Waiting ' + ageText(since) : 'Replied · waiting for ' + firstName(q.askedBy), cls: q.workOnHold || waitDays(q) ? 'bad' : 'wait' };
 }
-// A question nobody but its asker has answered for more than a day: "waiting 2 days" in red, even with work
-// continuing (Today, Needs you, the Queries list, the engineer's Waiting for an answer).
+// The waiting clock: from the asker's FIRST message after the last answer from someone else (an owner or associate),
+// or from when they asked if nobody has answered. '' when the last word was someone else's (it's the asker's move).
+// A suggestion still waiting for an owner's OK is not an answer yet.
+function waitSince(q) {
+  if (!q || q.status !== 'open') return '';
+  const msgs = ((S.queries && S.queries.messages) || []).filter((m) => m.queryId === q.id && !(m.kind === 'suggest' && !m.approvedBy))
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  let since = q.askedAt;
+  msgs.forEach((m) => {
+    if (m.by !== q.askedBy) since = '';
+    else if (!since) since = m.at;
+  });
+  return since;
+}
+// Unanswered for more than a day: "waiting 2 days" in red, even with work continuing (Today, Needs you, the Queries
+// list, the engineer's Waiting for an answer).
 function waitDays(q) {
-  if (!q || q.status !== 'open') return 0;
-  const l = q.last || { by: q.askedBy, at: q.askedAt };
-  if (l.by !== q.askedBy) return 0;
-  const h = (Date.now() - Date.parse(String(l.at).replace(' ', 'T') + ':00+05:30')) / 3600000;
+  const since = waitSince(q);
+  if (!since) return 0;
+  const h = (Date.now() - Date.parse(String(since).replace(' ', 'T') + ':00+05:30')) / 3600000;
   return h > 24 ? Math.floor(h / 24) : 0;
 }
 function waitRed(q) { const d = waitDays(q); return d ? '<span class="hold-txt">waiting ' + plural(d, 'day', 'days') + '</span>' : ''; }
@@ -2972,7 +3062,7 @@ function lastText(q) {
   const l = q.last;
   if (!l) return nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago';
   const me = l.by === (S.me && S.me.email), who = me ? 'you' : nameOfEmail(l.by);
-  const t = l.what === 'photo' ? 'New photo from ' + who : l.what === 'reply' ? 'Reply from ' + who
+  const t = l.what === 'photo' ? (me ? 'You sent a photo' : 'New photo from ' + who) : l.what === 'reply' ? (me ? 'You replied' : 'Reply from ' + who)
     : l.what === 'suggest' ? 'Suggested answer from ' + who + (q.status !== 'closed' && !S.engineer && isOwner() ? ' · needs your OK' : '')
     : l.what === 'photo_request' ? (me ? 'You' : who) + ' asked for a clearer photo'
     : l.what === 'closed' ? (q.outcome === 'change' ? 'Change approved by ' : 'Answered by ') + who : 'Asked by ' + who;
@@ -3020,12 +3110,14 @@ function setQueries(res) {
 }
 // How late a task is: "3 days overdue" (red), "Due today" (amber), "Due tomorrow" / "due Sat 24 Oct" (grey).
 function dueChip(e) {
-  if (e.done) return '<span class="due due-done">' + (e.done_photo ? 'Done, with photo' : 'Done') + '</span>';
+  if (e.done) return '<span class="due due-done">' + (e.review === 'ok' ? 'Checked ✓' : e.done_photo || e.donePhoto ? 'Done, with photo' : 'Done') + '</span>';
   const d = LC.dueText(e.due, todayIso());
   return '<span class="due due-' + d.level + '">' + esc(d.text) + '</span>';
 }
 // Photos as small pictures (tap: full size); PDFs as "📄 name.pdf" (tap: open).
 function fileInfo(id) { return (S.queries && S.queries.files && S.queries.files[id]) || (S.photos && S.photos.files && S.photos.files[id]) || null; }
+// A query card's picture: the latest real image in the thread (the server's pick; a PDF has none), else none.
+function cardPhoto(q) { return q.lastPhotoId || (q.photoIds || []).filter((i) => !fileInfo(i)).pop() || ''; }
 function photoStrip(ids) {
   if (!ids || !ids.length) return '';
   return '<div class="q-photos">' + ids.map((id) => {
@@ -3199,9 +3291,9 @@ function saveChangeOutcome() {
 // One query in a list (engineer's and owners'): the latest activity (highlighted until opened), its state, the
 // question, area and work status, and the latest photo.
 function queryCardHtml(q, act, on) {
-  const ph = q.lastPhotoId || (q.photoIds && q.photoIds[0]), fresh = isNewQ(q);
+  const ph = cardPhoto(q), fresh = isNewQ(q);
   const lead = [q.area, q.last && q.last.what !== 'asked' ? 'asked by ' + nameOfEmail(q.askedBy) : ''].filter(Boolean).join(' · ');
-  const sub = (lead ? esc(LC.cap(lead)) + ' · ' : '') + workHtml(q, !lead) + (waitDays(q) ? ' · ' + waitRed(q) : '');
+  const sub = [lead ? esc(LC.cap(lead)) : '', workHtml(q, !lead), waitRed(q)].filter(Boolean).join(' · ');
   return '<button type="button" class="q-card' + (on ? ' on' : '') + (fresh ? ' new' : '') + (ph ? ' has-ph' : '') + '" data-act="' + act + '" data-id="' + esc(q.id) + '">' +
     (ph ? '<span class="q-thumb">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : '') +
     '<span class="q-card-main"><span class="q-card-top"><span class="q-last small">' + (fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(lastText(q)) + '</span>' +
@@ -3391,10 +3483,11 @@ function engSendReply(qid) {
 function engQueriesHtml() {
   if (!S.queries && !S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); }
   const proj = S.engProject;
-  if (S.engQuery) {
-    const q = S.queries && S.queries.queries.find((x) => x.id === S.engQuery);
-    if (!q) { S.engQuery = ''; return engQueriesHtml(); }
-    markSeenQ(q.id);
+  const openQ = S.engQuery && S.queries && S.queries.queries.find((x) => x.id === S.engQuery);
+  if (S.engQuery && S.queries && !openQ) S.engQuery = '';
+  if (openQ) markSeenQ(openQ.id);
+  if (openQ && S.engBack) {
+    const q = openQ;
     const backTo = S.engBack ? (ENG_TABS.find((t) => t[0] === S.engBack) || [, 'Back'])[1] : 'All queries';
     return '<button type="button" class="link-btn" data-act="eq-back">← ' + esc(backTo) + '</button>' +
       '<section class="card eng-card eng-pad q-thread"><h2 class="eng-h2" style="padding-left:0">' + esc(engProjName(q.project)) + ' · ' + esc(q.text.slice(0, 60)) + '</h2>' + queryThreadHtml(q, false) + '</section>';
@@ -3423,7 +3516,8 @@ function engQueriesHtml() {
     '<section class="card eng-card"><h2 class="eng-h2">Queries · ' + esc(engProjName(proj)) + '</h2>' +
     waiting('askQuery').map((w) => w.args[0]).filter((x) => x.project === proj).map((x) => '<div class="q-card"><span class="q-card-main"><span class="q-card-top"><span class="muted small">You · just now</span>' +
       '<span class="pill sending">Sending…</span></span><b>' + esc(x.text) + '</b><span class="muted small">' + esc(workText(x)) + '</span></span></div>').join('') +
-    (list.length ? list.map((q) => queryCardHtml(q, 'eq-open')).join('') : (waiting('askQuery').some((w) => w.args[0].project === proj) ? '' : '<p class="empty eng-pad">No queries on this project yet.</p>')) +
+    (list.length ? list.map((q) => queryCardHtml(q, 'eq-open', q === openQ) +
+      (q === openQ ? '<div class="q-thread q-inline eng-pad">' + queryThreadHtml(q, false) + '</div>' : '')).join('') : (waiting('askQuery').some((w) => w.args[0].project === proj) ? '' : '<p class="empty eng-pad">No queries on this project yet.</p>')) +
     '<p class="eng-pad"><button type="button" class="link-btn" data-act="eq-register">Change register</button></p></section>';
 }
 // "Which team?": Directory labour by trade, so the query links to the real team. Typing a name is the fallback.
@@ -3525,22 +3619,22 @@ function saveRegisterEdit() {
   const f = S.regEdit;
   if (!f) return;
   if (!String(f.text || '').trim()) { f.err = 'Type what was approved.'; redraw(); return; }
-  api('editRegister', [f.project, f.no, { text: f.text, area: f.area, cause: f.cause, cost: f.cost }]).then((res) => {
+  api('editRegister', [f.project, f.no, { text: f.text, area: f.area, cause: f.cause, cost: f.cost }, f.base]).then((res) => {
     setQueries(res); S.regEdit = null;
     snack(f.no + ' saved. The change is logged.');
     redraw();
-  }, (err) => { if (err.signin) { signedOut(err.message); return; } f.err = cleanErr(err.message); redraw(); });
+  }, (err) => { if (err.signin) { signedOut(err.message); return; } if (changedSnack(err.message)) return; f.err = cleanErr(err.message); redraw(); });
 }
 // "Change C-02 too" after editing the task that came from it: the register line takes the task's new text.
 function syncRegister(o) {
   const go = () => {
     const r = ((S.queries && S.queries.register) || []).find((x) => x.project === o.project && x.no === o.no && !x.voided);
     if (!r) { snack('Couldn’t find ' + o.no + '. Change it in the change register.', { error: true }); return; }
-    api('editRegister', [o.project, o.no, { text: o.text, area: r.area, cause: r.cause, cost: r.cost == null ? '' : r.cost }]).then((res) => {
+    api('editRegister', [o.project, o.no, { text: o.text, area: r.area, cause: r.cause, cost: r.cost == null ? '' : r.cost }, { text: r.text, area: r.area || '', cause: r.cause }]).then((res) => {
       setQueries(res); S.regOffer = null;
       snack(o.no + ' now says “' + o.text + '”.');
       redraw();
-    }, (err) => { if (err.signin) { signedOut(err.message); return; } snack(cleanErr(err.message), { error: true }); });
+    }, (err) => { if (err.signin) { signedOut(err.message); return; } if (changedSnack(err.message)) return; snack(cleanErr(err.message), { error: true }); });
   };
   if (S.queries) go(); else loadQueries(go);
 }
@@ -3595,26 +3689,30 @@ function projectQueriesHtml(p) {
     (view === 'register' && isOwner() ? '<button type="button" class="btn-outline" data-act="q-print" data-code="' + esc(p.code) + '">Print change register</button>' : '') + '</div>';
   if (view === 'register') return toggle + '<section class="card">' + registerRowsHtml(S.queries.register.filter((r) => r.project === p.code), isOwner(), isOwner()) + '</section>' +
     (isOwner() ? querySummaryHtml(p.code) : '');
-  // Too narrow for the list and the opened query side by side (a phone, a narrow laptop window): one at a time, the
-  // opened query at the top with "← All queries", like the engineer's phone. Wide: side by side.
+  // Too narrow for the list and the opened query side by side (a phone, a narrow laptop window): the opened query
+  // opens right under its own card (one at a time; tap the card again to close it). Wide: side by side.
   const narrow = narrowQ.matches;
   if (!S.qSel || !list.some((q) => q.id === S.qSel)) S.qSel = list.length && !narrow ? list[0].id : '';
   const sel = list.find((q) => q.id === S.qSel);
-  const cards = list.map((q) => queryCardHtml(q, 'q-open', q.id === S.qSel)).join('') || '<p class="empty">No queries on this project yet.</p>';
   if (narrow) {
-    if (sel && S.qOpen) {
-      markSeenQ(sel.id);
-      return '<button type="button" class="link-btn" data-act="q-back">← All queries</button>' +
-        '<article class="card q-thread" id="qThread">' + queryThreadHtml(sel, isOwner() || isAssociate()) + '</article>';
-    }
-    return toggle + '<nav class="q-list" aria-label="Query list">' + cards + '</nav>';
+    const open = sel && S.qOpen ? sel : null;
+    if (open) markSeenQ(open.id);
+    return toggle + '<nav class="q-list" aria-label="Query list">' + (list.map((q) => queryCardHtml(q, 'q-open', q === open) +
+      (q === open ? '<article class="card q-thread q-inline" id="qThread">' + queryThreadHtml(q, isOwner() || isAssociate()) + '</article>' : '')).join('') ||
+      '<p class="empty">No queries on this project yet.</p>') + '</nav>';
   }
+  const cards = list.map((q) => queryCardHtml(q, 'q-open', q.id === S.qSel)).join('') || '<p class="empty">No queries on this project yet.</p>';
   if (sel) markSeenQ(sel.id); // on screen = opened
   return toggle + '<div class="pgrid"><nav class="pside q-list" aria-label="Query list">' + cards + '</nav>' +
     '<article class="pmain card q-thread" id="qThread">' + (sel ? queryThreadHtml(sel, isOwner() || isAssociate()) : '<p class="empty">Pick a query.</p>') + '</article></div>';
 }
 const narrowQ = window.matchMedia('(max-width: 899px)');
 if (narrowQ.addEventListener) narrowQ.addEventListener('change', () => { if (S.started) renderAll(); });
+// A query opened under its own card: that card moves to the top of the screen, the conversation under it.
+function scrollCardTop(id) {
+  const go = () => { const c = document.querySelector('.q-card.on[data-id="' + String(id).replace(/["\\]/g, '') + '"]'); if (c) c.scrollIntoView({ block: 'start' }); };
+  go(); setTimeout(go, 150);
+}
 // "Needs you" on a project's overview: open queries (work on hold first), tasks overdue or due today, new photos.
 function byLastActivity(a, b) {
   const x = (a.last && a.last.at) || a.askedAt, y = (b.last && b.last.at) || b.askedAt;
@@ -3633,8 +3731,11 @@ function needsFor(code) {
   // Open queries: work on hold first, with a red "On hold" tag and red "work on hold" until closed (opened or not);
   // then the rest, latest activity first ("New photo from Venky · 2 min ago"), highlighted until opened. Unanswered
   // for over a day: "waiting 2 days" in red.
+  // Only queries where it's our move: not when an owner or associate moved last (the engineer's move next; it shows in
+  // the Queries list), nor while waiting for a clearer photo.
   const qs = ((S.queries && S.queries.queries) || []).filter((q) => q.project === code);
-  const open = qs.filter((q) => q.status !== 'closed' && !myWaitingSuggestion(q)).sort(byLastActivity);
+  const ourMove = (q) => { const r = roleOfEmail(lastMover(q)); return r !== 'owner' && r !== 'associate'; };
+  const open = qs.filter((q) => q.status === 'open' && ourMove(q) && !myWaitingSuggestion(q)).sort(byLastActivity);
   open.filter((q) => q.workOnHold).concat(open.filter((q) => !q.workOnHold)).forEach((q) => {
     const sug = isOwner() ? pendingSuggestion(q) : null;
     out.push({
@@ -3661,8 +3762,8 @@ function needsFor(code) {
       subHtml: esc((e.review === 'redo' ? 'Redone' : 'Done, with photo') + (e.assignee ? ' · ' + LC.teamName(S.dir, e.assignee) : '')), buttonsHtml: reviewHtml(e) });
   });
   // New site photos from others since this person last opened the project's Site photos (clears per person).
-  const np = (S.data && S.data.newPhotos && S.data.newPhotos[code]) || null;
-  if (np && np.n && !S.seenLocal['photos:' + code]) out.push({ kind: 'Photos', cls: 'blue', title: plural(np.n, 'new site photo', 'new site photos'), photo: np.lastId, who: (np.by[0] || '').split(/\s+/)[0],
+  const np = newPhotosOf(code);
+  if (np) out.push({ kind: 'Photos', cls: 'blue', title: plural(np.n, 'new site photo', 'new site photos'), photo: np.lastId, who: (np.by[0] || '').split(/\s+/)[0],
     subHtml: esc(['from ' + np.by.join(', '), np.areas.join(', '), ageText(np.last) + ' ago'].filter(Boolean).join(' · ')), short: np.areas.slice(0, 3).join(', '),
     act: 'np-open', id: code, label: 'Open', canAct: true });
   // No site photos for 3 days (the 7:00 alert's rule: a started site in execution with a site engineer).
@@ -3681,6 +3782,15 @@ function needsFor(code) {
   return out;
 }
 function roleOfEmail(email) { const u = teamUsers().find((x) => x.email === email); return u ? u.role : ''; }
+// Who moved last on a query (a suggestion still waiting for an owner's OK is not a move yet).
+function lastMover(q) {
+  let by = q.askedBy, at = q.askedAt;
+  ((S.queries && S.queries.messages) || []).forEach((m) => {
+    if (m.queryId !== q.id || (m.kind === 'suggest' && !m.approvedBy) || m.at < at) return;
+    by = m.by; at = m.at;
+  });
+  return by;
+}
 // One Needs you line (project overview and Today): tag, what, latest activity or whose task, where it came from.
 function needLineHtml(n, btnAct, code) {
   if (n.photo) wantThumb(n.photo);
@@ -3807,7 +3917,7 @@ function onAct(el) {
       if (prevDel === 'sess:' + id) signOutDevice(id); else S.confirmDel = 'sess:' + id;
       break;
     case 'proj-tab': S.projTab = code; S.projSec = 'overview'; S.qOpen = false; S.photoSel = ''; break;
-    case 'proj-sec': S.projSec = el.dataset.sec; S.qOpen = false; if (el.dataset.sec === 'site') S.photoSel = ''; break;
+    case 'proj-sec': S.projSec = el.dataset.sec; S.qOpen = false; if (el.dataset.sec === 'site') { S.photoSel = ''; S.photosSeenWant = S.projTab; } break;
     case 'proj-edit-dir':
       S.tab = 'dir'; startProjInfo(code); loadDevices();
       renderAll();
@@ -3818,7 +3928,10 @@ function onAct(el) {
     case 'pi-cancel': S.projEdit = null; break;
     case 'me-edit': {
       const u = (S.data.users || []).find((x) => x.email === el.dataset.email);
-      if (u) S.memberEdit = { email: u.email, name: u.name, code: u.code || '', role: u.role, projects: (u.projects || []).slice(), err: '' };
+      // bases: each of the person's accounts as opened, so a save never overwrites someone else's newer change.
+      const g = teamGroups().find((x) => x.email === el.dataset.email) || { emails: [el.dataset.email] }, bases = {};
+      g.emails.forEach((em) => { const x = (S.data.users || []).find((y) => y.email === em); if (x) bases[em] = { name: x.name, role: x.role, code: x.code || '' }; });
+      if (u) S.memberEdit = { email: u.email, name: u.name, code: u.code || '', role: u.role, projects: (u.projects || []).slice(), err: '', bases: bases };
       break;
     }
     case 'me-save': saveMemberEdit(); return;
@@ -3827,8 +3940,11 @@ function onAct(el) {
       if (prevDel === 'member:' + el.dataset.email) {
         const g = teamGroups().find((x) => x.email === el.dataset.email) || { emails: [el.dataset.email] };
         const handTo = openTasksOf(g).length ? S.handTo[el.dataset.email] || '' : '';
-        call('archiveMember', [el.dataset.email, true, handTo], (res) => snack('Archived. Every device they used is signed out; what they did keeps their name.' +
-          (res.handedOver ? ' ' + plural(res.handedOver, 'open task', 'open tasks') + ' handed over.' : '')));
+        call('archiveMember', [el.dataset.email, true, handTo], (res) => {
+          snack('Archived. Every device they used is signed out; what they did keeps their name.' +
+            (res.handedOver ? ' ' + plural(res.handedOver, 'open task', 'open tasks') + ' handed over.' : ''));
+          refresh(true);
+        });
       } else S.confirmDel = 'member:' + el.dataset.email;
       break;
     case 'copy-invite': copyInvite(el.dataset.email); return;
@@ -3838,7 +3954,7 @@ function onAct(el) {
         snack(photoAlertsOn() ? 'Photo alerts are on for you.' : 'Photo alerts are off for you. Needs you still shows new photos.');
       });
       return;
-    case 'me-restore': call('archiveMember', [el.dataset.email, false], () => snack('Restored. They can sign in again.')); break;
+    case 'me-restore': call('archiveMember', [el.dataset.email, false], () => { snack('Restored. They can sign in again.'); refresh(true); }); break;
     case 'rv-ok': reviewTaskNow(id, 'ok'); return;
     case 'rv-redo': {
       const e = findEntry(id);
@@ -3847,6 +3963,12 @@ function onAct(el) {
     }
     case 'rv-send': reviewTaskNow(id, 'redo'); return;
     case 'rv-cancel': S.redo = null; break;
+    case 'changed-reload':
+      // The edit is dropped; the latest comes in, to change again from there.
+      S.snackMsg = null; S.editId = null; S.editBase = ''; S.editDate = ''; setCode('');
+      S.dirEdit = null; S.regEdit = null; S.memberEdit = null;
+      refresh();
+      break;
     case 'reg-sync': {
       const o = S.regOffer;
       S.snackMsg = null;
