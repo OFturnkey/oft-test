@@ -763,11 +763,10 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
   .phone-only { display: inline-flex; align-self: flex-start; }
   .btn-outline, .btn-accent, .btn-main, .btn-sm { min-height: 44px; font-size: 14px; }
 }
-/* Ledger: the right column is never taller than the calendar; both end level, Active projects right below. */
+/* Ledger: both columns end level (no scrolling inside the right column), Active projects right below. */
 @media (min-width: 1100px) {
   .ledger-top { align-items: stretch; flex-wrap: nowrap; }
-  .side { position: relative; }
-  .side-in { position: absolute; inset: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 24px; }
+  .side-in { flex: 1 1 auto; display: flex; flex-direction: column; gap: 24px; }
 }
 @media (max-width: 1099px) { .side-in { display: flex; flex-direction: column; gap: 24px; } }
 @media (max-width: 699px) { .side-in { gap: 16px; } }
@@ -822,3 +821,16 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .drow-ho { padding: 8px 0 0 48px; }
 /* Ledger, wide screens: the Reminders card fills the column, so both columns end level. */
 @media (min-width: 1100px) { .side-in #reminders { flex: 1 1 auto; } }
+/* Calendar: a task past its date is red. */
+.cal-task.late { color: #A3271B; outline: 1px solid #E3A49C; background: #FDF0EE; }
+/* Team: an email breaks only at the @ (never mid-word). */
+.drow-text .drow-email { overflow-wrap: normal; word-break: normal; }
+/* Phones: sections that aren't built yet are hidden. */
+@media (max-width: 699px) { .psec.off, .eng-tab[data-tab="schedule"] { display: none; } }
+/* Narrow screens: an opened query or photo sits right under its own card / day. */
+.q-card, .ph-inline { scroll-margin-top: 12px; }
+.eng .q-card, .eng .ph-inline { scroll-margin-top: 64px; }
+.q-inline { margin: 4px 0 12px; border-left: 3px solid #1F3A5F; }
+.eng .q-inline { padding-top: 8px; padding-bottom: 12px; background: #FAFAF7; }
+.ph-inline { position: static !important; max-height: none !important; overflow: visible !important; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ECECE7; }
+.eng-unsent b { color: #8A4B00; }@media (max-width: 699px) { .eng-nav { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); } }
