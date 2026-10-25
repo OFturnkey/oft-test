@@ -184,6 +184,8 @@ const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view':
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1 };
+// Reads only: safe to ask again.
+const READ_CALLS = { boot: 1, getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, previewBriefs: 1 };
 function withBusy(el, fn) {
   if (NAV_ACTS[el.dataset.act]) { fn(); return; }
   const key = actKey(el);
@@ -288,13 +290,23 @@ function api(action, args) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 90000);
   const t0 = performance.now();
-  return fetch(CONFIG.api, {
+  // A read that Google answers with an error code (404, 500…) is asked once more after a moment; saves are not
+  // (the first one may have gone through). The message names which address answered, to find the cause.
+  const send = (again) => fetch(CONFIG.api, {
     method: 'POST', body: JSON.stringify({ a: action, s: sessionToken(), args: args || [] }),
     credentials: 'omit', redirect: 'follow', cache: 'no-store', signal: ctrl.signal
   }).then((r) => {
-    if (!r.ok) throw new Error('The server answered ' + r.status + '. Please try again.');
+    if (r.ok) return r;
+    if (again && READ_CALLS[action]) return new Promise((res) => setTimeout(res, 1500)).then(() => send(false));
+    let host = '';
+    try { host = new URL(r.url).host; } catch (_) { /* no address */ }
+    console.warn('Server answered ' + r.status + ' for ' + action + ' from ' + r.url);
+    throw new Error('The server answered ' + r.status + (host ? ' (' + host + ')' : '') + '. Please try again.');
+  });
+  return send(true).then((r) => {
     return r.json().catch(() => { throw new Error('The server sent something unexpected. Please try again.'); });
   }, (err) => {
+    if (err && /^The server answered/.test(err.message)) throw err;
     const e = new Error(err && err.name === 'AbortError' ? 'No answer from the server after 90 seconds. Check your signal and try again.'
       : navigator.onLine === false ? 'No signal. Nothing was sent.' : 'Couldn’t reach the server. Check your connection and try again.');
     e.network = true; // the outbox keeps the item and tries again later
@@ -2927,7 +2939,7 @@ function queryClick(act, el) {
   else if (act === 'reg-edit') {
     const r = S.queries.register.find((x) => x.project === el.dataset.code && x.no === id && !x.voided);
     if (r) S.regEdit = { project: r.project, no: r.no, text: r.text, area: r.area || '', cause: r.cause, cost: r.cost == null ? '' : String(r.cost), err: '',
-      base: { text: r.text, area: r.area || '', cause: r.cause } };
+      base: { text: r.text, area: r.area || '', cause: r.cause, cost: r.cost == null ? '' : String(r.cost) } };
     renderAll();
   }
   else if (act === 'reg-save') saveRegisterEdit();
@@ -3630,7 +3642,7 @@ function syncRegister(o) {
   const go = () => {
     const r = ((S.queries && S.queries.register) || []).find((x) => x.project === o.project && x.no === o.no && !x.voided);
     if (!r) { snack('Couldn’t find ' + o.no + '. Change it in the change register.', { error: true }); return; }
-    api('editRegister', [o.project, o.no, { text: o.text, area: r.area, cause: r.cause, cost: r.cost == null ? '' : r.cost }, { text: r.text, area: r.area || '', cause: r.cause }]).then((res) => {
+    api('editRegister', [o.project, o.no, { text: o.text, area: r.area, cause: r.cause, cost: r.cost == null ? '' : r.cost }, { text: r.text, area: r.area || '', cause: r.cause, cost: r.cost == null ? '' : String(r.cost) }]).then((res) => {
       setQueries(res); S.regOffer = null;
       snack(o.no + ' now says “' + o.text + '”.');
       redraw();
