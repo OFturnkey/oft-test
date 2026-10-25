@@ -834,3 +834,47 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .eng .q-inline { padding-top: 8px; padding-bottom: 12px; background: #FAFAF7; }
 .ph-inline { position: static !important; max-height: none !important; overflow: visible !important; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ECECE7; }
 .eng-unsent b { color: #8A4B00; }@media (max-width: 699px) { .eng-nav { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); } }
+
+/* ---------- Drawings (boards Drawings + DwgPhone) ---------- */
+.dwg-bar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.dwg-bar h3 { margin: 0; }
+.dwg-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dwg-btns .btn-outline { display: inline-flex; align-items: center; gap: 8px; }
+.dwg-up { cursor: pointer; display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; }
+.dwg-wrap { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; margin-top: 16px; }
+.dwg-list { flex: 999 1 640px; min-width: 0; padding: 0; overflow: hidden; }
+.dwg-side { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.dwg-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 14px 22px; border-top: 1px solid #ECECE7; }
+.dwg-row:first-child { border-top: 0; }
+.dwg-code { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 500; background: #ECECE7; border-radius: 6px; padding: 4px 0; text-align: center; }
+.dwg-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dwg-text b { font-weight: 500; }
+.dwg-latest, .dwg-prev { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dwg-latest .mono { font-size: 14px; overflow-wrap: anywhere; }
+.dwg-prev { color: #5E605C; }
+.dwg-prev .link-btn.mono { text-decoration: line-through; color: #5E605C; font-size: 13px; }
+.dwg-del { align-self: flex-start; color: #8C1D18; }
+.dwg-dl { width: 44px; padding: 0; justify-content: center; }
+.dwg-help { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.dwg-eg { font-size: 13px; background: #F3F3F0; border-radius: 6px; padding: 8px 10px; }
+.dwg-panel { border: 2px solid #455B28; display: flex; flex-direction: column; gap: 12px; }
+.dwg-fname { font-weight: 500; overflow-wrap: anywhere; }
+.dwg-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dwg-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #5E605C; }
+.dwg-fields input { min-height: 44px; border: 1px solid #C9CAC3; border-radius: 8px; padding: 0 10px; font: inherit; font-size: 15px; color: #1C1E1D; min-width: 0; }
+.dwg-rev { display: flex; align-items: center; gap: 4px; font-family: 'IBM Plex Mono', monospace; color: #1C1E1D; }
+.dwg-rev input { width: 64px; }
+.dwg-note { background: #FFF6DA; color: #5E4500; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.dwg-note:empty { display: none; }
+.warn { background: #FFF6DA; color: #5E4500; border-radius: 8px; padding: 8px 10px; margin: 0; }
+/* Phones (and the engineer's Drawings): title, file name, Save / Saved for no signal. */
+.dwg-offline { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; }
+.dwg-row.compact { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 14px; }
+.dwg-row.compact .dwg-code { font-size: 12px; padding: 4px 6px; }
+.dwg-main { display: flex; flex-direction: column; min-width: 0; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: #1C1E1D; cursor: pointer; }
+.dwg-main b { font-weight: 500; }
+.dwg-main .mono { overflow-wrap: anywhere; }
+.dwg-save { flex: none; min-height: 40px; padding: 0 12px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; border: 1px solid #C9CAC3; background: #FFFFFF; color: #1C1E1D; cursor: pointer; }
+.dwg-save.on { border: 0; background: #E2EAD6; color: #2F4019; }
+.eng .dwg-list, .eng-card .dwg-row { border-color: #ECECE7; }
+@media (max-width: 699px) { .dwg-fields { grid-template-columns: 1fr 1fr; } .dwg-list { margin-top: 12px; } .dwg-panel { margin-top: 12px; } }
