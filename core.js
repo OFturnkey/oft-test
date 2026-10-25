@@ -354,7 +354,29 @@ function LedgerCore() {
     return '';
   }
 
+  /* Drawings: the file name says what it is. "NEST-RCP Dwg-241126-R4" = project (its code or site name) · drawing
+   * type · date made (ddmmyy) · revision. The usual types have a title; a new type is named on its first upload. */
+  var DWG_TYPES = { RCP: 'Reflected ceiling plan', ELE: 'Electrical layout', CAR: 'Carpentry details', FLR: 'Flooring layout',
+    FUR: 'Furniture layout', CIV: 'Civil and masonry', PLB: 'Plumbing layout', HVAC: 'HVAC layout', LGT: 'Lighting layout',
+    FCL: 'False ceiling details', ELV: 'Elevations', GA: 'General arrangement', PAR: 'Partition layout', SGN: 'Signage' };
+  // Returns { prefix, code, dated: 'yyyy-mm-dd', revNo } or null when the name doesn't follow the pattern.
+  function parseDwgName(name) {
+    var s = String(name || '').replace(/\.pdf$/i, '').trim();
+    var m = /^([A-Za-z0-9]{2,12})[\s_-]+([A-Za-z]{2,6})[\s_-]*Dwg[\s_-]*(\d{2})(\d{2})(\d{2})[\s_-]*R(\d{1,3})$/i.exec(s);
+    if (!m) return null;
+    var dd = Number(m[3]), mm = Number(m[4]);
+    if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null;
+    return { prefix: m[1].toUpperCase(), code: m[2].toUpperCase(), dated: '20' + m[5] + '-' + m[4] + '-' + m[3], revNo: Number(m[6]) };
+  }
+  // Does the file name's project part mean this project (its code, or its site name without spaces)?
+  function dwgPrefixIs(dir, prefix, code) {
+    var p = dir.projects[code], name = p && p.name ? String(p.name).replace(/[^A-Za-z0-9]/g, '').toUpperCase() : '';
+    prefix = String(prefix || '').toUpperCase();
+    return prefix === code || (!!name && prefix === name);
+  }
+
   return {
+    DWG_TYPES: DWG_TYPES, parseDwgName: parseDwgName, dwgPrefixIs: dwgPrefixIs,
     MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT, TRADES: TRADES, tradeFromDetail: tradeFromDetail, tradesOf: tradesOf,
     dueText: dueText, byDue: byDue,
     pad: pad, iso: iso, fromIso: fromIso, nice: nice, cap: cap, inr: inr, short: short, amountOf: amountOf, amountWords: amountWords,
