@@ -243,6 +243,14 @@ function wirePhotoPicks(root) {
     el.oftWired = true;
     el.addEventListener('change', () => { addAttachments(el.files, el.dataset.att); el.value = ''; });
   });
+  // Drawings: the released PDF an owner picked (read, then checked in the upload panel before it goes).
+  const dwgs = Array.from(root.querySelectorAll('input[type=file][data-dwg-pick]'));
+  if (root.matches('input[type=file][data-dwg-pick]')) dwgs.push(root);
+  dwgs.forEach((el) => {
+    if (el.oftWired) return;
+    el.oftWired = true;
+    el.addEventListener('change', () => { if (el.files && el.files[0]) pickDrawing(el.files[0]); el.value = ''; });
+  });
   const picks = Array.from(root.querySelectorAll('input[type=file][data-ph-pick], input[type=file][data-q-pick]'));
   if (root.matches('input[type=file][data-ph-pick], input[type=file][data-q-pick]')) picks.push(root);
   picks.forEach((el) => {
@@ -467,7 +475,7 @@ function showNoAccess(email) {
 }
 /* ---------- site engineer screens (phone first; no ledger data ever reaches them) ---------- */
 function engClick(act, el) {
-  if (photoClick(act, el) || queryClick(act, el)) return;
+  if (photoClick(act, el) || queryClick(act, el) || dwgClick(act, el)) return;
   if (act === 'eng-tab') {
     // Leaving Photos with photos not sent: "Send now?" (Cancel leaves them on the phone; Today reminds them).
     const unsent = S.drafts.filter((d) => d.project === S.engProject && !d.purpose);
@@ -480,6 +488,7 @@ function engClick(act, el) {
     S.engTab = el.dataset.tab; S.engQuery = ''; S.engRegister = false; S.engBack = ''; window.scrollTo(0, 0);
     if ((S.engTab === 'queries' || S.engTab === 'today') && S.queries) loadQueries();
     if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
+    if (S.engTab === 'drawings') S.dwgsFor = ''; // asked again each time: a new revision shows at once
     renderEng();
   }
   else if (act === 'eng-done') engTick(el.dataset.id, el.checked);
@@ -514,7 +523,8 @@ function showEngineer(me, site) {
   $('engScreen').hidden = false;
   if (!S.engTab) {
     const qs = new URLSearchParams(location.search);
-    S.engTab = ['queries', 'photos', 'schedule'].indexOf(qs.get('tab')) >= 0 ? qs.get('tab') : 'today';
+    S.engTab = ['queries', 'photos', 'drawings'].indexOf(qs.get('tab')) >= 0 ? qs.get('tab') : 'today';
+    if (qs.get('project')) S.engProject = qs.get('project').toUpperCase(); // checked against the engineer's projects on the first draw
     if (qs.get('q')) S.engQuery = qs.get('q');
     setTimeout(checkVersion, 4000);
     setTimeout(askNotifications, 2500);
@@ -553,14 +563,16 @@ function engSnack(text, error, buttonHtml, ms) {
   clearTimeout(engSnackTimer);
   engSnackTimer = setTimeout(() => { el.hidden = true; }, ms || (error ? 8000 : 4000));
 }
-const ENG_TABS = [['today', 'Today'], ['queries', 'Queries'], ['photos', 'Photos'], ['schedule', 'Schedule']];
+// Schedule comes back with release 2; until then the fourth place is Drawings.
+const ENG_TABS = [['today', 'Today'], ['queries', 'Queries'], ['photos', 'Photos'], ['drawings', 'Drawings']];
 // Small icons above the bottom bar's labels (as the design board).
 const svgIcon = (d) => '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
 const ENG_ICONS = {
   today: svgIcon('<path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/>'),
   queries: svgIcon('<path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>'),
   photos: svgIcon('<path d="M4 8h3l2-2h6l2 2h3v10H4z"/><circle cx="12" cy="13" r="3"/>'),
-  schedule: svgIcon('<rect x="4" y="5" width="16" height="15" rx="1"/><path d="M4 9h16M9 3v4M15 3v4"/>')
+  schedule: svgIcon('<rect x="4" y="5" width="16" height="15" rx="1"/><path d="M4 9h16M9 3v4M15 3v4"/>'),
+  drawings: svgIcon('<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>')
 };
 const CAMERA_ICON = svgIcon('<path d="M4 8h3l2-2h6l2 2h3v10H4z"/><circle cx="12" cy="13" r="3"/>');
 function renderEng() {
@@ -591,6 +603,7 @@ function renderEngInner() {
     else if (S.engTab === 'today') main.innerHTML = engTodayHtml();
     else if (S.engTab === 'photos') main.innerHTML = engPhotosHtml();
     else if (S.engTab === 'queries') main.innerHTML = engQueriesHtml();
+    else if (S.engTab === 'drawings') main.innerHTML = engDrawingsHtml();
     else main.innerHTML = '<section class="card"><h2 class="eng-h2">' + esc(ENG_TABS.find((t) => t[0] === S.engTab)[1]) + '</h2>' +
       '<p class="empty">This comes in the next test version.</p></section>';
   } catch (err) {
@@ -784,6 +797,10 @@ function deviceName() {
 }
 function forgetDevice() {
   store(SESSION_KEY, null); store(ME_KEY, null); store(CACHE_KEY, null); store(SITE_KEY, null);
+  // Drawings kept for no signal go too (a lost phone keeps nothing).
+  try { Object.keys(localStorage).filter((k) => k.indexOf(DWG_LIST_KEY) === 0).forEach((k) => localStorage.removeItem(k)); } catch (_) { /* storage blocked */ }
+  idbDo('dwgs', 'readwrite', (st) => st.clear()).catch(() => { /* nothing saved */ });
+  S.dwgs = null; S.dwgsFor = ''; S.dwgKeys = [];
   S.engineer = false;
   $('engScreen').hidden = true;
   S.me = null; S.devices = null;
@@ -914,7 +931,9 @@ function firstRender(fromServer) {
     const qs = new URLSearchParams(location.search), tab = qs.get('tab');
     S.tab = ['ledger', 'projects', 'tasks', 'dir'].indexOf(tab) >= 0 ? tab : 'ledger';
     if (qs.get('project')) S.projTab = qs.get('project').toUpperCase();
-    if (['overview', 'site', 'queries'].indexOf(qs.get('sec')) >= 0) S.projSec = qs.get('sec');
+    if (['overview', 'site', 'queries', 'drawings'].indexOf(qs.get('sec')) >= 0) S.projSec = qs.get('sec');
+    // A "New drawing" alert (?tab=drawings&project=NST): that project's Drawings.
+    if (tab === 'drawings') { S.tab = 'projects'; S.projSec = 'drawings'; }
     if (qs.get('q')) S.qSel = qs.get('q');
     $('logoSlot').innerHTML = logoHtml();
     // Phones open on Today (the morning view); laptops on the Ledger. A link from an alert says where to go.
@@ -2011,9 +2030,9 @@ const STAGE_LABEL = { design: 'Design', execution: 'Execution', handover: 'Hando
 const SCHEDULE_LABEL = { full: 'Full schedule', light: 'Light schedule', none: 'No schedule yet' };
 // Sections per stage. [key, label, ready in this version]. Later steps switch the others on.
 const SECTIONS = {
-  design: [['overview', 'Overview', true], ['drawings', 'Drawings', false], ['queries', 'Queries', true]],
+  design: [['overview', 'Overview', true], ['drawings', 'Drawings', true], ['queries', 'Queries', true]],
   execution: [['overview', 'Overview', true], ['schedule', 'Schedule', false], ['site', 'Site', true], ['queries', 'Queries', true],
-    ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', false], ['visits', 'Site visits', false]],
+    ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', true], ['visits', 'Site visits', false]],
   handover: [['overview', 'Overview', true]],
   archive: [['overview', 'Overview', true]]
 };
@@ -2081,7 +2100,7 @@ function renderProjectsView() {
     '<div class="phead"><h2 id="proj-h" class="view-title">' + esc(p.name || p.code) + '</h2>' + placeLine(p) +
     '<div class="psub">' + esc(projectLine(p)) + '</div></div>' +
     '<nav class="psecs" aria-label="Project sections">' + nav + '</nav>' +
-    (S.projSec === 'site' ? projectSiteHtml(p) : S.projSec === 'queries' ? projectQueriesHtml(p) : projectOverviewHtml(p));
+    (S.projSec === 'site' ? projectSiteHtml(p) : S.projSec === 'queries' ? projectQueriesHtml(p) : S.projSec === 'drawings' ? projectDrawingsHtml(p) : projectOverviewHtml(p));
 }
 
 // Today across all projects (the morning view): each project's Needs you items, Everyone or Just mine.
@@ -2456,8 +2475,11 @@ let idbOpen = null;
 function idb() {
   if (!idbOpen) {
     idbOpen = new Promise((resolve, reject) => {
-      const r = indexedDB.open(IDB_NAME, 1);
-      r.onupgradeneeded = () => { r.result.createObjectStore('drafts', { keyPath: 'id' }); r.result.createObjectStore('outbox', { keyPath: 'id' }); };
+      // Version 2 adds "dwgs": drawings saved on this device for no signal.
+      const r = indexedDB.open(IDB_NAME, 2);
+      r.onupgradeneeded = () => {
+        ['drafts', 'outbox', 'dwgs'].forEach((n) => { if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n, { keyPath: 'id' }); });
+      };
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => { idbOpen = null; reject(r.error || new Error('This phone’s storage isn’t available.')); };
     });
@@ -2983,6 +3005,219 @@ function photoClick(act, el) {
   else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
   else if (act === 'out-drop') {
     Promise.all(OUT.items.filter((x) => x.error).map((x) => idbDel('outbox', x.id))).then(refreshOutbox);
+  } else return false;
+  return true;
+}
+
+/* ---------- drawings (Drawings lite; design boards Drawings + DwgPhone) ---------- */
+// The open project's drawings: { project, drawings: [{ code, title, latest, older }] }. Older revisions come only to
+// owners (the server never sends them to site engineers or associates).
+S.dwgs = null; S.dwgsFor = ''; S.dwgUp = null; S.dwgKeys = [];
+// The last list per project is kept on the device too, so saved drawings open with no signal.
+const DWG_LIST_KEY = 'oft.dwgs.' + CONFIG.env + '.';
+function loadDrawings(code, then) {
+  S.dwgsFor = code;
+  let cached = null;
+  try { cached = JSON.parse(stored(DWG_LIST_KEY + code) || 'null'); } catch (_) { cached = null; }
+  loadSavedDwgs().then(() => { if (S.dwgsFor === code && !S.dwgs && cached) { S.dwgs = cached; bgRedraw(); } });
+  api('listDrawings', [code]).then((res) => {
+    if (S.dwgsFor !== code) return;
+    S.dwgs = res;
+    store(DWG_LIST_KEY + code, JSON.stringify(res));
+    keepSavedCurrent(res);
+    if (then) then();
+    bgRedraw();
+  }, (err) => {
+    if (err.signin) { signedOut(err.message); return; }
+    // No signal: the list kept on this device stands (the strip at the top already says there's no signal).
+    if (err.network && cached) { if (!S.dwgs) { S.dwgs = cached; bgRedraw(); } return; }
+    attErr(err);
+  });
+}
+// Saved on this device for no signal: one per drawing (project|code), always its latest revision. Keys only in
+// memory ("NST|RCP|<id>"); the PDFs stay in the phone's storage until opened.
+const idbKeys = (store) => idbDo(store, 'readonly', (st) => st.getAllKeys());
+const idbGet = (store, id) => idbDo(store, 'readonly', (st) => st.get(id));
+function loadSavedDwgs() { return idbKeys('dwgs').then((k) => { S.dwgKeys = (k || []).map(String); }, () => { S.dwgKeys = []; }); }
+const dwgKey = (project, d) => project + '|' + d.code + '|' + d.latest.id;
+function savedKeyOf(project, code) { return S.dwgKeys.find((k) => k.indexOf(project + '|' + code + '|') === 0) || ''; }
+function isSaved(project, d) { return S.dwgKeys.indexOf(dwgKey(project, d)) >= 0; }
+// A drawing saved on this device whose newer revision came out: the new one replaces it (when there is signal).
+function keepSavedCurrent(res) {
+  if (!navigator.onLine) return;
+  loadSavedDwgs().then(() => {
+    let chain = Promise.resolve();
+    res.drawings.forEach((d) => {
+      const k = savedKeyOf(res.project, d.code);
+      if (k && k !== dwgKey(res.project, d)) chain = chain.then(() => saveDrawing(res.project, d, true)).then(() => idbDel('dwgs', k)).catch(() => { /* next time */ });
+    });
+    chain.then(loadSavedDwgs).then(bgRedraw);
+  });
+}
+function saveDrawing(project, d, quiet) {
+  return api('drawingFile', [d.latest.id]).then((f) => idbPut('dwgs', { id: dwgKey(project, d), name: f.name, data: f.data, savedAt: Date.now() }))
+    .then(loadSavedDwgs).then(() => { if (!quiet) { (S.engineer ? engSnack : snack)(d.title + ' saved on this device.'); } bgRedraw(); });
+}
+function unsaveDrawing(project, d) { return idbDel('dwgs', dwgKey(project, d)).then(loadSavedDwgs).then(bgRedraw); }
+function saveAllDrawings(project) {
+  const list = ((S.dwgs && S.dwgs.drawings) || []).filter((d) => !isSaved(project, d));
+  let chain = Promise.resolve();
+  list.forEach((d) => { chain = chain.then(() => saveDrawing(project, d, true)); });
+  chain.then(() => (S.engineer ? engSnack : snack)('All ' + plural(((S.dwgs && S.dwgs.drawings) || []).length, 'drawing', 'drawings') + ' saved on this device.'), attErr);
+}
+// The PDF in a new tab (a phone hands it to its PDF viewer). From this device when saved there, so it opens without signal.
+function pdfFromBase64(b64) {
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+}
+function openDrawing(id, download) {
+  const project = S.dwgsFor, all = (S.dwgs && S.dwgs.drawings) || [];
+  const d = all.find((x) => x.latest.id === id) || null;
+  const w = download ? null : window.open('', '_blank');
+  if (w) w.document.write('<p style="font:16px sans-serif;padding:24px">Opening…</p>');
+  const show = (name, b64) => {
+    const url = pdfFromBase64(b64);
+    if (w) { w.location.href = url; return; }
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  };
+  const local = d && isSaved(project, d) ? idbGet('dwgs', dwgKey(project, d)) : Promise.resolve(null);
+  return local.then((rec) => (rec ? show(rec.name, rec.data) : api('drawingFile', [id]).then((f) => show(f.name, f.data))))
+    .catch((err) => { if (w) w.close(); if (err && err.signin) signedOut(err.message); else attErr(err); });
+}
+function downloadAllDrawings() {
+  let chain = Promise.resolve();
+  ((S.dwgs && S.dwgs.drawings) || []).forEach((d) => { chain = chain.then(() => openDrawing(d.latest.id, true)); });
+}
+function releasedText(at) { const day = String(at || '').slice(0, 10); return 'Released ' + (day === todayIso() ? 'today' : niceDay(day)); }
+// One drawing. Phones: title, file name, Save / Saved (for no signal). Wide: latest with "Latest" and its date;
+// owners also see the previous revision (crossed out) and can open older ones.
+function dwgRowHtml(project, d, compact) {
+  const owner = !S.engineer && isOwner();
+  const chip = '<span class="dwg-code">' + esc(d.code) + '</span>';
+  if (compact) {
+    const saved = isSaved(project, d);
+    return '<div class="dwg-row compact">' + chip + '<button type="button" class="dwg-main" data-act="dwg-open" data-id="' + esc(d.latest.id) + '"><b>' + esc(d.title) + '</b>' +
+      '<span class="mono small muted">' + esc(d.latest.name) + '</span></button>' +
+      '<button type="button" class="dwg-save' + (saved ? ' on' : '') + '" data-act="' + (saved ? 'dwg-unsave' : 'dwg-save') + '" data-id="' + esc(d.latest.id) + '" aria-label="' +
+      esc((saved ? 'Saved on this device: ' : 'Save on this device: ') + d.title) + '">' + (saved ? 'Saved' : 'Save') + '</button></div>';
+  }
+  const prev = owner && d.older.length ? d.older[0] : null, more = owner ? d.older.slice(1) : [];
+  const open = S.dwgOlder === d.code;
+  const confirmDel = S.confirmDel === 'dwg:' + d.latest.id;
+  return '<div class="dwg-row">' + chip + '<div class="dwg-text"><b>' + esc(d.title) + '</b>' +
+    '<span class="dwg-latest"><span class="mono">' + esc(d.latest.name) + '</span><span class="pill pill-ok">Latest</span><span class="muted small">' + esc(releasedText(d.latest.at)) + '</span></span>' +
+    (prev ? '<span class="dwg-prev"><button type="button" class="link-btn mono" data-act="dwg-open" data-id="' + esc(prev.id) + '">' + esc(prev.name) + '</button><span class="small">Previous</span>' +
+      (more.length ? '<button type="button" class="link-btn small" data-act="dwg-older" data-id="' + esc(d.code) + '" aria-expanded="' + open + '">' + (open ? 'Hide older' : '+ ' + plural(more.length, 'older revision', 'older revisions')) + '</button>' : '') + '</span>' : '') +
+    (open ? more.map((o) => '<span class="dwg-prev"><button type="button" class="link-btn mono" data-act="dwg-open" data-id="' + esc(o.id) + '">' + esc(o.name) + '</button><span class="small">' + esc(releasedText(o.at)) + '</span></span>').join('') : '') +
+    (owner ? '<button type="button" class="link-btn small dwg-del" data-act="dwg-remove" data-id="' + esc(d.latest.id) + '">' +
+      (confirmDel ? 'Tap again to take back R' + d.latest.revNo + (prev ? ' (R' + prev.revNo + ' becomes the latest)' : '') : 'Take back this upload') + '</button>' : '') + '</div>' +
+    '<span class="dwg-btns"><button type="button" class="btn-outline" data-act="dwg-open" data-id="' + esc(d.latest.id) + '">Open</button>' +
+    '<button type="button" class="btn-outline dwg-dl" data-act="dwg-download" data-id="' + esc(d.latest.id) + '" aria-label="Download ' + esc(d.latest.name) + '">' + DOWNLOAD_ICON + '</button></span></div>';
+}
+const DOWNLOAD_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11 M7 10l5 5 5-5 M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7"></path></svg>';
+function dwgListHtml(project, compact) {
+  if (!S.dwgs || S.dwgs.project !== project) return '<p class="empty">Loading…</p>';
+  const list = S.dwgs.drawings;
+  if (!list.length) return '<p class="empty">' + (!S.engineer && isOwner() ? 'No drawings yet. Upload the released PDFs: name each file like ' + esc(project) + '-RCP Dwg-241126-R1 and the app files it for you.'
+    : 'No drawings released yet. Shruthi or Savan will upload them here.') + '</p>';
+  const saved = list.filter((d) => isSaved(project, d)).length;
+  return (compact ? '<div class="dwg-offline small muted"><span>' + saved + ' of ' + list.length + ' saved on this device</span>' +
+    (saved < list.length ? '<button type="button" class="link-btn" data-act="dwg-save-all">Save all for no signal</button>' : '') + '</div>' : '') +
+    list.map((d) => dwgRowHtml(project, d, compact)).join('');
+}
+// Engineers → Drawings: the latest of each, saved on the phone for no signal.
+function engDrawingsHtml() {
+  const proj = S.engProject;
+  if (proj && S.dwgsFor !== proj) { S.dwgs = null; loadDrawings(proj); }
+  return '<section class="card eng-card eng-pad"><h2 class="eng-h2" style="padding-left:0">Drawings · ' + esc(engProjName(proj)) + '</h2>' +
+    '<p class="muted small">The latest released drawings. Save them on your phone to open them with no signal.</p>' + dwgListHtml(proj, true) + '</section>';
+}
+// Owners and associates → project → Drawings. Owners upload; the panel shows what the file name says before it goes.
+function projectDrawingsHtml(p) {
+  if (S.dwgsFor !== p.code) { S.dwgs = null; S.dwgUp = null; loadDrawings(p.code); }
+  const owner = isOwner(), compact = phone.matches, list = (S.dwgs && S.dwgs.drawings) || [];
+  const bar = '<div class="sec-head dwg-bar"><div><h3>Drawings</h3><span class="muted small">What the site builds from: the latest released drawing of each kind.</span></div><div class="dwg-btns">' +
+    (!compact && list.length ? '<button type="button" class="btn-outline" data-act="dwg-all">' + DOWNLOAD_ICON + ' Download all latest</button>' : '') +
+    (owner ? '<label class="btn-main dwg-up">Upload released drawing<input type="file" accept="application/pdf,.pdf" data-dwg-pick="1" hidden></label>' : '') + '</div></div>';
+  const naming = owner ? '<section class="card dwg-help"><b>How naming works</b><span class="mono dwg-eg">' + esc(p.code) + '-ELE Dwg-101026-R2</span>' +
+    '<span class="muted small">Project · drawing type · date made (ddmmyy) · revision. Name the file this way on your laptop and the app files it for you. The project part can be the code (' + esc(p.code) + ') or the site name.</span>' +
+    '<span class="muted small">Site engineers and associates get only the latest revision. Older ones stay here for you and Savan.</span></section>' : '';
+  const panel = owner && S.dwgUp ? dwgUploadHtml(p) : '';
+  if (compact) return bar + panel + '<section class="card dwg-list">' + dwgListHtml(p.code, true) + '</section>' + naming;
+  return bar + '<div class="dwg-wrap"><section class="card dwg-list">' + dwgListHtml(p.code, false) + '</section><aside class="dwg-side">' + panel + naming + '</aside></div>';
+}
+const MAX_DWG_BYTES = 15 * 1024 * 1024;
+function pickDrawing(file) {
+  const p = projInfo(S.projTab);
+  if (!p) return;
+  if (!isPdfFile(file)) { snack('Pick a PDF.', { error: true }); return; }
+  if (file.size > MAX_DWG_BYTES) { snack('That PDF is over 15 MB. Save it smaller (e.g. print to PDF) and upload again.', { error: true }); return; }
+  const m = LC.parseDwgName(file.name), list = (S.dwgs && S.dwgs.drawings) || [];
+  const code = m ? m.code : '', have = list.find((d) => d.code === code);
+  S.dwgUp = { file: file, fileName: file.name, read: !!m, prefix: m ? m.prefix : '', code: code, title: have ? have.title : (LC.DWG_TYPES[code] || ''),
+    revNo: m ? String(m.revNo) : have ? String(have.latest.revNo + 1) : '1', dated: m ? m.dated : todayIso(), err: '', sending: false };
+  renderAll();
+}
+// "R4 replaces R3. R3 becomes the previous revision; older ones stay for you and Savan."
+function dwgNoteHtml() {
+  const u = S.dwgUp, have = ((S.dwgs && S.dwgs.drawings) || []).find((d) => d.code === String(u.code || '').trim().toUpperCase());
+  const r = Number(u.revNo);
+  if (!have) return u.code ? 'A new drawing: ' + esc(String(u.code).toUpperCase()) + ' R' + esc(u.revNo) + '.' : '';
+  if (!(r > have.latest.revNo)) return '<span class="err">' + esc(have.code + ' R' + have.latest.revNo + ' is already released. Use R' + (have.latest.revNo + 1) + ' or more.') + '</span>';
+  return 'R' + r + ' replaces R' + have.latest.revNo + '. R' + have.latest.revNo + ' becomes the previous revision; the site sees only R' + r + '. Nothing is deleted.';
+}
+function dwgUploadHtml(p) {
+  const u = S.dwgUp;
+  const otherProj = u.prefix && !LC.dwgPrefixIs(S.dir, u.prefix, p.code);
+  return '<section class="card dwg-panel">' +
+    '<div class="muted small">' + (u.read ? 'Read from the file name' : 'The file name doesn’t follow the pattern: fill these in') + '</div>' +
+    '<div class="mono dwg-fname">' + esc(u.fileName) + '</div>' +
+    (otherProj ? '<p class="warn small">The file name starts with “' + esc(u.prefix) + '”, but this is ' + esc(p.name || p.code) + ' (' + esc(p.code) + '). Check it’s the right project.</p>' : '') +
+    '<div class="dwg-fields">' +
+    '<label>Drawing type<input id="dwgCode" data-dup="code" value="' + esc(u.code) + '" maxlength="6" autocapitalize="characters" placeholder="RCP"></label>' +
+    '<label>What it is<input id="dwgTitle" data-dup="title" list="dwgTitles" value="' + esc(u.title) + '" placeholder="Reflected ceiling plan"></label>' +
+    '<datalist id="dwgTitles">' + Object.keys(LC.DWG_TYPES).map((k) => '<option value="' + esc(LC.DWG_TYPES[k]) + '">').join('') + '</datalist>' +
+    '<label>Revision<span class="dwg-rev">R<input id="dwgRev" data-dup="revNo" value="' + esc(u.revNo) + '" inputmode="numeric" maxlength="3"></span></label>' +
+    '<label>Dated<input id="dwgDated" data-dup="dated" type="date" value="' + esc(u.dated) + '"></label></div>' +
+    '<div class="dwg-note" id="dwgNote">' + dwgNoteHtml() + '</div>' +
+    (u.err ? '<p class="err" role="alert">' + esc(u.err) + '</p>' : '') +
+    '<div class="dwg-btns"><button type="button" class="btn-accent" data-act="dwg-release"' + (u.sending ? ' disabled' : '') + '>' + (u.sending ? 'Uploading…' : 'Release to site') + '</button>' +
+    '<button type="button" class="btn-outline" data-act="dwg-cancel">Cancel</button></div>' +
+    '<span class="muted small">The site engineers and associates on ' + esc(p.name || p.code) + ' get a “New drawing” alert.</span></section>';
+}
+function releaseDrawing() {
+  const u = S.dwgUp, p = projInfo(S.projTab);
+  if (!u || !p || u.sending) return;
+  const code = String(u.code || '').trim().toUpperCase(), title = String(u.title || '').trim(), revNo = Number(u.revNo);
+  if (!/^[A-Z]{2,6}$/.test(code)) { u.err = 'The drawing type is 2 to 6 letters, like RCP or ELE.'; renderAll(); return; }
+  if (!title) { u.err = 'Say what this drawing is.'; renderAll(); return; }
+  if (!(revNo >= 0) || String(u.revNo).trim() === '') { u.err = 'Give the revision number, like 4 for R4.'; renderAll(); return; }
+  u.sending = true; u.err = '';
+  renderAll();
+  readBase64(u.file).then((data) => api('uploadDrawing', [{ id: newId(), project: p.code, fileName: u.fileName, code: code, title: title, revNo: revNo, dated: u.dated, data: data }]))
+    .then((res) => {
+      S.dwgs = res; S.dwgUp = null;
+      snack(title + ' R' + revNo + ' released to site. The site team gets a “New drawing” alert.');
+      renderAll();
+    }, (err) => { if (err.signin) { signedOut(err.message); return; } u.sending = false; u.err = cleanErr(err.message); renderAll(); });
+}
+// Drawing buttons, the same for owners, associates and engineers. Returns true when it handled the click.
+function dwgClick(act, el) {
+  const id = el.dataset.id, project = S.dwgsFor, d = ((S.dwgs && S.dwgs.drawings) || []).find((x) => x.latest.id === id);
+  if (act === 'dwg-open') openDrawing(id, false);
+  else if (act === 'dwg-download') openDrawing(id, true);
+  else if (act === 'dwg-all') downloadAllDrawings();
+  else if (act === 'dwg-save') { if (d) saveDrawing(project, d).catch(attErr); }
+  else if (act === 'dwg-unsave') { if (d) unsaveDrawing(project, d); }
+  else if (act === 'dwg-save-all') saveAllDrawings(project);
+  else if (act === 'dwg-older') { S.dwgOlder = S.dwgOlder === id ? '' : id; redraw(); }
+  else if (act === 'dwg-release') releaseDrawing();
+  else if (act === 'dwg-cancel') { S.dwgUp = null; redraw(); }
+  else if (act === 'dwg-remove') {
+    if (S.confirmDel !== 'dwg:' + id) { S.confirmDel = 'dwg:' + id; redraw(); return true; }
+    S.confirmDel = '';
+    api('removeDrawing', [id]).then((res) => { S.dwgs = res; snack('Upload taken back. The revision before it is the latest again.'); redraw(); }, (err) => { if (err.signin) signedOut(err.message); else attErr(err); });
   } else return false;
   return true;
 }
@@ -3902,7 +4137,7 @@ function onAct(el) {
   if (act === 'notify-hide') { store(NOTIFY_ASKED_KEY, '1'); $('notifyBar').hidden = true; return; }
   if (S.engineer) { engClick(act, el); return; }
   if (!S.started) return;
-  if (photoClick(act, el) || queryClick(act, el)) return;
+  if (photoClick(act, el) || queryClick(act, el) || dwgClick(act, el)) return;
   const prevVoid = S.confirmVoid, prevDel = S.confirmDel;
   S.confirmVoid = null;
   S.confirmDel = null;
@@ -3929,7 +4164,7 @@ function onAct(el) {
       if (prevDel === 'sess:' + id) signOutDevice(id); else S.confirmDel = 'sess:' + id;
       break;
     case 'proj-tab': S.projTab = code; S.projSec = 'overview'; S.qOpen = false; S.photoSel = ''; break;
-    case 'proj-sec': S.projSec = el.dataset.sec; S.qOpen = false; if (el.dataset.sec === 'site') { S.photoSel = ''; S.photosSeenWant = S.projTab; } break;
+    case 'proj-sec': S.projSec = el.dataset.sec; S.qOpen = false; if (el.dataset.sec === 'site') { S.photoSel = ''; S.photosSeenWant = S.projTab; } if (el.dataset.sec === 'drawings') S.dwgsFor = ''; break;
     case 'proj-edit-dir':
       S.tab = 'dir'; startProjInfo(code); loadDevices();
       renderAll();
@@ -4124,6 +4359,16 @@ document.addEventListener('input', (ev) => {
     S.photoComment = S.photoComment || { text: '', due: addDays(todayIso(), 2), err: '' };
     S.photoComment[t.dataset.pc] = t.value;
     if (t.dataset.pc === 'who') renderAll(); // the button names the person
+  } else if (t.dataset.dup && S.dwgUp) {
+    // The upload panel: the note under it ("R4 replaces R3") follows what is typed.
+    S.dwgUp[t.dataset.dup] = t.value;
+    S.dwgUp.err = '';
+    if (t.dataset.dup === 'code') {
+      const have = ((S.dwgs && S.dwgs.drawings) || []).find((d) => d.code === t.value.trim().toUpperCase());
+      if (have || LC.DWG_TYPES[t.value.trim().toUpperCase()]) { S.dwgUp.title = have ? have.title : LC.DWG_TYPES[t.value.trim().toUpperCase()]; const ti = $('dwgTitle'); if (ti) ti.value = S.dwgUp.title; }
+    }
+    const note = $('dwgNote');
+    if (note) note.innerHTML = dwgNoteHtml();
   } else if (t.dataset.ea && S.engAdd) {
     S.engAdd[t.dataset.ea] = t.value;
   } else if (t.id === 'engProject') {
