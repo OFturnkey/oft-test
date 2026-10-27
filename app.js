@@ -372,17 +372,21 @@ function refresh(quiet) {
 // (a tiny request) and, only if that moved, loads the data again in the background (no "Syncing…", nothing typed is
 // disturbed: the redraw waits for typing). Coming back to the screen asks at once.
 const POLL_MS = 45000, PAGE_T0 = Date.now();
+// Test app: what the background refresh did (shown by window.oftDebug for the automated checks).
+const POLLDBG = { polls: 0, refreshes: 0, err: '', stamp: '', last: null };
 let lastStamp = null, polling = false;
 function pollChanges() {
   if (polling || document.visibilityState !== 'visible' || !sessionToken() || !S.me || (!S.started && !S.engineer)) return;
   polling = true;
+  POLLDBG.polls++;
   api('changed', []).then((res) => {
     const st = String(res.stamp || '');
+    POLLDBG.stamp = st; POLLDBG.last = lastStamp;
     // The first time: anything saved since this page opened (give or take the clocks) counts as new.
     // A moment's random wait, so every open phone and laptop doesn't ask the server at the same second.
     if (lastStamp !== null ? st !== lastStamp : Number(st) > PAGE_T0 - 5000) setTimeout(quietRefresh, Math.random() * 8000);
     lastStamp = st;
-  }, (err) => { if (err.signin) signedOut(err.message); }).finally(() => { polling = false; });
+  }, (err) => { POLLDBG.err = String(err && err.message); if (err.signin) signedOut(err.message); }).finally(() => { polling = false; });
 }
 // Only what is on screen is asked for again. The redraw waits until nobody has touched the screen for a few seconds,
 // so it never undoes a half-filled form (ticked boxes, a picked option) or moves a button under a finger.
@@ -393,6 +397,7 @@ function quietRefresh() {
   // An answer that took long must never replace something newer that arrived meanwhile (a save's own answer, Refresh).
   const t0 = Date.now();
   api('refresh', [{ queries: !!S.queries, photos: photos }]).then((res) => {
+    POLLDBG.refreshes++;
     if (res.site && !((S.siteAt || 0) > t0) && !OUT.items.some((x) => !x.error)) { S.site = res.site; S.siteAt = Date.now(); store(SITE_KEY, JSON.stringify({ email: S.me.email, site: res.site })); }
     if (res.data && !S.pending && !((S.lastLoad || 0) > t0)) { setData(res.data); saveCache(); }
     if (res.queries && !((S.queriesAt || 0) > t0)) setQueries(res.queries);
@@ -401,7 +406,7 @@ function quietRefresh() {
     // (Also the first time after opening: it only fetches what the phone doesn't have yet.)
     if (S.engineer && res.dwgs !== undefined && res.dwgs !== S.dwgStamp) { S.dwgStamp = res.dwgs; autoSaveDrawings(true); }
     idleRedraw();
-  }, (err) => { if (err.signin) signedOut(err.message); });
+  }, (err) => { POLLDBG.err = 'refresh: ' + String(err && err.message); if (err.signin) signedOut(err.message); });
 }
 let lastTouch = 0, idleWaiting = false;
 ['pointerdown', 'keydown', 'input', 'change'].forEach((t) => document.addEventListener(t, () => { lastTouch = Date.now(); }, true));
@@ -4496,7 +4501,7 @@ document.addEventListener('click', (ev) => {
 // Test app only: what the automated checks can look at when a click seems to do nothing.
 const CLICKS = [];
 if (CONFIG.env === 'test') window.oftDebug = () => ({ clicks: CLICKS.slice(-10), inflight: JSON.parse(JSON.stringify(INFLIGHT)), qc: S.qc && { qid: S.qc.qid, outcome: S.qc.outcome, task: S.qc.task, sending: S.qc.sending, err: S.qc.err }, qSel: S.qSel,
-  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab, vis: document.visibilityState, dwgStamp: S.dwgStamp, dwgKeys: S.dwgKeys });
+  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab, vis: document.visibilityState, dwgStamp: S.dwgStamp, dwgKeys: S.dwgKeys, poll: POLLDBG, autoSaving: autoSaving });
 function onAct(el) {
   const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
   // Buttons on the opening / sign-in screens work before any ledger data has loaded.
