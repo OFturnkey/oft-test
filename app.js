@@ -4496,7 +4496,7 @@ document.addEventListener('click', (ev) => {
 // Test app only: what the automated checks can look at when a click seems to do nothing.
 const CLICKS = [];
 if (CONFIG.env === 'test') window.oftDebug = () => ({ clicks: CLICKS.slice(-10), inflight: JSON.parse(JSON.stringify(INFLIGHT)), qc: S.qc && { qid: S.qc.qid, outcome: S.qc.outcome, task: S.qc.task, sending: S.qc.sending, err: S.qc.err }, qSel: S.qSel,
-  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab });
+  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab, vis: document.visibilityState, dwgStamp: S.dwgStamp, dwgKeys: S.dwgKeys });
 function onAct(el) {
   const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
   // Buttons on the opening / sign-in screens work before any ledger data has loaded.
