@@ -928,3 +928,14 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .dwg-list.compact .dwg-row.compact, .eng-dwgs .dwg-row.compact { background: #FFFFFF; border: 1px solid #DCDDD8; border-radius: 10px; }
 .eng-dwgs .dwg-offline, .dwg-list.compact .dwg-offline { padding: 4px 2px; }.done-offer .done-note-in { display: flex; flex-direction: column; align-items: stretch; }
 .done-offer .done-note-in input { width: 100%; box-sizing: border-box; }
+/* ---------- 27 Oct night: drawings of any type, owners only, move a query ---------- */
+.dwg-meta { font-size: 12px; color: #5E605C; font-family: 'IBM Plex Mono', monospace; }
+.dwg-main .dwg-meta { display: block; margin-top: 2px; }
+.dwg-own { color: #8A4B00; font-family: 'IBM Plex Sans', sans-serif; }
+.dwg-fields .dwg-wide { grid-column: 1 / -1; }
+.err-txt { color: #A3271B; font-weight: 600; }
+.dwg-ownonly { align-items: flex-start; gap: 8px; }
+.q-move { align-self: flex-start; margin-top: 4px; color: #5E605C; }
+.q-move-box { display: flex; flex-direction: column; gap: 10px; border: 1px solid #DEDED8; border-radius: 12px; padding: 12px 14px; }
+.q-move-box label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.q-move-box select { min-height: 44px; border: 1px solid #C9CAC3; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF; }
