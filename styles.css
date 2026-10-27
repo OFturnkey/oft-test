@@ -926,4 +926,5 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .dwg-hint { margin: 0; color: #5E4500; background: #FFF6DA; border-radius: 8px; padding: 8px 10px; }
 .dwg-list.compact, .eng-dwgs { display: flex; flex-direction: column; gap: 8px; }
 .dwg-list.compact .dwg-row.compact, .eng-dwgs .dwg-row.compact { background: #FFFFFF; border: 1px solid #DCDDD8; border-radius: 10px; }
-.eng-dwgs .dwg-offline, .dwg-list.compact .dwg-offline { padding: 4px 2px; }
+.eng-dwgs .dwg-offline, .dwg-list.compact .dwg-offline { padding: 4px 2px; }.done-offer .done-note-in { display: flex; flex-direction: column; align-items: stretch; }
+.done-offer .done-note-in input { width: 100%; box-sizing: border-box; }
