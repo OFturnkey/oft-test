@@ -878,3 +878,52 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .dwg-save.on { border: 0; background: #E2EAD6; color: #2F4019; }
 .eng .dwg-list, .eng-card .dwg-row { border-color: #ECECE7; }
 @media (max-width: 699px) { .dwg-fields { grid-template-columns: 1fr 1fr; } .dwg-list { margin-top: 12px; } .dwg-panel { margin-top: 12px; } }
+/* ---------- 27 Oct: Venky's test fixes ---------- */
+/* Needs you / Today: five boxes (on hold · new and unseen · waiting and late · today · done recently) */
+.nboxes { display: flex; flex-direction: column; gap: 12px; }
+.nbox { gap: 0; padding-top: 12px; padding-bottom: 6px; }
+.nbox.empty { padding-top: 10px; padding-bottom: 10px; }
+.nbox-h { display: flex; align-items: baseline; gap: 8px; padding-bottom: 8px; font-size: 15px; }
+.nbox.empty .nbox-h { padding-bottom: 0; color: #5E605C; }
+.nbox.empty .nbox-h b { font-weight: 500; }
+.nbox-n { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: #ECECE7; color: #3A3C39; }
+.nbox-hold:not(.empty) { border-color: #E6B8B0; }
+.nbox-hold .nbox-h b { color: #A3271B; }
+.nbox-hold .nbox-n { background: #F8E1DC; color: #A3271B; }
+.nbox-new:not(.empty) { border-color: #C9D8EE; }
+.nbox-new .nbox-h b { color: #1F3A5F; }
+.nbox-new .nbox-n { background: #DCE7F3; color: #1F3A5F; }
+.nbox-late .nbox-n { background: #FFEDB3; color: #5E4500; }
+.nbox-toggle { width: 100%; border: 0; background: transparent; font: inherit; color: #1C1E1D; cursor: pointer; text-align: left; padding: 0 0 8px; min-height: 36px; }
+.nbox-done.empty .nbox-h { padding-bottom: 0; }
+.nboxes.compact .need-row:first-of-type { border-top: 0; }
+.tag-ok { background: #E2EAD6; color: #2F4019; }
+.need-proj { font-weight: 600; color: #3A3C39; }
+.done-note { display: block; font-size: 13px; color: #3A3C39; background: #F3F3F0; border-radius: 6px; padding: 4px 8px; margin-top: 4px; }
+.need-done .review { margin-top: 6px; }
+/* Engineer: what is still sending, alerts card, the finished-work box */
+.out-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; background: #DCE7F3; color: #1F3A5F; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.out-status.off { background: #FFEDB3; color: #5E4500; }
+.out-status .link-btn { margin-left: auto; }
+.out-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; animation: outPulse 1.2s ease-in-out infinite; }
+.out-status.off .out-dot { animation: none; }
+@keyframes outPulse { 50% { opacity: 0.3; } }
+.eng-alerts { border: 2px solid #1F3A5F; }
+.eng-alerts p { margin: 0 0 10px; }
+.alerts-card { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 2px solid #1F3A5F; margin-bottom: 12px; }
+.done-offer.needed { background: #FFF6DA; border: 1px solid #E8C96A; }
+.done-note-in { display: flex; flex-direction: column; gap: 4px; color: #5E605C; }
+.done-note-in input { min-height: 44px; border: 1px solid #C9CAC3; border-radius: 8px; padding: 0 10px; font: inherit; font-size: 15px; color: #1C1E1D; background: #FFFFFF; }
+/* Change approved: the task box stands out */
+.q-taskbox.on { border: 2px solid #455B28; background: #F6F8F2; }
+.q-tasktext { display: flex; flex-direction: column; gap: 4px; flex: 1 1 260px; font-size: 13px; color: #5E605C; }
+.q-tasktext input { width: 100%; }
+.req { font-weight: 400; color: #8A4B00; font-size: 12px; }
+/* Drawings: the read-out panel (D3/D4/D5), separate cards on phones (D12) */
+.dwg-read { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 14px; }
+.dwg-read dt { color: #5E605C; }
+.dwg-read dd { margin: 0; }
+.dwg-hint { margin: 0; color: #5E4500; background: #FFF6DA; border-radius: 8px; padding: 8px 10px; }
+.dwg-list.compact, .eng-dwgs { display: flex; flex-direction: column; gap: 8px; }
+.dwg-list.compact .dwg-row.compact, .eng-dwgs .dwg-row.compact { background: #FFFFFF; border: 1px solid #DCDDD8; border-radius: 10px; }
+.eng-dwgs .dwg-offline, .dwg-list.compact .dwg-offline { padding: 4px 2px; }
