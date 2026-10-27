@@ -398,7 +398,8 @@ function quietRefresh() {
     if (res.queries && !((S.queriesAt || 0) > t0)) setQueries(res.queries);
     if (res.photos && res.photos.project === S.photosFor && !((S.photosAt || 0) > t0)) { S.photos = res.photos; loadThumbs(res.photos.photos.slice(0, 40).map((p) => p.id)); }
     // A new or withdrawn drawing on his projects: saved (or swapped back) on the phone at once.
-    if (S.engineer && res.dwgs !== undefined && res.dwgs !== S.dwgStamp) { const first = S.dwgStamp === undefined; S.dwgStamp = res.dwgs; if (!first) autoSaveDrawings(true); }
+    // (Also the first time after opening: it only fetches what the phone doesn't have yet.)
+    if (S.engineer && res.dwgs !== undefined && res.dwgs !== S.dwgStamp) { S.dwgStamp = res.dwgs; autoSaveDrawings(true); }
     idleRedraw();
   }, (err) => { if (err.signin) signedOut(err.message); });
 }
