@@ -183,7 +183,7 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1 };
 // Background reads (and "opened") never make a button look busy.
-const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1 };
+const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
 // Reads only: safe to ask again.
 const READ_CALLS = { boot: 1, getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, previewBriefs: 1 };
 function withBusy(el, fn) {
@@ -379,19 +379,36 @@ function pollChanges() {
   api('changed', []).then((res) => {
     const st = String(res.stamp || '');
     // The first time: anything saved since this page opened (give or take the clocks) counts as new.
-    if (lastStamp !== null ? st !== lastStamp : Number(st) > PAGE_T0 - 5000) quietRefresh();
+    // A moment's random wait, so every open phone and laptop doesn't ask the server at the same second.
+    if (lastStamp !== null ? st !== lastStamp : Number(st) > PAGE_T0 - 5000) setTimeout(quietRefresh, Math.random() * 8000);
     lastStamp = st;
   }, (err) => { if (err.signin) signedOut(err.message); }).finally(() => { polling = false; });
 }
+// Only what is on screen is asked for again. The redraw waits until nobody has touched the screen for a few seconds,
+// so it never undoes a half-filled form (ticked boxes, a picked option) or moves a button under a finger.
 function quietRefresh() {
-  if (S.engineer) {
-    api('getSite', []).then((res) => { S.site = res.site; store(SITE_KEY, JSON.stringify({ email: S.me.email, site: res.site })); bgRedraw(); }, () => { /* next time */ });
-    if (S.engTab === 'photos' && S.photosFor) loadPhotos(S.photosFor);
-  } else {
-    api('getData', []).then((res) => { if (res && res.data && !S.pending) { setData(res.data); saveCache(); bgRedraw(); } }, () => { /* next time */ });
-    if (S.photosFor && S.tab === 'projects') loadPhotos(S.photosFor);
+  const photos = S.engineer ? (S.engTab === 'photos' && S.photosFor) || ''
+    : (S.photosFor && S.tab === 'projects' && (S.projSec === 'site' || S.projSec === 'overview')) ? S.photosFor : '';
+  // One request for all of it (the server reads the sheet once).
+  // An answer that took long must never replace something newer that arrived meanwhile (a save's own answer, Refresh).
+  const t0 = Date.now();
+  api('refresh', [{ queries: !!S.queries, photos: photos }]).then((res) => {
+    if (res.site && !((S.siteAt || 0) > t0) && !OUT.items.some((x) => !x.error)) { S.site = res.site; S.siteAt = Date.now(); store(SITE_KEY, JSON.stringify({ email: S.me.email, site: res.site })); }
+    if (res.data && !S.pending && !((S.lastLoad || 0) > t0)) { setData(res.data); saveCache(); }
+    if (res.queries && !((S.queriesAt || 0) > t0)) setQueries(res.queries);
+    if (res.photos && res.photos.project === S.photosFor && !((S.photosAt || 0) > t0)) { S.photos = res.photos; loadThumbs(res.photos.photos.slice(0, 40).map((p) => p.id)); }
+    idleRedraw();
+  }, (err) => { if (err.signin) signedOut(err.message); });
+}
+let lastTouch = 0, idleWaiting = false;
+['pointerdown', 'keydown', 'input', 'change'].forEach((t) => document.addEventListener(t, () => { lastTouch = Date.now(); }, true));
+const IDLE_MS = 8000;
+function idleRedraw() {
+  if (Date.now() - lastTouch < IDLE_MS) {
+    if (!idleWaiting) { idleWaiting = true; setTimeout(() => { idleWaiting = false; idleRedraw(); }, 2000); }
+    return;
   }
-  if (S.queries) loadQueries();
+  bgRedraw();
 }
 setInterval(pollChanges, POLL_MS);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pollChanges(); });
@@ -602,7 +619,7 @@ function engProjects() {
 }
 function engCall(fn, args, onOk, onFail) {
   api(fn, args).then((res) => {
-    if (res && res.site) S.site = res.site;
+    if (res && res.site) { S.site = res.site; S.siteAt = Date.now(); }
     if (onOk) onOk(res);
     renderEng();
   }, (err) => {
@@ -1005,12 +1022,14 @@ function askNotifications() {
   bar.className = 'notify-bar';
   bar.innerHTML = '<b>Allow notifications?</b> ' + esc(notifyReason()) +
     ' <button type="button" class="btn-main" data-act="notify-allow">Allow</button> <button type="button" class="link-btn" data-act="notify-hide">Not now</button>';
+  if (S.engineer) renderEng(); // its Today card waits while the bar asks
 }
 // Engineer's Today, until alerts are on for this phone: a clear card (blocked: where to allow them). Test app: once on,
 // "Send me a test alert" (only this phone gets it).
 function engAlertsHtml() {
   if (!notifyWanted()) return '';
-  if (alertsOnHere()) return '';
+  // Not while the "Allow notifications?" bar asks the same thing at the top.
+  if (alertsOnHere() || !$('notifyBar').hidden) return '';
   const blocked = Notification.permission === 'denied';
   return '<section class="card eng-card eng-alerts"><h2 class="eng-h2">' + (blocked ? 'Alerts are blocked on this phone' : 'Turn on alerts') + '</h2><div class="eng-pad">' +
     (blocked ? '<p class="small">' + esc(BLOCKED_HELP) + ' Then tap the button again.</p>' : '<p class="small">' + esc(notifyReason()) + '</p>') +
@@ -2654,7 +2673,7 @@ function outboxSent(item, res) {
   // Off the waiting list at once, so nothing still says "Sending…" once it's there.
   OUT.items = OUT.items.filter((x) => x.id !== item.id);
   renderNetStrip();
-  if (res && res.site) { S.site = res.site; if (S.me) store(SITE_KEY, JSON.stringify({ email: S.me.email, site: res.site })); }
+  if (res && res.site) { S.site = res.site; S.siteAt = Date.now(); if (S.me) store(SITE_KEY, JSON.stringify({ email: S.me.email, site: res.site })); }
   if (item.action === 'uploadPhoto') {
     const p = item.args[0];
     if (S.photos && S.photos.project === p.project && res && res.photo && !S.photos.photos.some((x) => x.id === res.photo.id)) S.photos.photos.unshift(res.photo);
@@ -2780,6 +2799,7 @@ function sendDrafts(project) {
 function loadPhotos(project, then) {
   api('listPhotos', [project]).then((res) => {
     S.photos = res;
+    S.photosAt = Date.now();
     if (then) then();
     loadThumbs(res.photos.slice(0, 40).map((p) => p.id));
     bgRedraw();
@@ -3394,8 +3414,9 @@ function nameOfEmail(email) { const u = teamUsers().find((x) => x.email === emai
 function initialsOfName(n) { const w = String(n || '').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean); return ((w[0] || '').charAt(0) + (w[1] || '').charAt(0)).toUpperCase() || '?'; }
 function redraw() { if (S.engineer) renderEng(); else if (S.started) renderAll(); }
 function loadQueries(then) {
+  const t0 = Date.now();
   api('listQueries', ['']).then((res) => {
-    setQueries(res);
+    if (!((S.queriesAt || 0) > t0)) setQueries(res); // a newer list arrived meanwhile: keep it
     if (then) then();
     bgRedraw();
   }, (err) => { if (err.signin) signedOut(err.message); });
@@ -3518,6 +3539,7 @@ function markSeenTask(id) {
 }
 function setQueries(res) {
   S.queries = res;
+  S.queriesAt = Date.now();
   loadThumbs(queryPhotoIds());
 }
 // How late a task is: "3 days overdue" (red), "Due today" (amber), "Due tomorrow" / "due Sat 24 Oct" (grey).
@@ -3728,7 +3750,8 @@ function queryTaskNote(q, c) {
   const typed = String(c.taskText || '').trim(), reply = String(c.text || '').trim();
   const area = String(c.area || q.area || '').trim();
   if (c.outcome === 'change') {
-    const base = (c.taskEdited && typed) || String(c.changeText || '').trim();
+    if (c.taskEdited && typed) return typed;
+    const base = String(c.changeText || '').trim();
     return base ? base + (area && base.toLowerCase().indexOf(area.toLowerCase()) < 0 ? ' · ' + area : '') : '';
   }
   if (typed && typed !== c.taskPrefill) return typed;
@@ -4137,8 +4160,8 @@ function projectQueriesHtml(p) {
       (q === open ? '<article class="card q-thread q-inline" id="qThread">' + queryThreadHtml(q, isOwner() || isAssociate()) + '</article>' : '')).join('') ||
       '<p class="empty">No queries on this project yet.</p>') + '</nav>';
   }
+  if (sel) markSeenQ(sel.id); // on screen = opened (before its card is drawn, so it isn't shown as new)
   const cards = list.map((q) => queryCardHtml(q, 'q-open', q.id === S.qSel)).join('') || '<p class="empty">No queries on this project yet.</p>';
-  if (sel) markSeenQ(sel.id); // on screen = opened
   return toggle + '<div class="pgrid"><nav class="pside q-list" aria-label="Query list">' + cards + '</nav>' +
     '<article class="pmain card q-thread" id="qThread">' + (sel ? queryThreadHtml(sel, isOwner() || isAssociate()) : '<p class="empty">Pick a query.</p>') + '</article></div>';
 }
@@ -4374,7 +4397,7 @@ function onAct(el) {
   if (act === 'choose-account') { showSignIn(null, { chooseAccount: true }); return; }
   if (act === 'sign-out-here') { signOutHere(); return; }
   if (act === 'notify-allow') { store(NOTIFY_ASKED_KEY, String(Date.now())); $('notifyBar').hidden = true; enableAlerts(); return; }
-  if (act === 'notify-hide') { store(NOTIFY_ASKED_KEY, String(Date.now())); $('notifyBar').hidden = true; return; }
+  if (act === 'notify-hide') { store(NOTIFY_ASKED_KEY, String(Date.now())); $('notifyBar').hidden = true; if (S.engineer) renderEng(); return; }
   if (S.engineer) { engClick(act, el); return; }
   if (!S.started) return;
   if (photoClick(act, el) || queryClick(act, el) || dwgClick(act, el)) return;
