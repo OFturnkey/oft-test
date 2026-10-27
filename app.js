@@ -386,7 +386,12 @@ function pollChanges() {
     // A moment's random wait, so every open phone and laptop doesn't ask the server at the same second.
     if (lastStamp !== null ? st !== lastStamp : Number(st) > PAGE_T0 - 5000) setTimeout(quietRefresh, Math.random() * 8000);
     lastStamp = st;
-  }, (err) => { POLLDBG.err = String(err && err.message); if (err.signin) signedOut(err.message); }).finally(() => { polling = false; });
+  }, (err) => {
+    POLLDBG.err = String(err && err.message);
+    if (err.signin) { signedOut(err.message); return; }
+    // Google busy or the signal gone for a moment: ask again soon rather than in 45 s.
+    setTimeout(pollChanges, 10000);
+  }).finally(() => { polling = false; });
 }
 // Only what is on screen is asked for again. The redraw waits until nobody has touched the screen for a few seconds,
 // so it never undoes a half-filled form (ticked boxes, a picked option) or moves a button under a finger.
