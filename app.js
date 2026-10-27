@@ -668,8 +668,10 @@ function renderEngInner() {
   // The bottom bar first, and on its own: nothing below can stop it showing.
   const nav = $('engNav');
   nav.hidden = false;
-  nav.innerHTML = ENG_TABS.map((t) => '<button type="button" class="eng-tab' + (S.engTab === t[0] ? ' on' : '') + '" data-act="eng-tab" data-tab="' + t[0] +
+  // Rebuilt only when it changes: a tap that lands while the screen redraws in the background is never lost.
+  const navHtml = ENG_TABS.map((t) => '<button type="button" class="eng-tab' + (S.engTab === t[0] ? ' on' : '') + '" data-act="eng-tab" data-tab="' + t[0] +
     '" aria-pressed="' + (S.engTab === t[0]) + '">' + ENG_ICONS[t[0]] + '<span>' + esc(t[1]) + '</span></button>').join('');
+  if (nav.dataset.drawn !== S.engTab) { nav.innerHTML = navHtml; nav.dataset.drawn = S.engTab; }
   const main = $('engMain');
   try {
     const projs = engProjects();
@@ -4389,7 +4391,7 @@ document.addEventListener('click', (ev) => {
 // Test app only: what the automated checks can look at when a click seems to do nothing.
 const CLICKS = [];
 if (CONFIG.env === 'test') window.oftDebug = () => ({ clicks: CLICKS.slice(-10), inflight: JSON.parse(JSON.stringify(INFLIGHT)), qc: S.qc && { qid: S.qc.qid, outcome: S.qc.outcome, task: S.qc.task, sending: S.qc.sending, err: S.qc.err }, qSel: S.qSel,
-  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab });
+  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab });
 function onAct(el) {
   const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
   // Buttons on the opening / sign-in screens work before any ledger data has loaded.
