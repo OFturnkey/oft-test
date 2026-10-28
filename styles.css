@@ -917,7 +917,8 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 /* Change approved: the task box stands out */
 .q-taskbox.on { border: 2px solid #455B28; background: #F6F8F2; }
 .q-tasktext { display: flex; flex-direction: column; gap: 4px; flex: 1 1 260px; font-size: 13px; color: #5E605C; }
-.q-tasktext input { width: 100%; }
+.q-tasktext input { width: 100%; flex: none; } /* not the row's "last input grows" rule: in this column it made the box 240 px tall */
+.q-taskline { align-items: flex-end; }
 .req { font-weight: 400; color: #8A4B00; font-size: 12px; }
 /* Drawings: the read-out panel (D3/D4/D5), separate cards on phones (D12) */
 .dwg-read { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 14px; }
