@@ -181,7 +181,8 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 // Moving around (tabs, sections, opening a query or a task) is never "busy", even when it loads something in the
 // background: the bottom bar and tabs must always answer. Only saves lock their button.
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
-  'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1 };
+  'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1,
+  'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
 // Reads only: safe to ask again.
@@ -372,9 +373,12 @@ function refresh(quiet) {
 // (a tiny request) and, only if that moved, loads the data again in the background (no "Syncing…", nothing typed is
 // disturbed: the redraw waits for typing). Coming back to the screen asks at once.
 const POLL_MS = 45000, PAGE_T0 = Date.now();
+// After something new arrived, ask every 15 s for the next 2 minutes: what follows straight after (the note after a tick,
+// the question after its photo, a reply) then shows within seconds instead of at the next 45 s check.
+const FOLLOW_MS = 120000, FOLLOW_EVERY_MS = 15000;
 // Test app: what the background refresh did (shown by window.oftDebug for the automated checks).
-const POLLDBG = { polls: 0, refreshes: 0, err: '', stamp: '', last: null };
-let lastStamp = null, polling = false;
+const POLLDBG = { polls: 0, refreshes: 0, err: '', stamp: '', last: null, follow: 0 };
+let lastStamp = null, polling = false, followUntil = 0, followTimer = null;
 function pollChanges() {
   if (polling || document.visibilityState !== 'visible' || !sessionToken() || !S.me || (!S.started && !S.engineer)) return;
   polling = true;
@@ -384,8 +388,10 @@ function pollChanges() {
     POLLDBG.stamp = st; POLLDBG.last = lastStamp;
     // The first time: anything saved since this page opened (give or take the clocks) counts as new.
     // A moment's random wait, so every open phone and laptop doesn't ask the server at the same second.
-    if (lastStamp !== null ? st !== lastStamp : Number(st) > PAGE_T0 - 5000) setTimeout(quietRefresh, Math.random() * 8000);
+    const moved = lastStamp !== null ? st !== lastStamp : Number(st) > PAGE_T0 - 5000;
+    if (moved) { setTimeout(quietRefresh, Math.random() * 8000); followUntil = Date.now() + FOLLOW_MS; }
     lastStamp = st;
+    if (Date.now() < followUntil) { clearTimeout(followTimer); followTimer = setTimeout(() => { POLLDBG.follow++; pollChanges(); }, FOLLOW_EVERY_MS); }
   }, (err) => {
     POLLDBG.err = String(err && err.message);
     if (err.signin) { signedOut(err.message); return; }
@@ -568,8 +574,11 @@ function engClick(act, el) {
   else if (act === 'done-send') sendDonePhotos(el.dataset.id);
   else if (act === 'done-skip') {
     if (S.holdDone[el.dataset.id]) { engTick(el.dataset.id, false); return; }
-    const x = ((S.site && S.site.tasks) || []).find((t) => t.id === el.dataset.id); skipDoneOffer(x ? doneKey(x) : el.dataset.id); renderEng();
+    const x = ((S.site && S.site.tasks) || []).find((t) => t.id === el.dataset.id); skipDoneOffer(x ? doneKey(x) : el.dataset.id);
+    delete S.justDone[el.dataset.id]; // "No thanks": now it moves to Done recently
+    renderEng();
   }
+  else if (act === 'eng-done-toggle') { S.engDoneOpen = !S.engDoneOpen; renderEng(); }
   else if (act === 'eng-add') engAddTask();
   else if (act === 'eng-add-open') { S.engAddOpen = true; renderEng(); const n = $('engAddNote'); if (n) n.focus(); }
   else if (act === 'alerts-on') enableAlerts();
@@ -596,7 +605,7 @@ function engTick(id, done) {
     loadDrafts().then(renderEng);
     return;
   }
-  if (done) S.justDone[id] = true;
+  if (done) S.justDone[id] = true; else delete S.justDone[id];
   S.ticks[id] = { done: done, at: Date.now() };
   renderEng();
   outboxAdd('setDone', [id, done], 'Tick').then(renderEng);
@@ -718,17 +727,25 @@ function engTodayHtml() {
     if (x.done === k.done && !x.pending) delete S.ticks[id]; else x.done = k.done;
   });
   tasks.sort(LC.byDue);
-  // A held tick (waiting for its finished-work photo) shows ticked, still among the open tasks, with the photo box.
-  tasks.forEach((x) => { if (S.holdDone[x.id]) { if (x.done) delete S.holdDone[x.id]; else x.done = x.held = true; } });
-  const open = tasks.filter((x) => !x.done || x.held), done = tasks.filter((x) => x.done && !x.held).slice(-5).reverse();
+  // A held tick (waiting for its finished-work photo) stays UNticked among the open tasks, marked "Photo needed",
+  // with the photo box under it: nothing is done until the photo goes.
+  tasks.forEach((x) => { if (S.holdDone[x.id]) { if (x.done) delete S.holdDone[x.id]; else x.held = true; } });
+  // Just ticked on this phone: stays where it is, with the note/photo box under it, until Send or No thanks; then it
+  // moves to Done recently.
+  const stays = (x) => x.done && S.justDone[x.id] && !x.done_note && !x.done_photo && !doneOfferOff(doneKey(x));
+  const open = tasks.filter((x) => !x.done || stays(x));
+  const doneKeyAt = (x) => x.done_at || '9999'; // ticked here, not saved yet: newest
+  const done = tasks.filter((x) => x.done && !stays(x) && (x.done_at ? Date.now() - stampMs(x.done_at) < 86400000 : !!S.ticks[x.id] || !!x.pending))
+    .sort((a, b) => (doneKeyAt(a) < doneKeyAt(b) ? 1 : -1));
   const projName = engProjName;
   const who = (email) => { const u = ((S.site && S.site.users) || []).find((x) => x.email === email); return u ? u.name : email; };
   // Only the box ticks. The text opens where the task came from (a query or a photo); a new task shows "New" until then.
   const row = (x) => {
     const fresh = isNewTask(x, engMe().code);
-    return '<div class="eng-task' + (x.done && !x.held ? ' done' : '') + (fresh ? ' new' : '') + '">' +
+    return '<div class="eng-task' + (x.done ? ' done' : '') + (x.held ? ' held' : '') + (fresh ? ' new' : '') + '">' +
       '<input type="checkbox" data-act="eng-done" data-id="' + esc(x.id) + '"' + (x.done ? ' checked' : '') + ' aria-label="Done: ' + esc(x.note) + '">' +
       '<div class="eng-task-text"><button type="button" class="eng-task-open" data-act="eng-task-open" data-id="' + esc(x.id) + '">' +
+      (x.held ? '<b class="photo-needed">Photo needed</b> ' : '') +
       (fresh ? '<span class="new-dot" aria-hidden="true"></span><b class="new-tag">New</b> ' : '') + '<span class="eng-task-note">' + esc(LC.cap(x.note)) + '</span></button>' +
       '<span class="eng-meta">' + esc(projName(x.project)) + ' · ' + dueChip(x) +
       (x.added_by && x.added_by !== S.me.email ? ' · from ' + esc(who(x.added_by)) : '') + (x.pending ? ' · <span class="sending">Sending…</span>' : '') + '</span>' +
@@ -741,15 +758,23 @@ function engTodayHtml() {
   S.drafts.filter((d) => !d.purpose).forEach((d) => { unsent[d.project] = (unsent[d.project] || 0) + 1; });
   const unsentHtml = Object.keys(unsent).map((p) => '<button type="button" class="eng-need eng-need-main eng-unsent" data-act="eng-tab" data-tab="photos" data-proj="' + esc(p) + '">' +
     '<b>' + esc(plural(unsent[p], 'photo', 'photos') + ' not sent yet · Send') + '</b><span class="muted small">' + esc(engProjName(p)) + '</span></button>').join('');
+  // Boxes like the owners' Today, in this order; an empty box is one line. Late: most overdue first. Today and coming up:
+  // due today, then the next days (later and undated ones last).
+  const late = open.filter((x) => x.due && x.due < t), soon = open.filter((x) => !(x.due && x.due < t));
+  const doneOpen = !!S.engDoneOpen;
+  const doneBox = done.length
+    ? '<section class="card eng-card eng-box eng-box-done"><button type="button" class="eng-box-h eng-box-toggle" data-act="eng-done-toggle" aria-expanded="' + doneOpen + '">' +
+      '<b>Done recently</b><span class="nbox-n">' + done.length + '</span><span class="muted small">last 24 hours · ' + (doneOpen ? 'hide' : 'show') + '</span></button>' +
+      (doneOpen ? done.map(row).join('') : '') + '</section>'
+    : engBoxHtml('eng-box-done', 'Done recently', 0, '', 'nothing in the last 24 hours');
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
     outboxStatusHtml() + engAlertsHtml() +
     (unsentHtml ? '<section class="card eng-card eng-needs">' + unsentHtml + '</section>' : '') +
-    engNeedsHtml() +
     '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">' + CAMERA_ICON + '<span>Ask a question</span></button>' +
-    '<section class="card eng-card"><h2 class="eng-h2">My tasks <span class="muted">· ' + open.length + '</span></h2>' +
-    (open.length ? open.map(row).join('') : '<p class="empty eng-pad">Nothing on your list.</p>') +
-    (done.length ? '<div class="eng-done-h">Done recently</div>' + done.map(row).join('') : '') + '</section>' +
-    engWaitingHtml() +
+    '<div class="eng-boxes">' + engNeedsHtml() +
+    engBoxHtml('eng-box-late', 'Late', late.length, late.map(row).join('')) +
+    engBoxHtml('eng-box-soon', 'Today and coming up', soon.length, soon.map(row).join('')) +
+    engWaitingHtml() + doneBox + '</div>' +
     // His own tasks: a small link that opens the form, so the home screen stays quiet.
     (S.engAddOpen || a.note || a.err
       ? '<section class="card eng-card"><h2 class="eng-h2">Add a task for yourself</h2>' +
@@ -762,8 +787,13 @@ function engTodayHtml() {
       (S.sendingTest ? 'Sending…' : 'Send me a test alert') + '</button></p>' : '') +
     '<p class="foot eng-foot">Signed in as ' + esc(S.me.email) + '. <button type="button" class="link-btn" data-act="sign-out-here">Sign out of this device</button></p>';
 }
-// Engineer home, above My tasks: clearer photos Shruthi or Savan asked for (take it right here; gone once sent),
-// and their replies to his questions until he opens them.
+// One box of the engineer's Today: its title and count, or a single line when empty.
+function engBoxHtml(cls, title, n, body, emptyText) {
+  if (!n) return '<section class="card eng-card eng-box ' + cls + ' empty"><div class="eng-box-h"><b>' + esc(title) + '</b><span class="muted small">· ' + esc(emptyText || 'none') + '</span></div></section>';
+  return '<section class="card eng-card eng-box ' + cls + '"><div class="eng-box-h"><b>' + esc(title) + '</b><span class="nbox-n">' + n + '</span></div>' + body + '</section>';
+}
+// Engineer Today, first box: clearer photos Shruthi or Savan asked for (take it right here; gone once sent), and their
+// replies to his questions until he opens them.
 function engNeedsHtml() {
   if (!S.queries) { if (!S.queriesLoading) { S.queriesLoading = true; loadQueries(() => { S.queriesLoading = false; }); } return ''; }
   const me = S.me.email, mine = S.queries.queries.filter((q) => q.askedBy === me);
@@ -771,7 +801,7 @@ function engNeedsHtml() {
   const photoAsks = mine.filter((q) => q.status === 'waiting_photo' && !sending(q.id));
   // An answer that gave him a task shows as that task in My tasks ("New"), not here as well.
   const replies = mine.filter(isNewAnswer);
-  if (!photoAsks.length && !replies.length) return '';
+  if (!photoAsks.length && !replies.length) return engBoxHtml('eng-box-needs', 'Needs you', 0, '');
   const msgs = (q) => S.queries.messages.filter((m) => m.queryId === q.id);
   const asked = (q) => { const m = msgs(q).filter((x) => x.kind === 'photo_request').pop(); return m ? LC.cap(m.text.replace(/^Please send a clearer photo[:.]?\s*/i, '').trim()) : ''; };
   const photoItem = (q) => {
@@ -790,8 +820,7 @@ function engNeedsHtml() {
     return '<button type="button" class="eng-need eng-need-main" data-act="eq-open" data-id="' + esc(q.id) + '"><b><span class="new-dot" aria-label="New"></span>' + esc(head + (m ? ': ' + m.text.slice(0, 120) : '')) + '</b>' +
       '<span class="muted small">' + esc(shortText(q.text) + ' · ' + engProjName(q.project) + ' · ' + ageText(q.last.at) + ' ago') + '</span></button>';
   };
-  return '<section class="card eng-card eng-needs"><h2 class="eng-h2">Needs you <span class="muted">· ' + (photoAsks.length + replies.length) + '</span></h2>' +
-    photoAsks.map(photoItem).join('') + replies.map(replyItem).join('') + '</section>';
+  return engBoxHtml('eng-box-needs eng-needs', 'Needs you', photoAsks.length + replies.length, photoAsks.map(photoItem).join('') + replies.map(replyItem).join(''));
 }
 // A reply or answer to his question he hasn't opened, that didn't come with a task for him.
 function isNewAnswer(q) {
@@ -807,7 +836,7 @@ function engWaitingHtml() {
   const list = S.queries.queries.filter((q) => q.askedBy === me && q.status !== 'closed' && q.status !== 'waiting_photo' && !isNewAnswer(q))
     .sort((a, b) => (b.workOnHold - a.workOnHold) || ((a.last ? a.last.at : a.askedAt) < (b.last ? b.last.at : b.askedAt) ? -1 : 1));
   const sendingAsks = waiting('askQuery').map((w) => w.args[0]);
-  if (!list.length && !sendingAsks.length) return '';
+  if (!list.length && !sendingAsks.length) return engBoxHtml('eng-box-wait', 'Waiting for an answer', 0, '');
   // "Pantry · work continuing · waiting 7 min" (the area first), with the latest photo.
   const state = (q) => {
     const l = q.last || { what: 'asked', by: me, at: q.askedAt };
@@ -815,16 +844,16 @@ function engWaitingHtml() {
     return [q.area, q.workOnHold ? 'work on hold' : 'work continuing', what, waitSince(q) ? 'waiting ' + ageText(waitSince(q)) : ''].filter(Boolean).join(' · ');
   };
   const thumb = (q) => { const ph = cardPhoto(q); wantThumb(ph); return ph ? '<span class="q-thumb">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</span>' : ''; };
-  return '<section class="card eng-card"><h2 class="eng-h2">Waiting for an answer <span class="muted">· ' + (list.length + sendingAsks.length) + '</span></h2>' +
+  return engBoxHtml('eng-box-wait', 'Waiting for an answer', list.length + sendingAsks.length,
     sendingAsks.map((x) => '<div class="eng-wait"><span class="eng-wait-main"><b>' + esc(x.text) + '</b><span class="muted small">' + esc([x.area, engProjName(x.project)].filter(Boolean).join(' · ')) + ' · <span class="sending">Sending…</span></span></span></div>').join('') +
     list.map((q) => '<button type="button" class="eng-wait' + (q.workOnHold || waitDays(q) ? ' hold' : '') + '" data-act="eq-open" data-id="' + esc(q.id) + '">' + thumb(q) + '<span class="eng-wait-main"><b>' + esc(q.text) + '</b>' +
-      '<span class="small eng-wait-state">' + esc(LC.cap(state(q))) + '</span><span class="muted small">' + esc(engProjName(q.project)) + '</span></span></button>').join('') + '</section>';
+      '<span class="small eng-wait-state">' + esc(LC.cap(state(q))) + '</span><span class="muted small">' + esc(engProjName(q.project)) + '</span></span></button>').join(''));
 }
 // After ticking: "Done. Add a note or a photo of the finished work?" (optional; for tasks from a query or a photo, and
 // any task just ticked on this phone). A task from an approved change: the photo is needed before it counts as done.
 // Owners then see "Done, with photo" and the note.
 function donePhotoHtml(x) {
-  if (!x.done) return '';
+  if (!x.done && !S.holdDone[x.id]) return '';
   const sending = waiting('addDonePhoto').concat(waiting('setDone').filter((w) => (w.args[2] || []).length)).some((w) => w.args[0] === x.id);
   const noteLine = x.done_note ? '<span class="done-note small">Your note: ' + esc(x.done_note) + '</span>' : '';
   if (sending) return '<span class="done-photo">Done, with photo · <span class="sending">Sending…</span></span>';
@@ -870,6 +899,7 @@ function sendDonePhotos(id) {
     .then(loadDrafts).then(() => {
       if (held) { delete S.holdDone[id]; S.ticks[id] = { done: true, at: Date.now() }; }
       delete S.doneNote[id];
+      delete S.justDone[id]; // now it moves to Done recently
       skipDoneOffer(doneKey(x));
       engSnack(!drafts.length ? 'Note sent.' : navigator.onLine ? 'Sending the photo. Shruthi and Savan will see “Done, with photo”.' : 'Saved on your phone. It will send by itself.');
       renderEng();
@@ -3138,6 +3168,7 @@ function queryClick(act, el) {
   else if (act === 'open-file') openFile(id);
   else if (act === 'att-del') { const l = S.att[el.dataset.p] || []; S.att[el.dataset.p] = l.filter((x) => x.id !== id); redraw(); }
   else if (act === 'today-mine') { S.todayMine = !!v; renderAll(); }
+  else if (act === 'reg-open') { S.qView = 'list'; S.qSel = id; S.qOpen = true; S.qc = null; renderAll(); window.scrollTo(0, 0); if (narrowQ.matches) scrollCardTop(id); }
   else if (act === 'today-query') { S.projTab = el.dataset.code; S.projSec = 'queries'; S.qSel = id; S.qOpen = true; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); if (narrowQ.matches) scrollCardTop(id); }
   else if (act === 'needs-query') { S.projSec = 'queries'; S.qSel = id; S.qOpen = true; S.qView = 'list'; S.qc = null; renderAll(); window.scrollTo(0, 0); if (narrowQ.matches) scrollCardTop(id); }
   else if (act === 'ph-open-site') { S.projSec = 'site'; S.photosSeenWant = S.projTab; openPhoto(id); renderAll(); }
@@ -3424,7 +3455,8 @@ function dwgUploadHtml(p) {
   const otherProj = u.prefix && !LC.dwgPrefixIs(S.dir, u.prefix, p.code);
   const have = ((S.dwgs && S.dwgs.drawings) || []).find((d) => d.code === String(u.code || '').trim().toUpperCase());
   const head = '<div class="muted small">' + (u.read ? 'Read from the file name' : 'The file name doesn’t follow the pattern: fill these in') + '</div>' +
-    '<div class="mono dwg-fname">' + esc(String(u.fileName).replace(/\.[A-Za-z0-9]{1,6}$/, '')) + '</div>' +
+    // The whole real name, endings included, so a hidden doubled ending ("….dwg.pdf") shows.
+    '<div class="mono dwg-fname">' + esc(String(u.fileName)) + '</div>' +
     '<span class="dwg-meta">' + esc((u.fileType || 'PDF') + ' · ' + sizeText(u.size || 0)) + '</span>' +
     (u.read ? '' : '<p class="small dwg-hint">Next time, name the file like <span class="mono">' + esc(p.code) + '-RCP Dwg-' + dwgToday() + '-R1</span>: ' + esc(DWG_RULES) + '. The app then fills these in.</p>') +
     (otherProj ? '<p class="warn small">The file name starts with “' + esc(u.prefix) + '”, but this is ' + esc(p.name || p.code) + ' (' + esc(p.code) + '). Check it’s the right project.</p>' : '');
@@ -4149,8 +4181,11 @@ function addQueryDraftFiles(files, purpose, project) {
 /* ---------- change register ---------- */
 // Voided numbers (a change later made Answered) are left out, with a note so the gap in the numbers is explained.
 // editable (owners on screen): each line has Edit (what was approved, area, why, cost), logged in Changes.
-function registerRowsHtml(all, showCost, editable) {
-  const rows = all.filter((r) => !r.voided), voided = all.filter((r) => r.voided);
+// screen ('owner' / 'eng'): newest first, and a line opens its query (photos and thread); Edit stays its own button.
+// Printed: oldest first, like a logbook.
+function registerRowsHtml(all, showCost, editable, screen) {
+  const num = (r) => Number(String(r.no).replace(/\D/g, '')) || 0;
+  const rows = all.filter((r) => !r.voided).sort((a, b) => (screen ? num(b) - num(a) : num(a) - num(b))), voided = all.filter((r) => r.voided);
   const note = voided.length ? '<p class="muted small reg-void">Numbers not used: ' + esc(voided.map((r) => r.no).join(', ')) + ' (changed to Answered).</p>' : '';
   if (!rows.length) return '<p class="empty">No changes approved yet.</p>' + note;
   const cols = 7 + (editable ? 1 : 0);
@@ -4158,7 +4193,8 @@ function registerRowsHtml(all, showCost, editable) {
     (editable ? '<th><span class="sr-only">Edit</span></th>' : '') + '</tr></thead><tbody>' +
     rows.map((r) => {
       const ed = editable && S.regEdit && S.regEdit.project === r.project && S.regEdit.no === r.no;
-      return '<tr' + (ed ? ' class="on"' : '') + '><td class="mono">' + esc(r.no) + '</td><td>' + esc(niceDay(r.date)) + '</td><td>' + esc(r.area || '—') + '</td><td>' + esc(r.text) + '</td><td>' + esc(nameOfEmail(r.approvedBy)) +
+      const open = screen && r.queryId && !ed ? ' data-act="' + (screen === 'eng' ? 'eq-open' : 'reg-open') + '" data-id="' + esc(r.queryId) + '" data-code="' + esc(r.project) + '" title="Open the query"' : '';
+      return '<tr class="' + (ed ? 'on' : '') + (open ? ' reg-line' : '') + '"' + open + '><td class="mono">' + esc(r.no) + '</td><td>' + esc(niceDay(r.date)) + '</td><td>' + esc(r.area || '—') + '</td><td>' + esc(r.text) + '</td><td>' + esc(nameOfEmail(r.approvedBy)) +
         '</td><td>' + esc(r.raisedFrom) + '</td><td>' + esc(r.cause) + (showCost ? ' · ' + (r.cost ? LC.inr(r.cost) : 'nil') : '') + '</td>' +
         (editable ? '<td><button type="button" class="btn-sm" data-act="reg-edit" data-code="' + esc(r.project) + '" data-id="' + esc(r.no) + '">Edit</button></td>' : '') + '</tr>' +
         (ed ? '<tr class="reg-form"><td colspan="' + cols + '">' + registerFormHtml(S.regEdit) + '</td></tr>' : '');
@@ -4242,7 +4278,7 @@ function querySummaryHtml(code) {
 }
 function engRegisterHtml(proj) {
   const rows = ((S.queries && S.queries.register) || []).filter((r) => r.project === proj);
-  return '<button type="button" class="link-btn" data-act="eq-back">← All queries</button><section class="card eng-card eng-pad"><h2 class="eng-h2" style="padding-left:0">Change register · ' + esc(proj) + '</h2>' + registerRowsHtml(rows, false) + '</section>';
+  return '<button type="button" class="link-btn" data-act="eq-back">← All queries</button><section class="card eng-card eng-pad"><h2 class="eng-h2" style="padding-left:0">Change register · ' + esc(proj) + '</h2>' + registerRowsHtml(rows, false, false, 'eng') + '</section>';
 }
 function printRegister(proj) {
   const p = projInfo(proj) || { name: proj };
@@ -4266,7 +4302,7 @@ function projectQueriesHtml(p) {
     '<div class="q-toolbar"><div class="seg" role="group" aria-label="View"><button type="button" class="seg-b' + (view === 'list' ? ' on' : '') + '" data-act="q-view" data-v="list">Queries</button>' +
     '<button type="button" class="seg-b' + (view === 'register' ? ' on' : '') + '" data-act="q-view" data-v="register">Change register</button></div>' +
     (view === 'register' && isOwner() ? '<button type="button" class="btn-outline" data-act="q-print" data-code="' + esc(p.code) + '">Print change register</button>' : '') + '</div>';
-  if (view === 'register') return toggle + '<section class="card">' + registerRowsHtml(S.queries.register.filter((r) => r.project === p.code), isOwner(), isOwner()) + '</section>' +
+  if (view === 'register') return toggle + '<section class="card">' + registerRowsHtml(S.queries.register.filter((r) => r.project === p.code), isOwner(), isOwner(), 'owner') + '</section>' +
     (isOwner() ? querySummaryHtml(p.code) : '');
   // Too narrow for the list and the opened query side by side (a phone, a narrow laptop window): the opened query
   // opens right under its own card (one at a time; tap the card again to close it). Wide: side by side.
