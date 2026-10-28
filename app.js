@@ -3480,8 +3480,8 @@ function dwgUploadHtml(p) {
   return '<section class="card dwg-panel">' + head +
     '<div class="muted small dwg-proj">Project: ' + esc((p.name || p.code) + ' (' + p.code + ')') + '</div>' +
     '<div class="dwg-fields">' +
-    '<label>Drawing type<input id="dwgCode" data-dup="code" value="' + esc(u.code) + '" maxlength="6" autocapitalize="characters" placeholder="RCP"></label>' +
-    '<label class="dwg-wide">What it is<input id="dwgTitle" data-dup="title" list="dwgTitles" value="' + esc(u.title) + '" placeholder="Reflected ceiling plan"></label>' +
+    '<label>Drawing type<input id="dwgCode" data-dup="code" value="' + esc(u.code) + '" maxlength="6" autocapitalize="characters" placeholder="e.g. ELE"></label>' +
+    '<label class="dwg-wide">What it is<input id="dwgTitle" data-dup="title" list="dwgTitles" value="' + esc(u.title) + '" placeholder="e.g. Electrical layout"></label>' +
     '<datalist id="dwgTitles">' + Object.keys(LC.DWG_TYPES).map((k) => '<option value="' + esc(LC.DWG_TYPES[k]) + '">').join('') + '</datalist>' +
     '<label>Revision<span class="dwg-rev">R<input id="dwgRev" data-dup="revNo" value="' + esc(u.revNo) + '" inputmode="numeric" maxlength="3"></span></label>' +
     '<label>Dated<input id="dwgDated" data-dup="dated" type="date" value="' + esc(u.dated) + '"></label></div>' +
@@ -3501,10 +3501,17 @@ function releaseDrawing() {
   readBase64(u.file).then((data) => api('uploadDrawing', [{ id: newId(), project: p.code, fileName: u.fileName, code: code, title: title, revNo: revNo, dated: u.dated,
     ownersOnly: !!u.ownersOnly, data: data }]))
     .then((res) => {
-      S.dwgs = res; S.dwgUp = null;
+      // Only this upload's panel closes: a next file picked while this one was uploading stays as it is.
+      if (S.dwgsFor === p.code) S.dwgs = res;
+      if (S.dwgUp === u) S.dwgUp = null;
       snack(u.ownersOnly ? title + ' R' + revNo + ' saved for owners only. Nobody else gets it.' : title + ' R' + revNo + ' released to site. The site team gets a “New drawing” alert.');
       renderAll();
-    }, (err) => { if (err.signin) { signedOut(err.message); return; } u.sending = false; u.err = cleanErr(err.message); renderAll(); });
+    }, (err) => {
+      if (err.signin) { signedOut(err.message); return; }
+      u.sending = false; u.err = cleanErr(err.message);
+      if (S.dwgUp !== u) snack(title + ' R' + revNo + ' was not uploaded: ' + u.err, { error: true }); // its panel was replaced by the next file
+      renderAll();
+    });
 }
 // Drawing buttons, the same for owners, associates and engineers. Returns true when it handled the click.
 function dwgClick(act, el) {
