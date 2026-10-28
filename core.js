@@ -361,7 +361,9 @@ function LedgerCore() {
     FCL: 'False ceiling details', ELV: 'Elevations', GA: 'General arrangement', PAR: 'Partition layout', SGN: 'Signage' };
   // Returns { prefix, code, dated: 'yyyy-mm-dd', revNo } or null when the name doesn't follow the pattern.
   function parseDwgName(name) {
-    var s = String(name || '').replace(/\.[A-Za-z0-9]{1,6}$/, '').trim(); // any kind of file: .pdf, .dwg, .xlsx…
+    // Any kind of file (.pdf, .dwg, .xlsx…), also with a hidden doubled ending ("…R1.dwg.pdf": Windows hides endings),
+    // a copy number ("…R1 (1).xlsx") or long dashes typed or pasted in.
+    var s = String(name || '').replace(/(\.[A-Za-z0-9]{1,6})+$/, '').replace(/\s*\(\d{1,3}\)$/, '').replace(/[‐-―]/g, '-').trim();
     var m = /^([A-Za-z0-9]{2,12})[\s_-]+([A-Za-z]{2,6})[\s_-]*Dwg[\s_-]*(\d{2})(\d{2})(\d{2})[\s_-]*R(\d{1,3})$/i.exec(s);
     if (!m) return null;
     var dd = Number(m[3]), mm = Number(m[4]);
