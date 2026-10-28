@@ -1023,7 +1023,10 @@ function notifyReason() {
   return CONFIG.env === 'test' ? 'Test app: only so you can send yourself a test alert. Nothing else is ever sent from here.'
     : S.engineer ? 'So you hear at once when Shruthi or Savan reply, give you a task, or need a photo.' : 'So you hear at once about urgent queries, new site photos and your 7:00 brief.';
 }
-const BLOCKED_HELP = 'To get alerts: tap the icon left of the address (or ⋮ → Settings → Site settings) → Notifications → Allow. On Android also: Settings → Apps → Chrome → Notifications → on.';
+// The site's own permission first: on 28 Oct Venky's phone stayed blocked with only the phone's Chrome setting on.
+const BLOCKED_HELP = '1. In Chrome (not the home-screen icon), open this app, tap the icon left of the address (the bar may be at the bottom) → Notifications → Allow. ' +
+  '2. Phone Settings → Apps → Chrome → Notifications → on; if the app is on your home screen, also Apps → O F Turnkey → Notifications → on. ' +
+  '3. Close the app fully and open it again.';
 function askNotifications() {
   const bar = $('notifyBar');
   if (!notifyWanted() || alertsOnHere()) { bar.hidden = true; return; }
@@ -1051,7 +1054,7 @@ function engAlertsHtml() {
   if (alertsOnHere() || !$('notifyBar').hidden) return '';
   const blocked = Notification.permission === 'denied';
   return '<section class="card eng-card eng-alerts"><h2 class="eng-h2">' + (blocked ? 'Alerts are blocked on this phone' : 'Turn on alerts') + '</h2><div class="eng-pad">' +
-    (blocked ? '<p class="small">' + esc(BLOCKED_HELP) + ' Then tap the button again.</p>' : '<p class="small">' + esc(notifyReason()) + '</p>') +
+    (blocked ? '<p class="small">' + esc(BLOCKED_HELP) + ' Then tap Turn on alerts.</p>' : '<p class="small">' + esc(notifyReason()) + '</p>') +
     '<button type="button" class="btn-main eng-addbtn" data-act="alerts-on">Turn on alerts</button></div></section>';
 }
 function firstRender(fromServer) {
