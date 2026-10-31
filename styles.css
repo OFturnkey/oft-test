@@ -1108,4 +1108,20 @@ ul.warn-line { padding-left: 28px; }
 }.sl-lower { background: #FDF0EE; color: #7E1E14; }
 .sl-lower .sl-chip { border-color: #E3A49C; }
 .sl-lower .sl-chip.on { background: #1C1E1D; border-color: #1C1E1D; }
-.sc-redone { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; color: #7E1E14; background: #FDF0EE; border-radius: 4px; padding: 0 4px; }
+.sc-redone { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; color: #7E1E14; background: #FDF0EE; border-radius: 4px; padding: 0 4px; }/* Phones: the team under the name, in the column that stays put. */
+.sc-chart.compact .sc-row:not(.sc-sec):not(.sc-head) > .sc-name { display: flex; flex-direction: column; justify-content: center; line-height: 1.2; }
+.sc-n1, .sc-n2 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-n2 { font-size: 11px; color: #5E605C; }
+/* "This week": the line's colour says how far the last value is from the plan by Sunday. */
+.sw-item.ok .sw-line { color: #455B28; }
+.sw-item.behind .sw-line { color: #8A5A00; }
+.sw-item.far .sw-line { color: #A3271B; }
+.sw-item.none .sw-line { color: #5E605C; }
+.sw-item.behind { box-shadow: inset 3px 0 0 #E8C96A; padding-left: 10px; }
+.sw-item.far { box-shadow: inset 3px 0 0 #A3271B; padding-left: 10px; }
+/* Whole chart sideways: the bottom bar would cover rows; it comes back when the phone is upright. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .eng.eng-wide .eng-nav { display: none; }
+  .eng.eng-wide .eng-main { padding-bottom: 16px; }
+}.env-strip button { font: inherit; font-weight: 600; border: 1px solid #5E4500; background: #FFFFFF; color: #5E4500; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.env-strip .fake-on { color: #A3271B; }
