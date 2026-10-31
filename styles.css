@@ -1072,4 +1072,37 @@ ul.warn-line { padding-left: 28px; }
 .sc-row.sc-sec .sc-name { grid-column: 2 / -2; font-size: 15px; font-weight: 700; letter-spacing: 0; text-transform: none; color: #1C1E1D; }
 .sc-row.sc-sec .sc-no { font-size: 13px; color: #3A3C39; }
 .sc-secsum { font-weight: 500; font-size: 13px; color: #455B28; }
-.sc-chart.compact .sc-row.sc-sec > .sc-name { line-height: 38px; font-size: 14px; }.sl-team.unknown { background: #FFEDB3; color: #5E4500; }
+.sc-chart.compact .sc-row.sc-sec > .sc-name { line-height: 38px; font-size: 14px; }.sl-team.unknown { background: #FFEDB3; color: #5E4500; }/* The axis has three rows: month, Monday dates, then the Today label (never over a month name). */
+.sc-track.sc-axis { height: 54px; }
+.sc-tlabel { top: 36px; }
+.sc-axis .sc-tlabel-line { top: 50px; }
+/* An ended week with nothing logged: that stretch of the plan bar is hatched grey. */
+.sc-unlog { position: absolute; top: 7px; height: 16px; box-sizing: border-box; border-radius: 3px; pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.85) 0 3px, rgba(138, 140, 134, 0.55) 3px 5px); border: 1px dashed #8A8C86; }
+.sc-legend .lg-unlog { background: repeating-linear-gradient(135deg, #FFFFFF 0 3px, #A7AAA2 3px 5px); border: 1px dashed #8A8C86; }/* Phone Schedule: "This week" list (upright use) */
+.sw { padding: 12px 14px; display: flex; flex-direction: column; }
+.sw-h { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; margin-bottom: 4px; }
+.sw-h h3 { margin: 0; font-size: 18px; }
+.sw-sub { margin: 14px 0 2px; font-size: 13px; font-weight: 600; color: #5E605C; }
+.sw-sub.bad { color: #A3271B; margin-top: 6px; }
+.sw-item { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; border: 0; border-top: 1px solid #ECECE7; background: #FFFFFF; padding: 10px 2px; font: inherit; color: #1C1E1D; cursor: pointer; }
+.sw-item.on { background: #EEF2E6; }
+.sw-item.late { box-shadow: inset 3px 0 0 #A3271B; padding-left: 10px; }
+.sw-name { font-weight: 500; font-size: 15px; }
+.sw-days { font-size: 13px; color: #5E605C; font-family: 'IBM Plex Mono', monospace; }
+.sw-line { font-size: 13px; color: #455B28; font-weight: 500; }
+.sw-item.late .sw-line { color: #A3271B; }
+.sw-detail { padding: 4px 4px 12px; border-top: 1px dashed #ECECE7; }
+.sw-none { margin: 6px 0; font-size: 14px; }
+.sw-whole { width: 100%; margin-top: 10px; min-height: 48px; }
+.sw-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 10px; }
+/* Upright: a hint to turn the phone. Sideways (a phone's short height): the whole chart uses the width. */
+@media (orientation: landscape) { .sw-turn { display: none; } }
+@media (orientation: landscape) and (max-height: 520px) {
+  .sc-chart.compact { min-width: 1100px; }
+  .sc-chart.compact .sc-row { grid-template-columns: 34px 240px 44px minmax(0, 1fr); }
+  .sc-chart.compact .sc-row > .sc-name { left: 34px; font-size: 14px; }
+}@media (orientation: landscape) and (max-height: 520px) {
+  .eng.eng-wide { max-width: none; }
+  .eng.eng-wide .eng-main { padding-left: 8px; padding-right: 8px; }
+}
