@@ -377,7 +377,251 @@ function LedgerCore() {
     return prefix === code || (!!name && prefix === name);
   }
 
+  /* ---------- Schedule ----------
+   * Plan dates are day numbers from Day 1 (the real site start once set, else the planned start), so moving Day 1
+   * moves the whole plan. Durations count every calendar day; sundayOff (a per-project setting, coming later) skips
+   * Sundays. Weeks run Monday to Sunday. Week 1 is the week Day 1 falls in, except that a Saturday or Sunday start
+   * folds into the next week (Day 1 Sat 31 Oct: Week 1 is Mon 2 to Sun 8 Nov and also covers 31 Oct and 1 Nov). */
+  function ymd(s) { var p = String(s).split('-'); return [+p[0], +p[1] - 1, +p[2]]; }
+  function addDaysIso(s, n) { var d = fromIso(s); d.setDate(d.getDate() + n); return iso(d); }
+  function dayDiff(a, b) { var x = ymd(a), y = ymd(b); return Math.round((Date.UTC(y[0], y[1], y[2]) - Date.UTC(x[0], x[1], x[2])) / 86400000); }
+  function weekday(s) { return fromIso(s).getDay(); }
+  // The date of plan day n (n = 1 is Day 1).
+  function planDate(day1, n, sundayOff) {
+    if (!day1 || !n) return '';
+    if (!sundayOff) return addDaysIso(day1, n - 1);
+    var d = day1, k = weekday(d) === 0 ? 0 : 1;
+    while (weekday(d) === 0) { d = addDaysIso(d, 1); k = 1; }
+    while (k < n) { d = addDaysIso(d, 1); if (weekday(d) !== 0) k++; }
+    return d;
+  }
+  // The plan day a date falls on (a Sunday off counts as the working day before it). Before Day 1: 0 or less.
+  function planDay(day1, s, sundayOff) {
+    if (!day1 || !s) return null;
+    var diff = dayDiff(day1, s);
+    if (!sundayOff || diff < 0) return diff + 1;
+    var n = 0, d = day1;
+    for (var i = 0; i <= diff; i++) { if (weekday(d) !== 0) n++; d = addDaysIso(d, 1); }
+    return Math.max(n, 1);
+  }
+  function weekMonday(s) { return addDaysIso(s, -((weekday(s) + 6) % 7)); }
+  function firstWeek(day1) { var m = weekMonday(day1), w = weekday(day1); return w === 6 || w === 0 ? addDaysIso(m, 7) : m; }
+  // Week number of a date (1 for anything up to the end of Week 1).
+  function weekNo(day1, s) { return Math.max(1, Math.floor(dayDiff(firstWeek(day1), weekMonday(s)) / 7) + 1); }
+  // The days a week's log covers: Week 1 starts on Day 1.
+  function weekSpan(day1, monday) { var from = monday === firstWeek(day1) && day1 < monday ? day1 : monday; return { from: from, to: addDaysIso(monday, 6) }; }
+
+  var REASONS = ['Short of people', 'Team didn’t turn up', 'Waiting for material', 'Waiting for another team', 'Bigger job than planned'];
+  var STEPS = [0, 25, 50, 75, 100];
+  var BEHIND = 25; // points behind plan that need a reason
+
+  // Each row's bar: its own days, stretched to cover its sub-rows. acts: [{ id, parent, start, days }].
+  // Returns { id: { start, end } } for the rows that have a bar.
+  function planSpans(acts) {
+    var kids = {}, by = {}, out = {};
+    acts.forEach(function (a) { by[a.id] = a; if (a.parent) (kids[a.parent] = kids[a.parent] || []).push(a.id); });
+    var span = function (id, depth) {
+      if (out[id] !== undefined || depth > 6) return out[id] || null;
+      var a = by[id], s = a && a.start && a.days ? { start: a.start, end: a.start + a.days - 1 } : null;
+      (kids[id] || []).forEach(function (k) {
+        var c = span(k, depth + 1);
+        if (c) s = s ? { start: Math.min(s.start, c.start), end: Math.max(s.end, c.end) } : { start: c.start, end: c.end };
+      });
+      out[id] = s;
+      return s;
+    };
+    acts.forEach(function (a) { span(a.id, 0); });
+    Object.keys(out).forEach(function (k) { if (!out[k]) delete out[k]; });
+    return out;
+  }
+  // How much of a bar the plan expects done by the end of plan day n (0 to 100, rounded).
+  function planPct(span, n) {
+    if (!span || n === null || n === undefined) return null;
+    if (n < span.start) return 0;
+    if (n >= span.end) return 100;
+    return Math.round((n - span.start + 1) / (span.end - span.start + 1) * 100);
+  }
+  // Rows the engineer logs: planned work (not sections or purchases) with days of its own. A row with no days whose
+  // sub-rows have them (#35 "Finalization of wall surfaces") is a heading: its sub-rows are logged instead.
+  function loggable(a, spans) { return a.kind === 'activity' && a.status !== 'removed' && !!a.start && !!a.days && !!spans[a.id]; }
+  // Each activity's weekly values, oldest first: { id: [{ week, pct, reason, by, at }] }.
+  function progressBy(progress) {
+    var out = {};
+    progress.forEach(function (p) { (out[p.activity] = out[p.activity] || []).push(p); });
+    Object.keys(out).forEach(function (k) { out[k].sort(function (a, b) { return a.week < b.week ? -1 : 1; }); });
+    return out;
+  }
+  function lastBefore(list, monday) { var v = null; (list || []).forEach(function (p) { if (p.week < monday) v = p; }); return v; }
+  // The list for one week's log: what the plan has running that week, plus anything started and not finished.
+  // Each: { act, plan (% expected by the week's Sunday), before (last week's value or null), now (this week's, if logged) }.
+  function weekList(acts, progress, day1, monday, sundayOff) {
+    var spans = planSpans(acts), by = progressBy(progress), span = weekSpan(day1, monday);
+    var a0 = planDay(day1, span.from, sundayOff), a1 = planDay(day1, span.to, sundayOff);
+    var out = [];
+    acts.forEach(function (a) {
+      if (!loggable(a, spans)) return;
+      var s = spans[a.id], before = lastBefore(by[a.id], monday);
+      var now = (by[a.id] || []).filter(function (p) { return p.week === monday; })[0] || null;
+      if (before && before.pct === 100 && !now) return;
+      var running = s.start <= a1 && s.end >= a0, going = before && before.pct > 0 && before.pct < 100;
+      if (running || going || now) out.push({ act: a, span: s, plan: planPct(s, a1), before: before, now: now });
+    });
+    return out;
+  }
+  // Started in the first week logged above 0%, finished in the week it reached 100% (week by week).
+  function actualOf(list, day1) {
+    var st = null, fin = null, last = null;
+    (list || []).forEach(function (p) {
+      last = p;
+      if (p.pct > 0 && !st) st = weekSpan(day1, p.week).from;
+      if (p.pct === 100 && !fin) fin = addDaysIso(p.week, 6);
+      if (p.pct < 100) fin = null;
+    });
+    return st ? { start: st, finish: fin, pct: last.pct, week: last.week } : (last ? { start: '', finish: null, pct: last.pct, week: last.week } : null);
+  }
+
+  /* The planner Excel ("Project Planner" sheet), read on the owner's laptop. Columns are found by their header text,
+   * so inserting columns doesn't break it: ACTIVITY, PLAN START DAY, PLAN DURATION, and optionally TEAM and REMARKS;
+   * the column just left of ACTIVITY holds the section letter or the activity number.
+   *   letter, no days        → a section ("A · PROJECT INITIALIZING WORK")
+   *   number                 → an activity ("12 Carpentry Framework", start 15, 25 days)
+   *   no number              → a sub-row of the numbered row above it ("Ply backing for doors"); "a. vendor 1" under
+   *                            a sub-row is a sub-row of that one
+   *   no days                → a row without a bar (procurement items, headings)
+   * Rows under an activity named "…procurement…" are purchases (not in the engineer's weekly log). Sections named
+   * "client…" are the client's scope. rows: the sheet's cells, row by row. */
+  function cellText(v) { return v === null || v === undefined ? '' : String(v).replace(/\s+/g, ' ').trim(); }
+  function plannerCols(rows) {
+    for (var r = 0; r < Math.min(rows.length, 40); r++) {
+      var row = rows[r] || [], c = { row: r };
+      for (var j = 0; j < row.length; j++) {
+        var h = cellText(row[j]).toUpperCase();
+        if (!h) continue;
+        if (c.name === undefined && /^ACTIVIT(Y|IES)( NAME)?$/.test(h)) c.name = j;
+        else if (c.start === undefined && /^PLAN(NED)? START/.test(h)) c.start = j;
+        else if (c.days === undefined && /^PLAN(NED)? DURATION|^DURATION/.test(h)) c.days = j;
+        else if (c.note === undefined && /^(REMARKS?|NOTES?)$/.test(h)) c.note = j;
+        else if (c.team === undefined && /^TEAM( CODE)?$/.test(h)) c.team = j;
+      }
+      if (c.name !== undefined && c.start !== undefined && c.days !== undefined) { c.no = c.name - 1; return c; }
+    }
+    return null;
+  }
+  function schedNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+  function parsePlanner(rows) {
+    var c = plannerCols(rows || []);
+    if (!c) return { error: 'This file has no planner sheet: no header row with ACTIVITY, PLAN START DAY and PLAN DURATION.' };
+    var items = [], problems = [], section = null, top = null, sub = null, seen = {};
+    var num = function (v, what, line) {
+      if (v === null || v === undefined || cellText(v) === '') return null;
+      var n = typeof v === 'number' ? v : Number(cellText(v));
+      if (!isFinite(n) || n < 1 || Math.round(n) !== n) { problems.push('Row ' + line + ': ' + what + ' “' + cellText(v) + '” isn’t a whole number of days, left empty.'); return null; }
+      return n;
+    };
+    for (var r = c.row + 1; r < rows.length; r++) {
+      var row = rows[r] || [], line = r + 1;
+      var name = cellText(row[c.name]);
+      if (!name) continue;
+      var no = c.no >= 0 ? cellText(row[c.no]) : '';
+      var start = num(row[c.start], 'plan start', line), days = num(row[c.days], 'duration', line);
+      var it = { line: line, name: name, no: '', start: start, days: days, parent: -1, level: 0,
+        note: c.note !== undefined ? cellText(row[c.note]) : '', team: c.team !== undefined ? cellText(row[c.team]) : '' };
+      if (/^[A-Za-z]$/.test(no) && start === null && days === null) {
+        section = { letter: no.toUpperCase(), name: name };
+        top = sub = null;
+        it.kind = 'section'; it.no = section.letter; it.level = -1;
+      } else if (/^\d+$/.test(no)) {
+        it.no = no; top = it; sub = null;
+      } else if (top) {
+        var under = sub && /^[a-z][.)]\s*\S/i.test(name) ? sub : top;
+        it.parent = items.indexOf(under);
+        it.level = under === top ? 1 : 2;
+        under.kids = (under.kids || 0) + 1;
+        it.no = under.no + (under === top ? String.fromCharCode(96 + Math.min(under.kids, 26)) : '.' + under.kids);
+        if (under === top) sub = it;
+      }
+      if (it.kind !== 'section') {
+        var head = top || it;
+        it.kind = /procure/i.test(head.name) ? 'procurement' : 'activity';
+      }
+      it.section = section ? section.name : '';
+      it.clientScope = !!section && /\bclient/i.test(section.name);
+      var parentName = it.parent >= 0 ? items[it.parent].name : '';
+      var key = (it.kind === 'section' ? 'section|' : schedNorm(it.section) + '|' + schedNorm(parentName) + '|') + schedNorm(name);
+      seen[key] = (seen[key] || 0) + 1;
+      it.key = key + (seen[key] > 1 ? '#' + seen[key] : '');
+      items.push(it);
+    }
+    items.forEach(function (x) { delete x.kids; });
+    if (!items.some(function (x) { return x.kind !== 'section'; })) return { error: 'The planner sheet has no activities under its header row.' };
+    return { items: items, problems: problems };
+  }
+  /* A re-import against the plan already saved. Rows are matched by section, parent and name, so a matched row keeps
+   * its id and its logged progress. old: the saved rows [{ id, key, name, start, days, status }]; status 'gone' is a
+   * row an earlier import left out that has progress (kept, "not in the planner any more"): it comes back if the
+   * file has it again. links: { oldId: item index } for rows the owner says were renamed. Returns { rows: [{ i, id,
+   * change: 'new'|'same'|'dates'|'name'|'renamed'|'back', was }], removed: [rows still in the plan that the new file
+   * leaves out] }. */
+  function schedMatch(old, items, links) {
+    var byKey = {}, used = {}, linked = {};
+    links = links || {};
+    Object.keys(links).forEach(function (id) { linked[links[id]] = id; });
+    old.forEach(function (a) { if (a.status !== 'removed' && (!byKey[a.key] || byKey[a.key].status === 'gone')) byKey[a.key] = a; });
+    var rows = items.map(function (it, i) {
+      var a = linked[i] !== undefined ? old.filter(function (x) { return x.id === linked[i]; })[0] : byKey[it.key];
+      if (!a || used[a.id]) return { i: i, id: '', change: 'new', was: null };
+      used[a.id] = true;
+      var change = linked[i] !== undefined ? 'renamed' : a.status === 'gone' ? 'back' :
+        (a.start !== it.start || a.days !== it.days) ? 'dates' : a.name !== it.name ? 'name' : 'same';
+      return { i: i, id: a.id, change: change, was: { start: a.start, days: a.days, name: a.name } };
+    });
+    // Second pass: a spelling fixed in the Excel ("Fasle" → "False") is the same row, when one saved row in the same
+    // section is that close (its name and its parent's name together) and nothing else is. So a parent's fixed
+    // spelling keeps its sub-rows too.
+    var parts = function (k) { var p = String(k).replace(/#\d+$/, '').split('|'); return p.length === 3 ? p : ['section', '', p[1] || '']; };
+    var near = function (x, y) {
+      if (x[0] !== y[0]) return -1;
+      var d = editDist(x[1], y[1]) + editDist(x[2], y[2]), n = Math.max(x[1].length + x[2].length, y[1].length + y[2].length);
+      return d <= Math.max(2, Math.floor(n * 0.15)) ? d : -1;
+    };
+    rows.forEach(function (x) {
+      if (x.id) return;
+      var it = items[x.i], best = null, bestD = 99, tie = false;
+      old.forEach(function (a) {
+        if (used[a.id] || a.status === 'removed') return;
+        var d = near(parts(a.key), parts(it.key));
+        if (d < 0) return;
+        if (d < bestD) { best = a; bestD = d; tie = false; } else if (d === bestD) tie = true;
+      });
+      if (!best || tie) return;
+      used[best.id] = true;
+      x.id = best.id; x.was = { start: best.start, days: best.days, name: best.name };
+      x.change = best.start !== it.start || best.days !== it.days ? 'dates' : best.name !== it.name ? 'name' : 'same';
+    });
+    return { rows: rows, removed: old.filter(function (a) { return a.status === 'active' && !used[a.id]; }) };
+  }
+  function editDist(a, b) {
+    var prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      cur = [i];
+      for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  // The plan as the import preview saw it: an import is refused if the plan changed in between.
+  function schedBase(acts, lastImportId) {
+    var live = acts.filter(function (a) { return a.status !== 'removed'; });
+    var s = live.map(function (a) { return a.id + '.' + (a.start || 0) + '.' + (a.days || 0) + '.' + a.status; }).sort().join(','), h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+    return (lastImportId || 'none') + ':' + live.length + ':' + h;
+  }
+
   return {
+    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
+    weekMonday: weekMonday, firstWeek: firstWeek, weekNo: weekNo, weekSpan: weekSpan, planSpans: planSpans, planPct: planPct,
+    loggable: loggable, progressBy: progressBy, weekList: weekList, actualOf: actualOf, parsePlanner: parsePlanner, schedMatch: schedMatch, schedBase: schedBase,
     DWG_TYPES: DWG_TYPES, parseDwgName: parseDwgName, dwgPrefixIs: dwgPrefixIs,
     MON: MON, TYPES: TYPES, RESERVED: RESERVED, CLIENT: CLIENT, TRADES: TRADES, tradeFromDetail: tradeFromDetail, tradesOf: tradesOf,
     dueText: dueText, byDue: byDue,
