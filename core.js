@@ -441,6 +441,13 @@ function LedgerCore() {
     if (n >= span.end) return 100;
     return Math.round((n - span.start + 1) / (span.end - span.start + 1) * 100);
   }
+  // A reason is needed when a value is 25 points or more behind plan, or behind at all for the second week running.
+  // prev: the week before's value ({ pct }) or null; prevPlan: what the plan expected by then.
+  function needsWhy(plan, pct, prev, prevPlan) {
+    if (plan === null || plan === undefined || pct === null || pct === undefined) return false;
+    if (plan - pct >= BEHIND) return true;
+    return pct < plan && !!prev && prevPlan !== null && prevPlan !== undefined && prev.pct < prevPlan;
+  }
   // Rows the engineer logs: planned work (not sections or purchases) with days of its own. A row with no days whose
   // sub-rows have them (#35 "Finalization of wall surfaces") is a heading: its sub-rows are logged instead.
   function loggable(a, spans) { return a.kind === 'activity' && a.status !== 'removed' && !!a.start && !!a.days && !!spans[a.id]; }
@@ -619,7 +626,7 @@ function LedgerCore() {
   }
 
   return {
-    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
+    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, needsWhy: needsWhy, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
     weekMonday: weekMonday, firstWeek: firstWeek, weekNo: weekNo, weekSpan: weekSpan, planSpans: planSpans, planPct: planPct,
     loggable: loggable, progressBy: progressBy, weekList: weekList, actualOf: actualOf, parsePlanner: parsePlanner, schedMatch: schedMatch, schedBase: schedBase,
     DWG_TYPES: DWG_TYPES, parseDwgName: parseDwgName, dwgPrefixIs: dwgPrefixIs,
