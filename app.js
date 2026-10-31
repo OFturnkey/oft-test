@@ -4573,12 +4573,20 @@ function schedOf(code) {
   return Object.assign({}, sc, { progress: progress });
 }
 function schedBaseNow(code) { const sc = schedAll()[code] || { acts: [] }, li = sc.lastImport; return LC.schedBase(sc.acts, li ? li.id + (li.undone ? 'u' : '') : ''); }
-// A TEAM cell from the planner: the Directory name when it is a code there, else as typed.
-function teamText(t) {
-  const c = String(t || '').trim();
-  const p = c && ((S.engineer ? S.site && S.site.people : S.data && S.data.people) || []).find((x) => x.code === c.toUpperCase());
-  return p ? p.name : c;
+// A TEAM cell from the planner: a Directory labour or vendor code, a Team code (SN, SK, VNK: work we do ourselves),
+// CL for the client, or one of those names typed out. Returns the name, or null when it is none of these.
+function teamOf(t) {
+  const c = String(t || '').trim(), up = c.toUpperCase(), low = c.toLowerCase();
+  if (!c) return null;
+  if (up === LC.CLIENT) return 'Client';
+  const people = ((S.engineer ? S.site && S.site.people : S.data && S.data.people) || []).filter((x) => x.kind !== 'client');
+  const users = teamUsers().filter((u) => u.code);
+  const hit = people.find((x) => x.code === up) || users.find((u) => String(u.code).toUpperCase() === up) ||
+    people.find((x) => String(x.name).trim().toLowerCase() === low) || users.find((u) => String(u.name).trim().toLowerCase() === low);
+  return hit ? hit.name : null;
 }
+// As shown: the name, else exactly what was typed.
+function teamText(t) { return teamOf(t) || String(t || '').trim(); }
 function dayRange(p, s, e) {
   const d1 = day1Of(p);
   return 'Day ' + s + (e !== s ? '–' + e : '') + (d1 ? ' · ' + niceDay(schedDate(p, s)) + (e !== s ? ' to ' + niceDay(schedDate(p, e)) : '') : '') + ' · ' + plural(e - s + 1, 'day', 'days');
@@ -4620,23 +4628,35 @@ function schedChartHtml(p, sc, compact) {
   }
   if (todayAt !== null) axis += '<span class="sc-today sc-tlabel-line" style="left:' + todayAt + '%"></span><span class="sc-tlabel" style="left:' + todayAt + '%">Today</span>';
   const grad = lines.length ? 'linear-gradient(to right,' + lines.map((x) => 'transparent ' + x + '%,#ECECE7 ' + x + '%,#ECECE7 calc(' + x + '% + 1px),transparent calc(' + x + '% + 1px)').join(',') + ')' : 'none';
-  // Each section's bar covers its rows.
-  const secSpan = {};
+  // Each section's bar covers its rows; its % done is its logged rows' latest values, weighted by their days.
+  const secSpan = {}, secDone = {};
   let cur = null;
   acts.forEach((a) => {
-    if (a.kind === 'section') { cur = a.id; return; }
+    if (a.kind === 'section') { cur = a.id; secDone[cur] = { done: 0, all: 0 }; return; }
     const s = spans[a.id], c = cur && secSpan[cur];
     if (cur && s) secSpan[cur] = c ? { start: Math.min(c.start, s.start), end: Math.max(c.end, s.end) } : { start: s.start, end: s.end };
+    if (cur && LC.loggable(a, spans)) {
+      const w = s.end - s.start + 1, last = (by[a.id] || []).slice(-1)[0];
+      secDone[cur].all += w * 100;
+      secDone[cur].done += w * (last ? last.pct : 0);
+    }
   });
+  // Section names typed in capitals read as ordinary words: "IN-SITU - FRAME WORK" → "In-situ - frame work".
+  const secName = (n) => (n === n.toUpperCase() ? n.charAt(0) + n.slice(1).toLowerCase() : n);
   const sel = S.schedSel[p.code];
   let sec = null, rows = '';
   acts.forEach((a) => {
     if (a.kind === 'section') {
       sec = a.id;
-      const open = !S.schedFold[p.code + '|' + a.id], s = secSpan[a.id];
+      const open = !S.schedFold[p.code + '|' + a.id], s = secSpan[a.id], sd = secDone[a.id];
+      // Folded: its dates and how much is done ("16 Nov–20 Jan · 30% done").
+      const sum = open ? '' : [s && d1 ? LC.nice(schedDate(p, s.start)) + '–' + LC.nice(schedDate(p, s.end)) : s ? 'Day ' + s.start + '–' + s.end : '',
+        sd && sd.all ? Math.round(sd.done / sd.all * 100) + '% done' : ''].filter(Boolean).join(' · ');
+      const title = (a.no ? a.no + ' · ' : '') + secName(a.name);
       rows += '<button type="button" class="sc-row sc-sec" data-act="sc-fold" data-code="' + esc(p.code) + '" data-id="' + esc(a.id) + '" aria-expanded="' + open + '">' +
-        '<span class="sc-no">' + (open ? '▾' : '▸') + '</span><span class="sc-name">' + esc((a.no ? a.no + ' · ' : '') + a.name) + '</span>' +
-        (compact ? '' : '<span class="sc-team"></span>') + '<span class="sc-done"></span><span class="sc-track">' + (s ? bar(s.start, s.end, 'sc-secbar') : '') + todayLine + '</span></button>';
+        '<span class="sc-no">' + (open ? '▾' : '▸') + '</span><span class="sc-name" title="' + esc(title + (sum ? ' · ' + sum : '')) + '">' + esc(title) +
+        (sum ? '<span class="sc-secsum"> · ' + esc(sum) + '</span>' : '') + '</span>' +
+        '<span class="sc-track">' + (s ? bar(s.start, s.end, 'sc-secbar') : '') + todayLine + '</span></button>';
       return;
     }
     if (sec && S.schedFold[p.code + '|' + sec]) return;
@@ -4792,12 +4812,17 @@ function importPreviewHtml(p) {
     if (x.change === 'team' && x.was) ch += ': ' + (teamText(x.was.team) || 'none') + ' → ' + (teamText(it.team) || 'none');
     const s = spans['i' + i], own = it.start && it.days;
     return '<tr class="lv' + it.level + (changed ? ' ch' : '') + '"><td class="mono">' + esc(it.no) + '</td><td>' + esc(it.name) +
-      (it.team ? ' <span class="sl-team">' + esc(teamText(it.team)) + '</span>' : '') +
+      (!it.team ? '' : teamOf(it.team) ? ' <span class="sl-team">' + esc(teamOf(it.team)) + '</span>'
+        : ' <span class="sl-team unknown">' + esc(it.team) + ' isn’t a known team</span>') +
       (it.kind === 'procurement' ? ' <span class="muted small">· purchase</span>' : '') + (it.clientScope ? ' <span class="muted small">· client</span>' : '') + '</td>' +
       '<td class="mono nowrap">' + esc(days(it.start, it.days)) + (s && !own ? '<br><span class="muted small">bar Day ' + s.start + '–' + s.end + '</span>' : '') + '</td>' +
       '<td class="nowrap">' + esc(s ? dates(s) : '—') + '</td><td class="num">' + esc(it.days || '') + '</td><td>' + esc(ch) + '</td></tr>';
   }).join('');
   const rowsN = im.items.filter((x) => x.kind !== 'section').length, secN = im.items.length - rowsN;
+  // Team codes nobody knows: "MT (#2, #3)".
+  const unk = {};
+  im.items.forEach((it) => { if (it.team && !teamOf(it.team)) (unk[it.team] = unk[it.team] || []).push('#' + (it.no || it.line)); });
+  const unknown = Object.keys(unk).map((t) => t + ' (' + unk[t].join(', ') + ')');
   const summary = first ? plural(rowsN, 'row', 'rows') + ' in ' + plural(secN, 'section', 'sections') + '. Nothing is saved until you press Save this plan.'
     : [count.same ? count.same + ' the same' : '', count.new ? count.new + ' new' : '', count.dates ? count.dates + ' with days changed' : '', count.name ? count.name + ' renamed (spelling)' : '', count.team ? count.team + ' with a team set or changed' : '',
       count.renamed ? count.renamed + ' renamed by you' : '', count.back ? count.back + ' back' : '', im.left.length ? im.left.length + ' not in the new file' : ''].filter(Boolean).join(' · ');
@@ -4818,6 +4843,8 @@ function importPreviewHtml(p) {
     '<p class="muted small">' + esc(d1 ? 'Dates count from Day 1 = ' + niceY(d1) + (p.day1 ? ' (site start)' : ' (planned start in Directory)') + '. Every day counts, Sundays too.'
       : 'No start date yet, so no dates: set the planned start in Directory → Projects → Stage & dates.') + '</p>' +
     (im.problems.length ? '<ul class="warn-line">' + im.problems.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>' : '') +
+    (unknown.length ? '<p class="warn-line sc-unknown">Not in Directory or Team, so shown as typed: ' + esc(unknown.join(' · ')) +
+      '. Use a Directory code (ALM, BAB…), a Team code (SN, SK, VNK) or CL for the client, or add the team in Directory first.</p>' : '') +
     (left ? '<div class="sc-left"><b>Not in the new file</b><ul>' + left + '</ul></div>' : '') +
     '<div class="sc-imp-wrap"><table><thead><tr><th>No</th><th>Activity</th><th>Plan days</th><th>Dates</th><th class="num">Days</th><th>' + (first ? '' : 'Change') + '</th></tr></thead><tbody>' +
     (body || '<tr><td colspan="6" class="muted">No changes.</td></tr>') + '</tbody></table></div>' +
