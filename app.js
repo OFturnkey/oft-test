@@ -74,7 +74,10 @@ const $ = (id) => document.getElementById(id);
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function todayIso() { return LC.iso(new Date()); }
+// Test app only: an owner can make the app "pretend today is" another day (Monday things on a Saturday). Live: always
+// the real date.
+function fakeToday() { return CONFIG.env === 'test' ? ((S.engineer ? S.site && S.site.fakeToday : S.data && S.data.fakeToday) || '') : ''; }
+function todayIso() { return fakeToday() || LC.iso(new Date()); }
 function addDays(s, n) { const d = LC.fromIso(s); d.setDate(d.getDate() + n); return LC.iso(d); }
 function niceY(s) { const d = LC.fromIso(s); return d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear(); }
 function isTask(e) { return e.type === 'F' || e.type === 'MT'; }
@@ -183,7 +186,7 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1,
   'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1,
-  'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
+  'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-logsum': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
 // Reads only: safe to ask again.
@@ -1173,7 +1176,13 @@ function renderEnvStrip() {
   if (S.readyMs) bits.push('screen ready ' + secs(S.readyMs) + (S.readyWhy ? ' (' + esc(S.readyWhy) + ')' : ''));
   if (S.timing) bits.push('last request “' + esc(S.timing.action) + '”: server ' + secs(S.timing.server || 0) + ', total ' + secs(S.timing.total));
   bits.push('version ' + esc(CONFIG.version));
-  el.innerHTML = '<b>TEST APP</b> · works on a test copy of the sheet · nothing here changes the real ledger<br>' + bits.join(' · ');
+  // "Pretend today is next Monday" (owners), and a loud line while it is on (everyone).
+  const fake = fakeToday(), real = LC.iso(new Date()), nextMon = addDays(LC.weekMonday(real), 7);
+  const owner = !S.engineer && isOwner();
+  const fakeHtml = fake ? '<br><b class="fake-on">PRETENDING TODAY IS ' + esc(niceDay(fake).toUpperCase()) + '</b>' +
+      (owner ? ' · <button type="button" data-act="fake-today" data-v="">Back to the real date</button>' : ' · an owner can switch it back')
+    : owner ? '<br><button type="button" data-act="fake-today" data-v="' + nextMon + '">Pretend today is ' + esc(niceDay(nextMon)) + '</button> (test only: try Monday’s log)' : '';
+  el.innerHTML = '<b>TEST APP</b> · works on a test copy of the sheet · nothing here changes the real ledger<br>' + bits.join(' · ') + fakeHtml;
 }
 
 /* ---------- snack bar ---------- */
@@ -4405,6 +4414,9 @@ function needsFor(code) {
     out.push({ box: 'late', kind: 'Photos', cls: 'wait', title: last ? 'No site photos from ' + (p.name || code) + ' for ' + plural(Math.round((LC.fromIso(t) - LC.fromIso(last.slice(0, 10))) / 86400000), 'day', 'days') : 'No site photos from ' + (p.name || code) + ' yet',
       subHtml: esc(last ? 'Last photos ' + niceDay(last.slice(0, 10)) : 'Ask the site engineer for photos'), short: '', who: '' });
   }
+  // The engineer's weekly log, once it's in: one line until an owner opens it.
+  const ls = isOwner() ? logSummaryFor(code) : null;
+  if (ls) out.push(ls);
   // Tasks late or due today: most overdue first.
   live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).sort(byDue).forEach((e) => out.push({
     box: e.due < t ? 'late' : 'today',
@@ -4436,7 +4448,7 @@ function needLineHtml(n, btnAct, code, all) {
 }
 // Phone Today: one compact row per item (tag, short text, who on the right; red stays red), the whole row opens it.
 function needRowHtml(n, code, all) {
-  const act = n.act === 'needs-query' ? 'today-query' : n.act === 'np-open' ? 'np-open' : 'proj-tab';
+  const act = n.act === 'needs-query' ? 'today-query' : n.act === 'np-open' || n.act === 'sc-logsum' ? n.act : 'proj-tab';
   const id = n.act === 'needs-query' ? n.id : code;
   const short = [all ? projName(code) : '', n.short].filter(Boolean).join(' · ');
   return '<button type="button" class="need-row' + (n.fresh ? ' new' : '') + '" data-act="' + act + '" data-id="' + esc(id) + '" data-code="' + esc(code) + '">' +
@@ -4453,7 +4465,7 @@ function needsHtml(code) {
 function boxesHtml(items, done, opts) {
   const line = (n) => {
     if (opts.compact) return needRowHtml(n, n.code, opts.all);
-    const btn = opts.all ? (n.act === 'needs-query' ? 'today-query' : n.act === 'np-open' ? 'np-open' : 'done') : n.act;
+    const btn = opts.all ? (n.act === 'needs-query' ? 'today-query' : n.act === 'np-open' || n.act === 'sc-logsum' ? n.act : 'done') : n.act;
     return needLineHtml(n, btn, opts.all ? n.code : '', opts.all);
   };
   const boxes = NEED_BOXES.map((b) => {
@@ -4680,7 +4692,8 @@ function schedChartHtml(p, sc, compact) {
     miss.forEach((w) => { track += bar(Math.max(s.start, w.a), Math.min(s.end, w.b), 'sc-unlog'); });
     // The team (agency) beside its bar: after it, or before it when the bar ends near the right edge.
     const team = teamText(a.team);
-    if (s && team) track += s.end / N < 0.8 ? '<span class="sc-blabel" style="left:calc(' + pos(s.end + 1) + '% + 6px)">' + esc(team) + '</span>'
+    // Phones: the team sits under the name (it stays put while the bars scroll); laptops: beside the bar.
+    if (s && team && !compact) track += s.end / N < 0.8 ? '<span class="sc-blabel" style="left:calc(' + pos(s.end + 1) + '% + 6px)">' + esc(team) + '</span>'
       : '<span class="sc-blabel" style="right:calc(' + (100 - Number(pos(s.start))).toFixed(3) + '% + 6px)">' + esc(team) + '</span>';
     let actText = '';
     if (act && act.start) {
@@ -4696,7 +4709,8 @@ function schedChartHtml(p, sc, compact) {
     const tip = a.name + (s ? ' · plan ' + dayRange(p, s.start, s.end) : ' · no days yet') + actText +
       (miss.length ? ' · not logged: ' + miss.map((w) => 'Wk ' + LC.weekNo(d1, w.m)).join(', ') : '');
     rows += '<button type="button" class="sc-row lv' + a.level + (sel === a.id ? ' on' : '') + (a.status === 'gone' ? ' gone' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) +
-      '" data-id="' + esc(a.id) + '" title="' + esc(tip) + '"><span class="sc-no">' + esc(a.no) + '</span><span class="sc-name" title="' + esc(a.name + (team ? ' · ' + team : '')) + '">' + esc(a.name) + '</span>' +
+      '" data-id="' + esc(a.id) + '" title="' + esc(tip) + '"><span class="sc-no">' + esc(a.no) + '</span><span class="sc-name" title="' + esc(a.name + (team ? ' · ' + team : '')) + '">' +
+      (compact ? '<span class="sc-n1">' + esc(a.name) + '</span>' + (team ? '<span class="sc-n2">' + esc(team) + '</span>' : '') : esc(a.name)) + '</span>' +
       (compact ? '' : '<span class="sc-team">' + esc(team || (a.clientScope ? 'Client' : '')) + '</span>') +
       '<span class="sc-done">' + (last ? last.pct + '%' : '') + '</span><span class="sc-track">' + track + todayLine + '</span></button>';
     if (sel === a.id) rows += '<div class="sc-inline">' + schedDetailHtml(p, sc, a.id) + '</div>';
@@ -4704,7 +4718,7 @@ function schedChartHtml(p, sc, compact) {
   const legend = '<span class="sc-legend"><span><i class="lg-plan"></i>Plan</span><span><i class="lg-act"></i>Actual</span><span><i class="lg-over"></i>Over plan</span>' +
     (ended.length ? '<span><i class="lg-unlog"></i>Not logged</span>' : '') +
     (compact ? '' : '<span><i class="lg-buy"></i>Purchase</span>') + '</span>';
-  return '<div class="sc-scroll" data-key="' + esc(p.code) + '"><div class="sc-chart' + (compact ? ' compact' : '') + '" style="--sc-wk:' + grad + '">' +
+  return '<div class="sc-scroll" data-key="' + esc(p.code) + '" data-n="' + N + '"><div class="sc-chart' + (compact ? ' compact' : '') + '" style="--sc-wk:' + grad + '">' +
     '<div class="sc-row sc-head"><span class="sc-no"></span><span class="sc-name">' + legend + '</span>' + (compact ? '' : '<span class="sc-team">Team</span>') +
     '<span class="sc-done">Done</span><span class="sc-track sc-axis">' + axis + '</span></div>' + rows + '</div></div>';
 }
@@ -4715,6 +4729,19 @@ function schedScrollBefore() { const sc = document.querySelector('.sc-scroll'); 
 function schedScrollAfter(prev) {
   const sc = document.querySelector('.sc-scroll');
   if (!sc || sc.scrollWidth <= sc.clientWidth) return;
+  // Opened from a weekly-log line: that week.
+  const f = S.schedFocus;
+  if (f && f.code === sc.dataset.key) {
+    S.schedFocus = null;
+    const p = schedProj(f.code), tr = sc.querySelector('.sc-row:not(.sc-head) .sc-track'), n = Number(sc.dataset.n) || 1;
+    const nm = sc.querySelector('.sc-row:not(.sc-head) .sc-name');
+    if (p && tr) {
+      const r = tr.getBoundingClientRect(), x0 = r.left - sc.getBoundingClientRect().left + sc.scrollLeft;
+      const stuck = nm && getComputedStyle(nm).position === 'sticky' ? nm.getBoundingClientRect().right - sc.getBoundingClientRect().left : 0;
+      sc.scrollLeft = Math.max(0, x0 + (schedDayOf(p, LC.weekSpan(day1Of(p), f.week).from) - 1) / n * r.width - stuck - 20);
+      return;
+    }
+  }
   if (prev && prev.key === sc.dataset.key) { sc.scrollLeft = prev.left; return; }
   const t = sc.querySelector('.sc-today'), names = sc.querySelector('.sc-row:not(.sc-head) .sc-name');
   if (!t) return;
@@ -5013,11 +5040,16 @@ function schedWeekHtml(p, sc) {
   const item = (x, kind) => {
     const a = x.a, s = x.s, team = teamText(a.team), on = S.schedSel[p.code] === a.id;
     const days = 'Day ' + s.start + (s.end > s.start ? '–' + s.end : '') + ' · ' + LC.nice(schedDate(p, s.start)) + (s.end > s.start ? ' to ' + LC.nice(schedDate(p, s.end)) : '');
+    // Coloured by the gap between the plan by Sunday and the last value logged: on track, behind, or far behind.
+    const plan = LC.planPct(s, a1), gap = x.l ? plan - x.l.pct : null;
+    const tone = kind !== 'now' || a.kind === 'procurement' ? '' : gap === null ? ' none' : gap >= LC.BEHIND ? ' far' : gap > 0 ? ' behind' : ' ok';
+    const last = x.l ? ' · last logged ' + x.l.pct + '%' : '';
     const line = kind === 'next' ? 'Starts ' + niceDay(schedDate(p, s.start))
       : kind === 'late' ? 'Should have finished ' + niceDay(schedDate(p, s.end)) + ' · ' + (x.l ? 'last logged ' + x.l.pct + '%' : 'nothing logged')
       : a.kind === 'procurement' ? 'Purchase'
-      : 'Should be ' + LC.planPct(s, a1) + '% by Sunday' + (x.l ? ' · last logged ' + x.l.pct + '%' : '');
-    return '<button type="button" class="sw-item' + (kind === 'late' ? ' late' : '') + (on ? ' on' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) + '" data-id="' + esc(a.id) + '">' +
+      : s.end < a1 ? 'Should finish ' + niceDay(schedDate(p, s.end)) + last
+      : 'Should be ' + plan + '% by Sunday' + last;
+    return '<button type="button" class="sw-item' + (kind === 'late' ? ' late' : '') + tone + (on ? ' on' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) + '" data-id="' + esc(a.id) + '">' +
       '<span class="sw-name">' + esc((a.no ? a.no + ' · ' : '') + a.name) + (team ? ' <span class="sl-team">' + esc(team) + '</span>' : '') + '</span>' +
       '<span class="sw-days">' + esc(days) + '</span><span class="sw-line">' + esc(line) + '</span></button>' +
       (on ? '<div class="sw-detail">' + schedDetailHtml(p, sc, a.id) + '</div>' : '');
@@ -5029,6 +5061,35 @@ function schedWeekHtml(p, sc) {
     (now.length ? now.sort(byStart).map((x) => item(x, 'now')).join('') : '<p class="muted sw-none">Nothing planned this week.</p>') +
     '<div class="sw-sub">Coming next week</div>' + (next.length ? next.sort(byStart).map((x) => item(x, 'next')).join('') : '<p class="muted sw-none">Nothing starts next week.</p>') +
     '</section>';
+}
+/* Owners' Needs you after the engineer logs last week: "Venky logged Week 2 · Nest · 2 behind (HVAC: Short of people;
+ * …) · 1 finished". Tapping it opens the chart at that week; it is gone once opened (per device). The 12:00 alert line
+ * comes in B1. */
+const LOGSEEN_KEY = 'oft.logseen.' + CONFIG.env;
+function logSeen() { try { return JSON.parse(stored(LOGSEEN_KEY) || '[]'); } catch (_) { return []; } }
+function markLogSeen(code, week) { const l = logSeen().filter((k) => k !== code + '|' + week).concat([code + '|' + week]).slice(-40); store(LOGSEEN_KEY, JSON.stringify(l)); }
+function logSummaryFor(code) {
+  const p = projInfo(code), d1 = p && day1Of(p);
+  if (!p || p.stage !== 'execution' || !d1) return null;
+  const monday = addDays(LC.weekMonday(todayIso()), -7);
+  if (monday < LC.firstWeek(d1) || logSeen().indexOf(code + '|' + monday) >= 0) return null;
+  const sc = schedOf(code), byId = {};
+  sc.acts.forEach((a) => { byId[a.id] = a; });
+  const rows = sc.progress.filter((g) => g.week === monday && byId[g.activity] && roleOfEmail(g.by) === 'site_engineer');
+  if (!rows.length) return null;
+  const by = LC.progressBy(sc.progress), who = firstName(rows[0].by);
+  const behind = rows.filter((g) => g.reason), finished = rows.filter((g) => g.pct === 100 && !(by[g.activity] || []).some((x) => x.week < monday && x.pct === 100));
+  const why = behind.map((g) => byId[g.activity].name + ': ' + g.reason);
+  return { box: 'new', kind: 'Log', cls: 'blue', fresh: true, who: who, title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + (p.name || code),
+    subHtml: esc([behind.length ? behind.length + ' behind (' + why.slice(0, 3).join('; ') + (why.length > 3 ? '; …' : '') + ')' : 'none behind', finished.length + ' finished', plural(rows.length, 'activity', 'activities') + ' logged'].join(' · ')),
+    short: (behind.length ? behind.length + ' behind · ' : '') + finished.length + ' finished', act: 'sc-logsum', id: code, week: monday, label: 'Open', canAct: true };
+}
+// Opens the project's Schedule with the chart scrolled to the logged week.
+function openLogSummary(code, week) {
+  markLogSeen(code, week);
+  S.tab = 'projects'; S.projTab = code; S.projSec = 'schedule'; S.schedWhole[code] = true; S.schedFocus = { code: code, week: week };
+  renderAll();
+  window.scrollTo(0, 0);
 }
 // Phone Schedule: the week list, or the whole chart with a hint to turn the phone.
 function schedPhoneHtml(p, sc) {
@@ -5049,6 +5110,7 @@ function engScheduleHtml() {
 }
 function schedClick(act, el) {
   if (act.indexOf('sc-') !== 0) return false;
+  if (act === 'sc-logsum') { openLogSummary(el.dataset.code || el.dataset.id, addDays(LC.weekMonday(todayIso()), -7)); return true; }
   const code = el.dataset.code, id = el.dataset.id, week = el.dataset.week;
   if (act !== 'sc-undo') S.schedConfirm = '';
   if (act === 'sc-fold') { const k = code + '|' + id; S.schedFold[k] = !S.schedFold[k]; }
@@ -5105,6 +5167,10 @@ function onAct(el) {
   if (act === 'notify-hide') { store(NOTIFY_ASKED_KEY, String(Date.now())); $('notifyBar').hidden = true; if (S.engineer) renderEng(); return; }
   if (S.engineer) { engClick(act, el); return; }
   if (!S.started) return;
+  if (act === 'fake-today' && CONFIG.env === 'test') {
+    call('setFakeToday', [el.dataset.v], () => { renderEnvStrip(); snack(el.dataset.v ? 'Test app now pretends today is ' + niceDay(el.dataset.v) + '.' : 'Back to the real date.'); });
+    return;
+  }
   if (photoClick(act, el) || queryClick(act, el) || dwgClick(act, el) || schedClick(act, el)) return;
   const prevVoid = S.confirmVoid, prevDel = S.confirmDel;
   S.confirmVoid = null;
