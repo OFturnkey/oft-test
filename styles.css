@@ -1061,4 +1061,8 @@ ul.warn-line { padding-left: 28px; }
 .sl-chip { border: 1px solid #E3CF8C; background: #FFFFFF; color: #1C1E1D; border-radius: 999px; padding: 0 10px; min-height: 40px; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
 .sl-chip.on { background: #1C1E1D; color: #FFFFFF; border-color: #1C1E1D; }
 .sl-foot { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid #ECECE7; }
-.sl-save { border: 0; background: #455B28; color: #FFFFFF; border-radius: 10px; min-height: 48px; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
+.sl-save { border: 0; background: #455B28; color: #FFFFFF; border-radius: 10px; min-height: 48px; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }/* Today's label on the axis; the team (agency) beside its bar; the team under a name in the weekly log. */
+.sc-axis .sc-tlabel-line { top: 30px; }
+.sc-tlabel { position: absolute; top: 0; transform: translateX(-50%); padding: 0 4px; border-radius: 3px; background: #455B28; color: #FFFFFF; font-size: 11px; font-weight: 600; white-space: nowrap; z-index: 1; }
+.sc-blabel { position: absolute; top: 8px; font-size: 11px; line-height: 14px; color: #5E605C; white-space: nowrap; pointer-events: none; background: rgba(255, 255, 255, 0.85); padding: 0 2px; border-radius: 2px; }
+.sl-team { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #ECECE7; color: #3A3C39; font-size: 12px; font-weight: 500; vertical-align: 1px; }
