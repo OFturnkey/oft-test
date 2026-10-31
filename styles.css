@@ -1065,4 +1065,11 @@ ul.warn-line { padding-left: 28px; }
 .sc-axis .sc-tlabel-line { top: 30px; }
 .sc-tlabel { position: absolute; top: 0; transform: translateX(-50%); padding: 0 4px; border-radius: 3px; background: #455B28; color: #FFFFFF; font-size: 11px; font-weight: 600; white-space: nowrap; z-index: 1; }
 .sc-blabel { position: absolute; top: 8px; font-size: 11px; line-height: 14px; color: #5E605C; white-space: nowrap; pointer-events: none; background: rgba(255, 255, 255, 0.85); padding: 0 2px; border-radius: 2px; }
-.sl-team { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #ECECE7; color: #3A3C39; font-size: 12px; font-weight: 500; vertical-align: 1px; }
+.sl-team { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #ECECE7; color: #3A3C39; font-size: 12px; font-weight: 500; vertical-align: 1px; }/* Section headings: bigger and bolder than the rows, ordinary case, on a light band; the name runs across the Team
+   and Done columns; folded, it adds its dates and % done. */
+.sc-row.sc-sec { min-height: 38px; background: #ECEFE4; border-top: 1px solid #D5D9CC; }
+.sc-row.sc-sec:hover { background: #E4E9DA; }
+.sc-row.sc-sec .sc-name { grid-column: 2 / -2; font-size: 15px; font-weight: 700; letter-spacing: 0; text-transform: none; color: #1C1E1D; }
+.sc-row.sc-sec .sc-no { font-size: 13px; color: #3A3C39; }
+.sc-secsum { font-weight: 500; font-size: 13px; color: #455B28; }
+.sc-chart.compact .sc-row.sc-sec > .sc-name { line-height: 38px; font-size: 14px; }.sl-team.unknown { background: #FFEDB3; color: #5E4500; }
