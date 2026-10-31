@@ -967,9 +967,13 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .sc-chart.compact { min-width: 860px; }
 .sc-row { display: grid; grid-template-columns: 40px 300px 110px 44px minmax(0, 1fr); gap: 0 10px; align-items: center; width: 100%; box-sizing: border-box;
   border: 0; border-top: 1px solid #F0F0EB; background: #FFFFFF; padding: 0 14px; min-height: 30px; text-align: left; font: inherit; color: #1C1E1D; cursor: pointer; }
-.sc-chart.compact .sc-row { grid-template-columns: 34px 160px 40px minmax(0, 1fr); gap: 0 6px; padding: 0 8px; }
-.sc-chart.compact .sc-row > .sc-no { position: sticky; left: 0; z-index: 1; background: inherit; }
-.sc-chart.compact .sc-row > .sc-name { position: sticky; left: 42px; z-index: 1; background: inherit; }
+.sc-chart.compact { min-width: 820px; }
+.sc-chart.compact .sc-row { grid-template-columns: 28px 118px 36px minmax(0, 1fr); gap: 0 4px; padding: 0 6px; }
+.sc-chart.compact .sc-row > .sc-no { position: sticky; left: 0; z-index: 1; background: inherit; font-size: 11px; }
+.sc-chart.compact .sc-row > .sc-name { position: sticky; left: 28px; z-index: 1; background: inherit; font-size: 13px; box-shadow: 4px 0 4px -4px rgba(0, 0, 0, 0.15); }
+.sc-chart.compact .sc-row.lv1 .sc-name { padding-left: 8px; }
+.sc-chart.compact .sc-row.lv2 .sc-name { padding-left: 16px; }
+.sc-chart.compact .sc-head .sc-name { box-shadow: none; }
 .sc-row:hover { background: #F7F8F4; }
 .sc-row.on { background: #EEF2E6; }
 .sc-row.sc-sec { background: #F7F7F4; border-top: 1px solid #DEDED8; }
