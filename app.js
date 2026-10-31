@@ -678,7 +678,9 @@ function renderEng() {
   const a = document.activeElement, fid = a && a.id;
   let s0 = null, s1 = null;
   try { if (fid && typeof a.selectionStart === 'number') { s0 = a.selectionStart; s1 = a.selectionEnd; } } catch (_) { /* not a text field */ }
+  const chartAt = schedScrollBefore();
   renderEngInner();
+  schedScrollAfter(chartAt);
   decorateBusy();
   doJump();
   if (fid) {
@@ -4519,6 +4521,7 @@ function renderAll() {
   const a = document.activeElement, id = a && a.id;
   let s0 = null, s1 = null;
   try { if (id && typeof a.selectionStart === 'number') { s0 = a.selectionStart; s1 = a.selectionEnd; } } catch (_) { /* not a text field */ }
+  const chartAt = schedScrollBefore();
   renderShell();
   renderStatus();
   renderTabs();
@@ -4533,6 +4536,7 @@ function renderAll() {
   else if (S.tab === 'projects') renderProjectsView();
   else if (S.tab === 'tasks') renderTasks();
   else renderDir();
+  schedScrollAfter(chartAt);
   placeCodebar();
   decorateBusy();
   doJump();
@@ -4653,11 +4657,24 @@ function schedChartHtml(p, sc, compact) {
   });
   const legend = '<span class="sc-legend"><span><i class="lg-plan"></i>Plan</span><span><i class="lg-act"></i>Actual</span><span><i class="lg-over"></i>Over plan</span>' +
     (compact ? '' : '<span><i class="lg-buy"></i>Purchase</span>') + '</span>';
-  return '<div class="sc-scroll"><div class="sc-chart' + (compact ? ' compact' : '') + '" style="--sc-wk:' + grad + '">' +
+  return '<div class="sc-scroll" data-key="' + esc(p.code) + '"><div class="sc-chart' + (compact ? ' compact' : '') + '" style="--sc-wk:' + grad + '">' +
     '<div class="sc-row sc-head"><span class="sc-no"></span><span class="sc-name">' + legend + '</span>' + (compact ? '' : '<span class="sc-team">Team</span>') +
     '<span class="sc-done">Done</span><span class="sc-track sc-axis">' + axis + '</span></div>' + rows + '</div></div>';
 }
 
+// The chart scrolls sideways (phones): it opens at this week, and a redraw (things arriving in the background) keeps
+// where it was scrolled to.
+function schedScrollBefore() { const sc = document.querySelector('.sc-scroll'); return sc ? { key: sc.dataset.key, left: sc.scrollLeft } : null; }
+function schedScrollAfter(prev) {
+  const sc = document.querySelector('.sc-scroll');
+  if (!sc || sc.scrollWidth <= sc.clientWidth) return;
+  if (prev && prev.key === sc.dataset.key) { sc.scrollLeft = prev.left; return; }
+  const t = sc.querySelector('.sc-today'), names = sc.querySelector('.sc-row:not(.sc-head) .sc-name');
+  if (!t) return;
+  const x = t.getBoundingClientRect().left - sc.getBoundingClientRect().left + sc.scrollLeft;
+  const stuck = names && getComputedStyle(names).position === 'sticky' ? names.getBoundingClientRect().right - sc.getBoundingClientRect().left : 0;
+  sc.scrollLeft = Math.max(0, x - stuck - 40);
+}
 // Under a picked bar: its plan, what was done, and each week's log.
 function schedDetailHtml(p, sc, id) {
   const a = sc.acts.find((x) => x.id === id);
