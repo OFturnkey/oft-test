@@ -486,7 +486,7 @@ h2, h3 { margin: 0; }
 .eng-form input { border: 1px solid #C9CAC3; border-radius: 10px; padding: 0 12px; min-height: 48px; font: inherit; font-size: 15px; color: #1C1E1D; background: #FFFFFF; }
 .eng-form .btn-save { min-height: 48px; }
 .eng-foot { text-align: center; }
-.eng-nav { position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: 100%; max-width: 560px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #FFFFFF; border-top: 1px solid #DEDED8; padding: 4px 4px calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 6; }
+.eng-nav { position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: 100%; max-width: 560px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); background: #FFFFFF; border-top: 1px solid #DEDED8; padding: 4px 4px calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 6; }
 .eng-tab { border: 0; background: transparent; font: inherit; font-size: 13px; color: #5E605C; min-height: 48px; cursor: pointer; }
 .eng-tab.on { color: #1C1E1D; font-weight: 600; box-shadow: inset 0 3px 0 #1C1E1D; }
 #engSnack { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
@@ -826,7 +826,7 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 /* Team: an email breaks only at the @ (never mid-word). */
 .drow-text .drow-email { overflow-wrap: normal; word-break: normal; }
 /* Phones: sections that aren't built yet are hidden. */
-@media (max-width: 699px) { .psec.off, .eng-tab[data-tab="schedule"] { display: none; } }
+@media (max-width: 699px) { .psec.off { display: none; } }
 /* Narrow screens: an opened query or photo sits right under its own card / day. */
 .q-card, .ph-inline { scroll-margin-top: 12px; }
 .eng .q-card, .eng .ph-inline { scroll-margin-top: 64px; }
@@ -957,3 +957,102 @@ label.btn-main.ph-pick-btn { color: #FFFFFF; }
 .eng-task.held input[type=checkbox] { outline: 2px solid #E8C96A; outline-offset: 1px; }
 .reg-line { cursor: pointer; }
 .reg-line:hover td, .reg-line:focus-within td { background: #F6F8F2; }
+/* ---------- Schedule (release 2; boards ScheduleWhole, Schedule, EngPhone) ---------- */
+.sc-top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 16px; margin: 14px 0 12px; }
+.sc-info { font-weight: 600; }
+.sc-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sc-file { cursor: pointer; display: inline-flex; align-items: center; }
+.sc-scroll { overflow-x: auto; background: #FFFFFF; border: 1px solid #DEDED8; border-radius: 14px; -webkit-overflow-scrolling: touch; }
+.sc-chart { min-width: 1180px; }
+.sc-chart.compact { min-width: 860px; }
+.sc-row { display: grid; grid-template-columns: 40px 300px 110px 44px minmax(0, 1fr); gap: 0 10px; align-items: center; width: 100%; box-sizing: border-box;
+  border: 0; border-top: 1px solid #F0F0EB; background: #FFFFFF; padding: 0 14px; min-height: 30px; text-align: left; font: inherit; color: #1C1E1D; cursor: pointer; }
+.sc-chart.compact .sc-row { grid-template-columns: 34px 160px 40px minmax(0, 1fr); gap: 0 6px; padding: 0 8px; }
+.sc-chart.compact .sc-row > .sc-no { position: sticky; left: 0; z-index: 1; background: inherit; }
+.sc-chart.compact .sc-row > .sc-name { position: sticky; left: 42px; z-index: 1; background: inherit; }
+.sc-row:hover { background: #F7F8F4; }
+.sc-row.on { background: #EEF2E6; }
+.sc-row.sc-sec { background: #F7F7F4; border-top: 1px solid #DEDED8; }
+.sc-row.sc-sec .sc-name { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.sc-row.sc-head { cursor: default; border-top: 0; padding-top: 10px; padding-bottom: 4px; align-items: end; }
+.sc-row.sc-head:hover { background: #FFFFFF; }
+.sc-no { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A8C86; white-space: nowrap; }
+.sc-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-row.lv1 .sc-name { padding-left: 14px; color: #3A3C39; font-size: 13px; }
+.sc-row.lv2 .sc-name { padding-left: 28px; color: #5E605C; font-size: 13px; }
+.sc-row.gone .sc-name { color: #8A8C86; font-style: italic; }
+.sc-team { font-size: 12px; color: #5E605C; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-done { font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: right; color: #3A3C39; }
+.sc-track { position: relative; display: block; height: 30px; background-image: var(--sc-wk); }
+.sc-track.sc-axis { height: 38px; background: none; }
+.sc-month { position: absolute; top: 0; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sc-wk { position: absolute; top: 20px; padding-left: 3px; border-left: 1px solid #C9CAC3; font-size: 11px; color: #5E605C; font-family: 'IBM Plex Mono', monospace; }
+.sc-plan { position: absolute; top: 7px; height: 16px; box-sizing: border-box; background: #DCE4CC; border: 1px solid #9DB07A; border-radius: 4px; }
+.sc-plan.buy { background: #E3E9F2; border-color: #8FA3BF; }
+.sc-plan.sum { background: repeating-linear-gradient(45deg, #EEF2E6 0 4px, #DCE4CC 4px 8px); }
+.sc-row.on .sc-plan { border-color: #455B28; box-shadow: 0 0 0 1px #455B28; }
+.sc-act { position: absolute; top: 13px; height: 5px; background: #1C1E1D; border-radius: 2px; pointer-events: none; }
+.sc-over { position: absolute; top: 13px; height: 5px; background: #A3271B; border-radius: 2px; pointer-events: none; }
+.sc-secbar { position: absolute; top: 13px; height: 3px; background: #9DB07A; border-radius: 1px; }
+.sc-today { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #455B28; pointer-events: none; }
+.sc-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: #5E605C; white-space: normal; }
+.sc-legend i { display: inline-block; width: 16px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.sc-legend .lg-plan { background: #DCE4CC; border: 1px solid #9DB07A; }
+.sc-legend .lg-act { background: #1C1E1D; height: 5px; }
+.sc-legend .lg-over { background: #A3271B; height: 5px; }
+.sc-legend .lg-buy { background: #E3E9F2; border: 1px solid #8FA3BF; }
+.sc-inline { position: sticky; left: 0; box-sizing: border-box; width: min(720px, calc(100vw - 40px)); padding: 6px 14px 14px; border-top: 1px solid #F0F0EB; background: #FFFFFF; }
+.sc-detail h3 { margin: 2px 0 8px; font-size: 17px; }
+.sc-weeks { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+.sc-weeks th, .sc-weeks td { text-align: left; padding: 6px 8px 6px 0; border-top: 1px solid #ECECE7; }
+.sc-weeks th { font-weight: 500; color: #5E605C; }
+.sc-weeks .num { text-align: right; font-family: 'IBM Plex Mono', monospace; }
+.sc-weeks .bad { color: #A3271B; font-weight: 600; }
+.sc-foot { margin: 8px 2px 0; }
+.warn-line { background: #FFF6DA; color: #5E4500; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+ul.warn-line { padding-left: 28px; }
+.nowrap { white-space: nowrap; }
+/* Import preview */
+.sc-imp { display: flex; flex-direction: column; gap: 10px; }
+.sc-imp h3 { margin: 0; font-size: 18px; }
+.sc-imp p { margin: 0; }
+.sc-imp-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.sc-imp-wrap { overflow-x: auto; border: 1px solid #ECECE7; border-radius: 10px; }
+.sc-imp table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sc-imp th, .sc-imp td { padding: 5px 8px; border-top: 1px solid #ECECE7; text-align: left; vertical-align: top; }
+.sc-imp thead th { border-top: 0; font-weight: 500; color: #5E605C; background: #FAFAF7; }
+.sc-imp tr.sec td { background: #F7F7F4; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em; }
+.sc-imp tr.lv1 td:nth-child(2) { padding-left: 22px; }
+.sc-imp tr.lv2 td:nth-child(2) { padding-left: 38px; }
+.sc-imp tr.ch td { background: #FFF9E6; }
+.sc-imp .num { text-align: right; }
+.sc-left { background: #FDF0EE; border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.sc-left ul { margin: 6px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.sc-left select { margin-top: 4px; min-height: 40px; max-width: 100%; border: 1px solid #C4C6C0; border-radius: 6px; padding: 4px 8px; background: #FFFFFF; font: inherit; }
+/* Weekly log */
+.sl-card { padding: 14px 16px; }
+.sl-card .eng-h2 { margin: 0; }
+.sl-due { font-size: 12px; color: #5E605C; font-weight: 500; margin-top: 2px; }
+.sl-due.late { color: #A3271B; }
+.sl-done { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.sl-panel { max-width: 720px; }
+.sl-panel h3 { margin: 0; font-size: 17px; }
+.sl-panel select, .sl-add select { min-height: 44px; border: 1px solid #C4C6C0; border-radius: 8px; padding: 4px 8px; background: #FFFFFF; font: inherit; max-width: 100%; }
+.sl-row { padding: 10px 0 12px; border-top: 1px solid #ECECE7; display: flex; flex-direction: column; gap: 6px; }
+.sl-form { margin-top: 8px; }
+.sl-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sl-name { font-weight: 500; }
+.sl-tag { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sl-tag.ok { color: #455B28; }
+.sl-tag.bad { color: #A3271B; }
+.sl-tag.done { color: #5E605C; }
+.sl-tag.plan { color: #1F3A5F; }
+.sl-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.sl-step { border: 1px solid #DEDED8; background: #FFFFFF; color: #1C1E1D; border-radius: 8px; min-height: 44px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.sl-step.on { background: #1C1E1D; color: #FFFFFF; border-color: #1C1E1D; }
+.sl-why { display: flex; flex-direction: column; gap: 6px; background: #FFF6DA; border-radius: 10px; padding: 10px; font-size: 13px; color: #5E4500; font-weight: 500; }
+.sl-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.sl-chip { border: 1px solid #E3CF8C; background: #FFFFFF; color: #1C1E1D; border-radius: 999px; padding: 0 10px; min-height: 40px; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
+.sl-chip.on { background: #1C1E1D; color: #FFFFFF; border-color: #1C1E1D; }
+.sl-foot { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid #ECECE7; }
+.sl-save { border: 0; background: #455B28; color: #FFFFFF; border-radius: 10px; min-height: 48px; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
