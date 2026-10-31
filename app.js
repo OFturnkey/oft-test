@@ -183,7 +183,7 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1,
   'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1,
-  'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
+  'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
 // Reads only: safe to ask again.
@@ -4570,7 +4570,7 @@ function schedOf(code) {
   let progress = sc.progress.slice();
   mine.forEach((w) => (w.args[2] || []).forEach((e) => {
     progress = progress.filter((g) => !(g.activity === e.a && g.week === w.args[1]));
-    progress.push({ id: 'w' + w.id, activity: e.a, week: w.args[1], pct: e.pct, reason: e.reason || '', by: S.me.email, at: stampNow(), pending: true });
+    progress.push({ id: 'w' + w.id, activity: e.a, week: w.args[1], pct: e.pct, reason: e.reason || '', rework: !!e.rework, by: S.me.email, at: stampNow(), pending: true });
   }));
   return Object.assign({}, sc, { progress: progress });
 }
@@ -4743,7 +4743,7 @@ function schedDetailHtml(p, sc, id) {
   }
   const weeks = list.map((g) => {
     const pl = LC.planPct(s, schedDayOf(p, addDays(g.week, 6))), behind = pl !== null && pl - g.pct >= LC.BEHIND;
-    return '<tr><td>' + esc(weekLabel(p, g.week, true)) + '</td><td class="num">' + (pl === null ? '' : pl + '%') + '</td><td class="num' + (behind ? ' bad' : '') + '">' + g.pct + '%</td>' +
+    return '<tr><td>' + esc(weekLabel(p, g.week, true)) + '</td><td class="num">' + (pl === null ? '' : pl + '%') + '</td><td class="num' + (behind ? ' bad' : '') + '">' + g.pct + '%' + (g.rework ? ' <span class="sc-redone" title="Lower than the week before: work redone">redone</span>' : '') + '</td>' +
       '<td>' + esc(g.reason) + '</td><td class="muted">' + esc(firstName(g.by)) + (g.pending ? ' · <span class="sending">Sending…</span>' : '') + '</td></tr>';
   }).join('');
   const meta = [a.section, a.no ? '#' + a.no : '', teamText(a.team), a.clientScope ? 'Client’s scope' : '', a.kind === 'procurement' ? 'Purchase' : ''].filter(Boolean).join(' · ');
@@ -4891,7 +4891,7 @@ function importGo() {
 /* The weekly log, the same form for the engineer (Today, on Mondays) and owners (Schedule → Log progress). Each row
  * starts at this week's value if logged, else last week's; one tap changes it. 25 points or more behind plan needs a
  * reason. */
-function logState(code, monday) { const k = code + '|' + monday; return S.logs[k] || (S.logs[k] = { vals: {}, why: {}, extra: [], err: '', open: false }); }
+function logState(code, monday) { const k = code + '|' + monday; return S.logs[k] || (S.logs[k] = { vals: {}, why: {}, rework: {}, extra: [], err: '', open: false }); }
 function logRows(p, monday) {
   const sc = schedOf(p.code), d1 = day1Of(p), st = logState(p.code, monday), spans = LC.planSpans(sc.acts), by = LC.progressBy(sc.progress);
   const list = LC.weekList(sc.acts, sc.progress, d1, monday), end = schedDayOf(p, addDays(monday, 6));
@@ -4906,6 +4906,9 @@ function logRows(p, monday) {
     const prev = (by[x.act.id] || []).find((g) => g.week === prevMonday) || null;
     x.behind = LC.needsWhy(x.plan, x.val, prev, LC.planPct(x.span, prevEnd));
     x.twice = x.behind && x.plan - x.val < LC.BEHIND; // behind for the second week running (under 25 points)
+    // Lower than the last week logged: asked once ("Fix it" puts it back; "Yes, it was redone" keeps it as rework).
+    x.lower = x.val !== null && !!x.before && x.val < x.before.pct;
+    x.redone = x.lower && (st.rework[x.act.id] !== undefined ? st.rework[x.act.id] : !!(x.now && x.now.rework && x.now.pct === x.val));
     x.why = x.behind ? (st.why[x.act.id] !== undefined ? st.why[x.act.id] : x.now ? x.now.reason : '') : '';
   });
   const others = sc.acts.filter((a) => LC.loggable(a, spans) && !list.some((x) => x.act.id === a.id));
@@ -4925,7 +4928,10 @@ function logFormHtml(p, monday, forEngineer) {
       '<div class="sl-steps" role="group" aria-label="' + esc(x.act.name) + ': done by the end of the week">' + LC.STEPS.map((n) =>
         '<button type="button" class="sl-step' + (x.val === n ? ' on' : '') + '" data-act="sc-step" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + n + '" aria-pressed="' + (x.val === n) + '">' + n + '%</button>').join('') + '</div>' +
       (x.behind ? '<div class="sl-why"><span>' + (x.twice ? 'Behind plan two weeks in a row' : 'Behind plan') + ' (plan said ' + x.plan + '%). Why?</span><div class="sl-chips">' + LC.REASONS.map((t) =>
-        '<button type="button" class="sl-chip' + (x.why === t ? ' on' : '') + '" data-act="sc-why" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + esc(t) + '" aria-pressed="' + (x.why === t) + '">' + esc(t) + '</button>').join('') + '</div></div>' : '') + '</div>';
+        '<button type="button" class="sl-chip' + (x.why === t ? ' on' : '') + '" data-act="sc-why" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + esc(t) + '" aria-pressed="' + (x.why === t) + '">' + esc(t) + '</button>').join('') + '</div></div>' : '') +
+      (x.lower ? '<div class="sl-why sl-lower"><span>' + (x.redone ? 'Lower than last week (' + x.before.pct + '%): recorded as redone.' : 'Lower than last week (' + x.before.pct + '%). Is that right?') + '</span>' +
+        '<div class="sl-chips"><button type="button" class="sl-chip" data-act="sc-lower-fix" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + x.before.pct + '">Fix it</button>' +
+        '<button type="button" class="sl-chip' + (x.redone ? ' on' : '') + '" data-act="sc-lower-ok" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" aria-pressed="' + x.redone + '">Yes, it was redone</button></div></div>' : '') + '</div>';
   }).join('');
   const add = r.others.length ? '<label class="sl-add"><span class="sr-only">Add an activity</span><select data-sladd="' + c + '" data-week="' + w + '"><option value="">+ Add an activity done this week</option>' +
     r.others.map((a) => '<option value="' + esc(a.id) + '">' + esc((a.no ? a.no + ' · ' : '') + a.name) + '</option>').join('') + '</select></label>' : '';
@@ -4936,10 +4942,11 @@ function logSave(code, monday) {
   const p = schedProj(code);
   if (!p) return;
   const r = logRows(p, monday), st = r.st;
-  const missing = r.list.filter((x) => x.val === null), noWhy = r.list.filter((x) => x.behind && !x.why);
-  st.err = missing.length ? 'Pick a % for ' + missing.map((x) => x.act.name).join(', ') + '.' : noWhy.length ? 'Pick why ' + noWhy.map((x) => x.act.name).join(', ') + (noWhy.length > 1 ? ' are' : ' is') + ' behind plan.' : '';
+  const missing = r.list.filter((x) => x.val === null), noWhy = r.list.filter((x) => x.behind && !x.why), lower = r.list.filter((x) => x.lower && !x.redone);
+  st.err = missing.length ? 'Pick a % for ' + missing.map((x) => x.act.name).join(', ') + '.' : noWhy.length ? 'Pick why ' + noWhy.map((x) => x.act.name).join(', ') + (noWhy.length > 1 ? ' are' : ' is') + ' behind plan.'
+    : lower.length ? 'Lower than last week: ' + lower.map((x) => x.act.name).join(', ') + '. Fix it, or say it was redone.' : '';
   if (st.err || !r.list.length) { redraw(); return; }
-  const entries = r.list.map((x) => ({ a: x.act.id, pct: x.val, reason: x.behind ? x.why : '' }));
+  const entries = r.list.map((x) => ({ a: x.act.id, pct: x.val, reason: x.behind ? x.why : '', rework: !!x.redone }));
   if (S.engineer) {
     outboxAdd('logProgress', [code, monday, entries], 'Progress', { project: code, week: monday }).then(() => {
       delete S.logs[code + '|' + monday];
@@ -5046,8 +5053,10 @@ function schedClick(act, el) {
   if (act !== 'sc-undo') S.schedConfirm = '';
   if (act === 'sc-fold') { const k = code + '|' + id; S.schedFold[k] = !S.schedFold[k]; }
   else if (act === 'sc-pick') S.schedSel[code] = S.schedSel[code] === id ? '' : id;
-  else if (act === 'sc-step') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); st.err = ''; }
+  else if (act === 'sc-step') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); delete st.rework[id]; st.err = ''; }
   else if (act === 'sc-why') { const st = logState(code, week); st.why[id] = el.dataset.v; st.err = ''; }
+  else if (act === 'sc-lower-fix') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); st.rework[id] = false; st.err = ''; }
+  else if (act === 'sc-lower-ok') { const st = logState(code, week); st.rework[id] = !st.rework[id]; st.err = ''; }
   else if (act === 'sc-log-save') { logSave(code, week); return true; }
   else if (act === 'sc-log-open') logState(code, week).open = true;
   else if (act === 'sc-whole') { S.schedWhole[code] = !S.schedWhole[code]; window.scrollTo(0, 0); }
