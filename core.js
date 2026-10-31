@@ -501,7 +501,7 @@ function LedgerCore() {
         else if (c.start === undefined && /^PLAN(NED)? START/.test(h)) c.start = j;
         else if (c.days === undefined && /^PLAN(NED)? DURATION|^DURATION/.test(h)) c.days = j;
         else if (c.note === undefined && /^(REMARKS?|NOTES?)$/.test(h)) c.note = j;
-        else if (c.team === undefined && /^TEAM( CODE)?$/.test(h)) c.team = j;
+        else if (c.team === undefined && /^(TEAM|AGENCY)( CODES?| NAME)?$/.test(h)) c.team = j;
       }
       if (c.name !== undefined && c.start !== undefined && c.days !== undefined) { c.no = c.name - 1; return c; }
     }
@@ -572,8 +572,8 @@ function LedgerCore() {
       if (!a || used[a.id]) return { i: i, id: '', change: 'new', was: null };
       used[a.id] = true;
       var change = linked[i] !== undefined ? 'renamed' : a.status === 'gone' ? 'back' :
-        (a.start !== it.start || a.days !== it.days) ? 'dates' : a.name !== it.name ? 'name' : 'same';
-      return { i: i, id: a.id, change: change, was: { start: a.start, days: a.days, name: a.name } };
+        (a.start !== it.start || a.days !== it.days) ? 'dates' : a.name !== it.name ? 'name' : (a.team || '') !== (it.team || '') ? 'team' : 'same';
+      return { i: i, id: a.id, change: change, was: { start: a.start, days: a.days, name: a.name, team: a.team || '' } };
     });
     // Second pass: a spelling fixed in the Excel ("Fasle" → "False") is the same row, when one saved row in the same
     // section is that close (its name and its parent's name together) and nothing else is. So a parent's fixed
@@ -595,8 +595,8 @@ function LedgerCore() {
       });
       if (!best || tie) return;
       used[best.id] = true;
-      x.id = best.id; x.was = { start: best.start, days: best.days, name: best.name };
-      x.change = best.start !== it.start || best.days !== it.days ? 'dates' : best.name !== it.name ? 'name' : 'same';
+      x.id = best.id; x.was = { start: best.start, days: best.days, name: best.name, team: best.team || '' };
+      x.change = best.start !== it.start || best.days !== it.days ? 'dates' : best.name !== it.name ? 'name' : (best.team || '') !== (it.team || '') ? 'team' : 'same';
     });
     return { rows: rows, removed: old.filter(function (a) { return a.status === 'active' && !used[a.id]; }) };
   }
