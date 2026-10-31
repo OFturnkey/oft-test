@@ -1105,4 +1105,7 @@ ul.warn-line { padding-left: 28px; }
 }@media (orientation: landscape) and (max-height: 520px) {
   .eng.eng-wide { max-width: none; }
   .eng.eng-wide .eng-main { padding-left: 8px; padding-right: 8px; }
-}
+}.sl-lower { background: #FDF0EE; color: #7E1E14; }
+.sl-lower .sl-chip { border-color: #E3A49C; }
+.sl-lower .sl-chip.on { background: #1C1E1D; border-color: #1C1E1D; }
+.sc-redone { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; color: #7E1E14; background: #FDF0EE; border-radius: 4px; padding: 0 4px; }
