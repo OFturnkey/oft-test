@@ -4605,7 +4605,8 @@ function schedChartHtml(p, sc, compact) {
   const pos = (d) => ((d - 1) / N * 100).toFixed(3), wid = (a, b) => ((b - a + 1) / N * 100).toFixed(3);
   const bar = (a, b, cls) => '<span class="' + cls + '" style="left:' + pos(a) + '%;width:' + wid(a, b) + '%"></span>';
   const today = d1 ? schedDayOf(p, todayIso()) : null;
-  const todayLine = today !== null && today >= 1 && today <= N ? '<span class="sc-today" style="left:' + ((today - 0.5) / N * 100).toFixed(3) + '%"></span>' : '';
+  const todayAt = today !== null && today >= 1 && today <= N ? ((today - 0.5) / N * 100).toFixed(3) : null;
+  const todayLine = todayAt !== null ? '<span class="sc-today" style="left:' + todayAt + '%"></span>' : '';
   // The axis: months, and each Monday's date (every 7th day number when there is no start date yet). A thin line
   // down every row at each Monday.
   let axis = '';
@@ -4617,6 +4618,7 @@ function schedChartHtml(p, sc, compact) {
       if (x.getDay() === 1) { axis += '<span class="sc-wk" style="left:' + pos(d) + '%">' + x.getDate() + '</span>'; lines.push(pos(d)); }
     } else if (d % 7 === 1) { axis += '<span class="sc-wk" style="left:' + pos(d) + '%">D' + d + '</span>'; lines.push(pos(d)); }
   }
+  if (todayAt !== null) axis += '<span class="sc-today sc-tlabel-line" style="left:' + todayAt + '%"></span><span class="sc-tlabel" style="left:' + todayAt + '%">Today</span>';
   const grad = lines.length ? 'linear-gradient(to right,' + lines.map((x) => 'transparent ' + x + '%,#ECECE7 ' + x + '%,#ECECE7 calc(' + x + '% + 1px),transparent calc(' + x + '% + 1px)').join(',') + ')' : 'none';
   // Each section's bar covers its rows.
   const secSpan = {};
@@ -4640,6 +4642,10 @@ function schedChartHtml(p, sc, compact) {
     if (sec && S.schedFold[p.code + '|' + sec]) return;
     const s = spans[a.id], own = a.start && a.days, act = d1 ? LC.actualOf(by[a.id], d1) : null;
     let track = s ? bar(s.start, s.end, 'sc-plan' + (a.kind === 'procurement' ? ' buy' : '') + (own ? '' : ' sum')) : '';
+    // The team (agency) beside its bar: after it, or before it when the bar ends near the right edge.
+    const team = teamText(a.team);
+    if (s && team) track += s.end / N < 0.8 ? '<span class="sc-blabel" style="left:calc(' + pos(s.end + 1) + '% + 6px)">' + esc(team) + '</span>'
+      : '<span class="sc-blabel" style="right:calc(' + (100 - Number(pos(s.start))).toFixed(3) + '% + 6px)">' + esc(team) + '</span>';
     let actText = '';
     if (act && act.start) {
       const as = Math.max(1, schedDayOf(p, act.start)), ae = Math.min(N, act.finish ? schedDayOf(p, act.finish) : Math.max(as, today || as)), pe = s ? s.end : ae;
@@ -4650,8 +4656,8 @@ function schedChartHtml(p, sc, compact) {
     const last = (by[a.id] || []).slice(-1)[0];
     const tip = a.name + (s ? ' · plan ' + dayRange(p, s.start, s.end) : ' · no days yet') + actText;
     rows += '<button type="button" class="sc-row lv' + a.level + (sel === a.id ? ' on' : '') + (a.status === 'gone' ? ' gone' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) +
-      '" data-id="' + esc(a.id) + '" title="' + esc(tip) + '"><span class="sc-no">' + esc(a.no) + '</span><span class="sc-name">' + esc(a.name) + '</span>' +
-      (compact ? '' : '<span class="sc-team">' + esc(teamText(a.team) || (a.clientScope ? 'Client' : '')) + '</span>') +
+      '" data-id="' + esc(a.id) + '" title="' + esc(tip) + '"><span class="sc-no">' + esc(a.no) + '</span><span class="sc-name" title="' + esc(a.name + (team ? ' · ' + team : '')) + '">' + esc(a.name) + '</span>' +
+      (compact ? '' : '<span class="sc-team">' + esc(team || (a.clientScope ? 'Client' : '')) + '</span>') +
       '<span class="sc-done">' + (last ? last.pct + '%' : '') + '</span><span class="sc-track">' + track + todayLine + '</span></button>';
     if (sel === a.id) rows += '<div class="sc-inline">' + schedDetailHtml(p, sc, a.id) + '</div>';
   });
@@ -4711,7 +4717,8 @@ function projectScheduleHtml(p) {
   const info = li ? (li.undone ? 'Draft plan · the last import (' + (li.file || 'Excel') + ') was undone' :
     'Draft plan · imported ' + niceDay(li.at.slice(0, 10)) + ' ' + li.at.slice(11, 16) + ' by ' + firstName(li.by) + (li.file ? ' from ' + li.file : '')) : '';
   const start = !d1 ? 'No start date yet: set the planned start in Directory → Projects → Stage & dates to see dates.'
-    : 'Day 1 = ' + niceY(d1) + (p.day1 ? ' (site start)' : ' (planned start)') + (today >= 1 ? ' · today is Day ' + today + ', Week ' + LC.weekNo(d1, todayIso()) : '');
+    : 'Day 1 = ' + niceY(d1) + (p.day1 ? ' (site start)' : ' (planned start)') + (today >= 1 ? ' · today is Day ' + today + ', Week ' + LC.weekNo(d1, todayIso())
+      : ' · the site starts in ' + plural(1 - today, 'day', 'days') + '; the green “Today” line shows on the chart from then');
   let btns = '';
   if (owner) {
     btns += '<label class="btn-outline sc-file">' + (sc.acts.length ? 'Import updated planner' : 'Import planner Excel') +
@@ -4772,7 +4779,7 @@ function importPreviewHtml(p) {
   const spans = LC.planSpans(im.items.map((it, i) => ({ id: 'i' + i, parent: it.parent >= 0 ? 'i' + it.parent : '', start: it.start, days: it.days })));
   const days = (st, dy) => (st && dy ? 'Day ' + st + (dy > 1 ? '–' + (st + dy - 1) : '') : st ? 'Day ' + st + ', no days' : '—');
   const dates = (s) => (d1 && s ? niceDay(schedDate(p, s.start)) + (s.end > s.start ? ' to ' + niceDay(schedDate(p, s.end)) : '') : '—');
-  const CH = { new: 'New', dates: 'Days changed', name: 'Name changed', renamed: 'Renamed', back: 'Back in the planner', same: '' };
+  const CH = { new: 'New', dates: 'Days changed', name: 'Name changed', team: 'Team changed', renamed: 'Renamed', back: 'Back in the planner', same: '' };
   const count = {};
   im.rows.forEach((x) => { if (im.items[x.i].kind !== 'section') count[x.change] = (count[x.change] || 0) + 1; });
   const body = im.items.map((it, i) => {
@@ -4782,15 +4789,17 @@ function importPreviewHtml(p) {
     let ch = first ? '' : CH[x.change];
     if (x.change === 'dates' && x.was) ch += ', was ' + days(x.was.start, x.was.days);
     if ((x.change === 'name' || x.change === 'renamed') && x.was) ch += ', was “' + x.was.name + '”';
+    if (x.change === 'team' && x.was) ch += ': ' + (teamText(x.was.team) || 'none') + ' → ' + (teamText(it.team) || 'none');
     const s = spans['i' + i], own = it.start && it.days;
     return '<tr class="lv' + it.level + (changed ? ' ch' : '') + '"><td class="mono">' + esc(it.no) + '</td><td>' + esc(it.name) +
+      (it.team ? ' <span class="sl-team">' + esc(teamText(it.team)) + '</span>' : '') +
       (it.kind === 'procurement' ? ' <span class="muted small">· purchase</span>' : '') + (it.clientScope ? ' <span class="muted small">· client</span>' : '') + '</td>' +
       '<td class="mono nowrap">' + esc(days(it.start, it.days)) + (s && !own ? '<br><span class="muted small">bar Day ' + s.start + '–' + s.end + '</span>' : '') + '</td>' +
       '<td class="nowrap">' + esc(s ? dates(s) : '—') + '</td><td class="num">' + esc(it.days || '') + '</td><td>' + esc(ch) + '</td></tr>';
   }).join('');
   const rowsN = im.items.filter((x) => x.kind !== 'section').length, secN = im.items.length - rowsN;
   const summary = first ? plural(rowsN, 'row', 'rows') + ' in ' + plural(secN, 'section', 'sections') + '. Nothing is saved until you press Save this plan.'
-    : [count.same ? count.same + ' the same' : '', count.new ? count.new + ' new' : '', count.dates ? count.dates + ' with days changed' : '', count.name ? count.name + ' renamed (spelling)' : '',
+    : [count.same ? count.same + ' the same' : '', count.new ? count.new + ' new' : '', count.dates ? count.dates + ' with days changed' : '', count.name ? count.name + ' renamed (spelling)' : '', count.team ? count.team + ' with a team set or changed' : '',
       count.renamed ? count.renamed + ' renamed by you' : '', count.back ? count.back + ' back' : '', im.left.length ? im.left.length + ' not in the new file' : ''].filter(Boolean).join(' · ');
   // Rows the new file leaves out: dropped, or (with progress logged) kept; such a row can be linked to its new name.
   const newRows = (keepI) => im.rows.filter((x) => im.items[x.i].kind !== 'section' && (x.change === 'new' || x.i === keepI));
@@ -4854,7 +4863,9 @@ function logFormHtml(p, monday, forEngineer) {
   const rows = r.list.map((x) => {
     const id = esc(x.act.id);
     const tag = x.val === null ? ['plan', 'Plan ' + x.plan + '%'] : x.val >= 100 ? ['done', 'Done'] : x.behind ? ['bad', 'Behind · plan ' + x.plan + '%'] : ['ok', 'On track · plan ' + x.plan + '%'];
-    return '<div class="sl-row"><div class="sl-head"><span class="sl-name">' + esc((x.act.no ? x.act.no + ' · ' : '') + x.act.name) + '</span><span class="sl-tag ' + tag[0] + '">' + esc(tag[1]) + '</span></div>' +
+    const team = teamText(x.act.team);
+    return '<div class="sl-row"><div class="sl-head"><span class="sl-name">' + esc((x.act.no ? x.act.no + ' · ' : '') + x.act.name) +
+      (team ? '<span class="sl-team">' + esc(team) + '</span>' : '') + '</span><span class="sl-tag ' + tag[0] + '">' + esc(tag[1]) + '</span></div>' +
       (x.before ? '<span class="muted small">Last logged ' + x.before.pct + '% (' + esc(weekLabel(p, x.before.week, true)) + ')</span>' : '') +
       '<div class="sl-steps" role="group" aria-label="' + esc(x.act.name) + ': done by the end of the week">' + LC.STEPS.map((n) =>
         '<button type="button" class="sl-step' + (x.val === n ? ' on' : '') + '" data-act="sc-step" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + n + '" aria-pressed="' + (x.val === n) + '">' + n + '%</button>').join('') + '</div>' +
