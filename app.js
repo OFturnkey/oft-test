@@ -1180,7 +1180,7 @@ function renderEnvStrip() {
   const fake = fakeToday(), real = LC.iso(new Date()), nextMon = addDays(LC.weekMonday(real), 7);
   const owner = !S.engineer && isOwner();
   const fakeHtml = fake ? '<br><b class="fake-on">PRETENDING TODAY IS ' + esc(niceDay(fake).toUpperCase()) + '</b>' +
-      (owner ? ' · <button type="button" data-act="fake-today" data-v="">Back to the real date</button>' : ' · an owner can switch it back')
+      (owner ? ' · <button type="button" data-act="fake-today" data-v="' + addDays(fake, 7) + '">One week later</button> · <button type="button" data-act="fake-today" data-v="">Back to the real date</button>' : ' · an owner can switch it back')
     : owner ? '<br><button type="button" data-act="fake-today" data-v="' + nextMon + '">Pretend today is ' + esc(niceDay(nextMon)) + '</button> (test only: try Monday’s log)' : '';
   el.innerHTML = '<b>TEST APP</b> · works on a test copy of the sheet · nothing here changes the real ledger<br>' + bits.join(' · ') + fakeHtml;
 }
@@ -4916,8 +4916,8 @@ function importGo() {
 }
 
 /* The weekly log, the same form for the engineer (Today, on Mondays) and owners (Schedule → Log progress). Each row
- * starts at this week's value if logged, else last week's; one tap changes it. 25 points or more behind plan needs a
- * reason. */
+ * starts at this week's value if logged, else unpicked with last week's value as a hint; one tap picks it. 25 points
+ * or more behind plan needs a reason. */
 function logState(code, monday) { const k = code + '|' + monday; return S.logs[k] || (S.logs[k] = { vals: {}, why: {}, rework: {}, extra: [], err: '', open: false }); }
 function logRows(p, monday) {
   const sc = schedOf(p.code), d1 = day1Of(p), st = logState(p.code, monday), spans = LC.planSpans(sc.acts), by = LC.progressBy(sc.progress);
@@ -4929,7 +4929,7 @@ function logRows(p, monday) {
   });
   const prevMonday = addDays(monday, -7), prevEnd = schedDayOf(p, addDays(monday, -1));
   list.forEach((x) => {
-    x.val = st.vals[x.act.id] !== undefined ? st.vals[x.act.id] : x.now ? x.now.pct : x.before ? x.before.pct : null;
+    x.val = st.vals[x.act.id] !== undefined ? st.vals[x.act.id] : x.now ? x.now.pct : null;
     const prev = (by[x.act.id] || []).find((g) => g.week === prevMonday) || null;
     x.behind = LC.needsWhy(x.plan, x.val, prev, LC.planPct(x.span, prevEnd));
     x.twice = x.behind && x.plan - x.val < LC.BEHIND; // behind for the second week running (under 25 points)
@@ -4951,7 +4951,7 @@ function logFormHtml(p, monday, forEngineer) {
     const team = teamText(x.act.team);
     return '<div class="sl-row"><div class="sl-head"><span class="sl-name">' + esc((x.act.no ? x.act.no + ' · ' : '') + x.act.name) +
       (team ? '<span class="sl-team">' + esc(team) + '</span>' : '') + '</span><span class="sl-tag ' + tag[0] + '">' + esc(tag[1]) + '</span></div>' +
-      (x.before ? '<span class="muted small">Last logged ' + x.before.pct + '% (' + esc(weekLabel(p, x.before.week, true)) + ')</span>' : '') +
+      (x.before ? '<span class="muted small">Last time ' + x.before.pct + '% (' + esc(weekLabel(p, x.before.week, true)) + ')</span>' : '') +
       '<div class="sl-steps" role="group" aria-label="' + esc(x.act.name) + ': done by the end of the week">' + LC.STEPS.map((n) =>
         '<button type="button" class="sl-step' + (x.val === n ? ' on' : '') + '" data-act="sc-step" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + n + '" aria-pressed="' + (x.val === n) + '">' + n + '%</button>').join('') + '</div>' +
       (x.behind ? '<div class="sl-why"><span>' + (x.twice ? 'Behind plan two weeks in a row' : 'Behind plan') + ' (plan said ' + x.plan + '%). Why?</span><div class="sl-chips">' + LC.REASONS.map((t) =>
@@ -4962,8 +4962,10 @@ function logFormHtml(p, monday, forEngineer) {
   }).join('');
   const add = r.others.length ? '<label class="sl-add"><span class="sr-only">Add an activity</span><select data-sladd="' + c + '" data-week="' + w + '"><option value="">+ Add an activity done this week</option>' +
     r.others.map((a) => '<option value="' + esc(a.id) + '">' + esc((a.no ? a.no + ' · ' : '') + a.name) + '</option>').join('') + '</select></label>' : '';
+  // The button names the project and week, so the wrong site can't be saved by mistake.
+  const sp = LC.weekSpan(day1Of(p), monday);
   return '<div class="sl-form">' + rows + '<div class="sl-foot">' + add + (r.st.err ? '<p class="err" role="alert">' + esc(r.st.err) + '</p>' : '') +
-    '<button type="button" class="sl-save" data-act="sc-log-save" data-code="' + c + '" data-week="' + w + '">' + (forEngineer ? 'Save · show to the team all week' : 'Save progress') + '</button></div></div>';
+    '<button type="button" class="sl-save" data-act="sc-log-save" data-code="' + c + '" data-week="' + w + '">' + esc('Save ' + (p.name || p.code) + ' · ' + LC.nice(sp.from) + '–' + LC.nice(sp.to)) + '</button></div></div>';
 }
 function logSave(code, monday) {
   const p = schedProj(code);
@@ -5005,17 +5007,20 @@ function engLogCardHtml() {
     if (!d1 || !sc.acts.length || monday < LC.firstWeek(d1)) return '';
     const list = LC.weekList(sc.acts, sc.progress, d1, monday);
     if (!list.length) return '';
-    const st = logState(code, monday), when = weekLabel(p, monday).replace(/^Week \d+ · /, '');
+    const st = logState(code, monday), wl = weekLabel(p, monday), when = wl.replace(/^Week \d+ · /, ''), name = engProjName(code);
+    const chip = '<span class="code-tag">' + esc(code) + '</span>';
     if (list.every((x) => x.now) && !st.open) {
       const sending = list.some((x) => x.now.pending), newest = Math.max.apply(null, list.map((x) => stampMs(x.now.at)));
       const canChange = !sending && list.every((x) => x.now.by === S.me.email) && Date.now() - newest < 86400000;
-      return '<section class="card eng-card sl-card sl-done"><div class="eng-box-h"><b>Last week’s progress logged</b><span class="muted small">' + esc(engProjName(code) + ' · ' + when) + '</span>' +
+      return '<section class="card eng-card sl-card sl-done"><div class="eng-box-h"><b>Last week’s progress logged</b><span class="muted small">' + chip + ' ' + esc(name + ' · ' + when) + '</span>' +
         (sending ? '<span class="sending small">Sending…</span>' : '') + '</div>' +
         (canChange ? '<button type="button" class="link-btn" data-act="sc-log-open" data-code="' + esc(code) + '" data-week="' + esc(monday) + '">Change</button>' : '') + '</section>';
     }
     const late = t > addDays(monday, 7) || new Date().getHours() >= 10;
     const due = t === addDays(monday, 7) ? (late ? 'was due today at 10 am' : 'due today by 10 am') : 'was due Monday at 10 am';
-    return '<section class="card eng-card sl-card"><h2 class="eng-h2">Log last week’s progress</h2><div class="sl-due' + (late ? ' late' : '') + '">' + esc(engProjName(code) + ' · ' + when + ' · ' + due) + '</div>' +
+    // One card per project, titled by the project in capitals, so it can't be taken for the site picked at the top.
+    return '<section class="card eng-card sl-card"><div class="sl-title"><h2 class="eng-h2">' + esc(name.toUpperCase() + ' · Log last week') + '</h2>' + chip + '</div>' +
+      '<div class="sl-due' + (late ? ' late' : '') + '">' + esc(when + ' · ' + wl.replace(/ · .*/, '') + ' · ' + due) + '</div>' +
       logFormHtml(p, monday, true) + '</section>';
   }).join('');
 }
@@ -5062,26 +5067,36 @@ function schedWeekHtml(p, sc) {
     '<div class="sw-sub">Coming next week</div>' + (next.length ? next.sort(byStart).map((x) => item(x, 'next')).join('') : '<p class="muted sw-none">Nothing starts next week.</p>') +
     '</section>';
 }
-/* Owners' Needs you after the engineer logs last week: "Venky logged Week 2 · Nest · 2 behind (HVAC: Short of people;
- * …) · 1 finished". Tapping it opens the chart at that week; it is gone once opened (per device). The 12:00 alert line
- * comes in B1. */
-const LOGSEEN_KEY = 'oft.logseen.' + CONFIG.env;
-function logSeen() { try { return JSON.parse(stored(LOGSEEN_KEY) || '[]'); } catch (_) { return []; } }
-function markLogSeen(code, week) { const l = logSeen().filter((k) => k !== code + '|' + week).concat([code + '|' + week]).slice(-40); store(LOGSEEN_KEY, JSON.stringify(l)); }
+/* Owners' Needs you after the engineer logs last week: "Venky logged Week 2 · Nest", then one line per activity behind
+ * with its reason (red 25+ points behind, amber less), then "1 finished · 8 logged". Tapping it opens the chart at that
+ * week; it is gone once opened, on all of that person's devices (kept with the query "seen" marks, as log:<project>).
+ * The 12:00 alert line comes in B1. */
+const LOG_LIST_MAX = 5;
+function logSeen(code, monday) { return (seenMap()['log:' + code] || '') >= monday; }
+function markLogSeen(code, week) {
+  if (logSeen(code, week)) return;
+  S.seenLocal['log:' + code] = week;
+  api('markSeen', ['log:' + code, week]).catch(() => { /* gone on this device; the server learns next time */ });
+}
 function logSummaryFor(code) {
   const p = projInfo(code), d1 = p && day1Of(p);
   if (!p || p.stage !== 'execution' || !d1) return null;
   const monday = addDays(LC.weekMonday(todayIso()), -7);
-  if (monday < LC.firstWeek(d1) || logSeen().indexOf(code + '|' + monday) >= 0) return null;
+  if (monday < LC.firstWeek(d1) || logSeen(code, monday)) return null;
   const sc = schedOf(code), byId = {};
   sc.acts.forEach((a) => { byId[a.id] = a; });
   const rows = sc.progress.filter((g) => g.week === monday && byId[g.activity] && roleOfEmail(g.by) === 'site_engineer');
   if (!rows.length) return null;
-  const by = LC.progressBy(sc.progress), who = firstName(rows[0].by);
-  const behind = rows.filter((g) => g.reason), finished = rows.filter((g) => g.pct === 100 && !(by[g.activity] || []).some((x) => x.week < monday && x.pct === 100));
-  const why = behind.map((g) => byId[g.activity].name + ': ' + g.reason);
+  const by = LC.progressBy(sc.progress), who = firstName(rows[0].by), plan = {};
+  LC.weekList(sc.acts, sc.progress, d1, monday).forEach((x) => { plan[x.act.id] = x.plan; });
+  const gap = (g) => plan[g.activity] !== undefined ? plan[g.activity] - g.pct : LC.BEHIND;
+  const behind = rows.filter((g) => g.reason).sort((x, y) => gap(y) - gap(x));
+  const finished = rows.filter((g) => g.pct === 100 && !(by[g.activity] || []).some((x) => x.week < monday && x.pct === 100));
+  const lines = behind.slice(0, LOG_LIST_MAX).map((g) => '<span class="ls-line ' + (gap(g) >= LC.BEHIND ? 'far' : 'behind') + '">' + esc(byId[g.activity].name + ': ' + g.reason) + '</span>').join('') +
+    (behind.length > LOG_LIST_MAX ? '<span class="ls-line ls-more">+ ' + (behind.length - LOG_LIST_MAX) + ' more</span>' : '');
   return { box: 'new', kind: 'Log', cls: 'blue', fresh: true, who: who, title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + (p.name || code),
-    subHtml: esc([behind.length ? behind.length + ' behind (' + why.slice(0, 3).join('; ') + (why.length > 3 ? '; …' : '') + ')' : 'none behind', finished.length + ' finished', plural(rows.length, 'activity', 'activities') + ' logged'].join(' · ')),
+    subHtml: '<span class="ls">' + (behind.length ? lines : '<span class="ls-line">None behind</span>') +
+      '<span class="ls-line ls-foot"><span class="ls-fin">' + esc(finished.length + ' finished') + '</span> · ' + esc(rows.length + ' logged') + '</span></span>',
     short: (behind.length ? behind.length + ' behind · ' : '') + finished.length + ' finished', act: 'sc-logsum', id: code, week: monday, label: 'Open', canAct: true };
 }
 // Opens the project's Schedule with the chart scrolled to the logged week.
