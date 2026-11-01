@@ -1125,3 +1125,14 @@ ul.warn-line { padding-left: 28px; }
   .eng.eng-wide .eng-main { padding-bottom: 16px; }
 }.env-strip button { font: inherit; font-weight: 600; border: 1px solid #5E4500; background: #FFFFFF; color: #5E4500; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
 .env-strip .fake-on { color: #A3271B; }
+/* Log card title: the project in capitals with its code, so it can't be mistaken for the site picked at the top. */
+.sl-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sl-title .eng-h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: 0.01em; }
+
+/* Owner's weekly-log line in Needs you: one line per activity behind (red far, amber a little), then finished and logged. */
+.ls { display: block; margin-top: 2px; }
+.ls-line { display: block; }
+.ls-line.far { color: #A3271B; }
+.ls-line.behind { color: #8A5A00; }
+.ls-line.ls-more { color: #5C615D; }
+.ls-fin { color: #455B28; font-weight: 600; }
