@@ -184,7 +184,7 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 // Moving around (tabs, sections, opening a query or a task) is never "busy", even when it loads something in the
 // background: the bottom bar and tabs must always answer. Only saves lock their button.
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
-  'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1,
+  'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'ph-view': 1,
   'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1, 'sc-log-jump': 1,
   'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-logsum': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
 // Background reads (and "opened") never make a button look busy.
@@ -2963,6 +2963,7 @@ function photoDay(at) { return String(at || '').slice(0, 10); }
 function photoFeedHtml(photos, opts) {
   opts = opts || {};
   if (!photos.length) return '<p class="empty">No site photos yet.</p>';
+  S.feedIds = photos.map((p) => p.id); // the viewer swipes through them in this order
   const days = [];
   photos.forEach((p) => { const d = photoDay(p.at); let g = days.find((x) => x.d === d); if (!g) days.push(g = { d: d, items: [] }); g.items.push(p); });
   const users = (S.engineer ? S.site.users : S.data.users) || [];
@@ -2990,8 +2991,11 @@ function photoPanelHtml() {
   const comments = S.photos.comments.filter((c) => c.photoId === p.id);
   // Owners and associates can turn a comment into a task (associates: for the project's engineers).
   const owner = !S.engineer && (isOwner() || isAssociate());
-  const full = S.fullPhoto && S.fullPhoto.id === p.id ? '<img class="ph-big" src="' + S.fullPhoto.url + '" alt="' + esc(p.area || 'Site photo') + '">'
-    : '<span class="ph-big-wrap">' + thumbImg(p, 'ph-big') + '<span class="ph-hint">Loading full size…</span></span>';
+  // Tapping the picture opens the full-screen viewer (zoom, swipe to the next photo of the feed).
+  const full = '<button type="button" class="ph-view" data-act="ph-view" data-id="' + esc(p.id) + '" aria-label="Full screen">' +
+    (S.fullPhoto && S.fullPhoto.id === p.id ? '<img class="ph-big" src="' + S.fullPhoto.url + '" alt="' + esc(p.area || 'Site photo') + '">'
+      : '<span class="ph-big-wrap">' + thumbImg(p, 'ph-big') + '<span class="ph-hint">Loading full size…</span></span>') +
+    '<span class="ph-view-tag">⤢ Full screen</span></button>';
   const c = S.photoComment || (S.photoComment = { text: '', due: addDays(todayIso(), 2), err: '' });
   if (c.who === undefined) c.who = owner ? defaultTaskFor(p.by, p.project) : '';
   const canDelete = (!S.engineer && isOwner()) || (p.by === (S.me && S.me.email) && Date.now() - Date.parse(p.at.replace(' ', 'T') + ':00+05:30') < 86400000);
@@ -3127,8 +3131,12 @@ function newPhotosOf(code) {
 // Query buttons (owners and engineers). Returns true when it handled the click.
 function queryClick(act, el) {
   const id = el.dataset.id, v = el.dataset.v;
-  if (act === 'lightbox') showLightbox(id);
-  else if (act === 'lightbox-close') hideLightbox();
+  if (act === 'lightbox') {
+    // The photos next to it (a comment's or query's strip) are swiped through in the viewer.
+    const strip = el.closest('.q-photos');
+    const ids = strip ? Array.from(strip.querySelectorAll('[data-act="lightbox"]')).map((b) => b.dataset.id) : [id];
+    openViewer(ids, id);
+  }
   else if (act === 'eq-open') {
     // Opened from Today (Needs you, Waiting for an answer): on its own, and the back button returns there, to the
     // same place. In the Queries list: under its own card (tap it again to close), scrolled to the top.
@@ -3210,18 +3218,190 @@ function queryClick(act, el) {
   else return false;
   return true;
 }
-// A photo full size, over everything (tap to close).
-function showLightbox(id) {
-  hideLightbox();
-  const box = document.createElement('div');
-  box.id = 'lightbox';
-  box.className = 'lightbox';
-  box.setAttribute('data-act', 'lightbox-close');
-  box.innerHTML = (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="Photo">' : '') + '<span class="ph-hint">Loading full size… tap to close</span>';
+// The photo viewer, full screen over everything (owners and engineers): pinch, double-tap or the mouse wheel to zoom,
+// drag a zoomed photo to move it, swipe (or ‹ › and the arrow keys) for the next photo, swipe down, ×, Esc or the
+// phone's Back to close. It lives outside the page, so redraws underneath leave it alone.
+const VIEW = { box: null, ids: [], i: 0, onClose: null, s: 1, x: 0, y: 0, pts: new Map(), g: null, lastTap: 0, full: new Map() };
+const VIEW_KEEP = 8; // full-size photos kept while swiping back and forth
+function openViewer(ids, id, onClose) {
+  if (VIEW.box) closeViewer(true);
+  VIEW.ids = ids.filter((x) => !fileInfo(x));
+  VIEW.i = Math.max(0, VIEW.ids.indexOf(id));
+  if (!VIEW.ids.length) return;
+  VIEW.onClose = onClose || null;
+  if (S.fullPhoto && S.fullPhoto.url) viewKeep(S.fullPhoto.id, S.fullPhoto.url);
+  const box = VIEW.box = document.createElement('div');
+  box.id = 'viewer';
+  box.className = 'pv';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Photo viewer');
+  box.innerHTML = '<div class="pv-top"><div class="pv-cap"><b class="pv-n"></b><span class="pv-info"></span></div>' +
+    '<button type="button" class="pv-x" aria-label="Close">×</button></div>' +
+    '<div class="pv-stage"><img class="pv-img" alt="Photo" draggable="false"></div>' +
+    '<button type="button" class="pv-nav pv-prev" aria-label="Previous photo">‹</button><button type="button" class="pv-nav pv-next" aria-label="Next photo">›</button>' +
+    '<span class="pv-hint"></span>';
   document.body.appendChild(box);
-  api('photoFull', [id]).then((res) => { const b = $('lightbox'); if (b) b.innerHTML = '<img src="' + res.url + '" alt="Photo"><span class="ph-hint">Tap to close</span>'; }, () => { /* the preview stays */ });
+  document.body.classList.add('pv-on');
+  box.querySelector('.pv-x').addEventListener('click', () => closeViewer());
+  box.querySelector('.pv-prev').addEventListener('click', () => viewGo(-1));
+  box.querySelector('.pv-next').addEventListener('click', () => viewGo(1));
+  const stage = box.querySelector('.pv-stage');
+  stage.addEventListener('pointerdown', viewDown);
+  stage.addEventListener('pointermove', viewMove);
+  ['pointerup', 'pointercancel'].forEach((t) => stage.addEventListener(t, viewUp));
+  stage.addEventListener('wheel', (ev) => { ev.preventDefault(); viewZoomAt(VIEW.s * (ev.deltaY < 0 ? 1.25 : 0.8), ev.clientX, ev.clientY); }, { passive: false });
+  // The phone's Back closes the viewer, not the app.
+  try { history.pushState({ pv: 1 }, ''); } catch (e) { /* not available: × still closes */ }
+  viewShow(0);
 }
-function hideLightbox() { const b = $('lightbox'); if (b) b.remove(); }
+function closeViewer(quiet) {
+  if (!VIEW.box) return;
+  const last = VIEW.ids[VIEW.i], then = VIEW.onClose;
+  VIEW.box.remove();
+  VIEW.box = null; VIEW.onClose = null; VIEW.pts.clear(); VIEW.g = null;
+  document.body.classList.remove('pv-on');
+  if (history.state && history.state.pv) { try { history.back(); } catch (e) { /* ignore */ } }
+  if (!quiet && then) then(last);
+}
+window.addEventListener('popstate', () => { if (VIEW.box) closeViewer(); });
+document.addEventListener('keydown', (ev) => {
+  if (!VIEW.box) return;
+  if (ev.key === 'Escape') closeViewer();
+  else if (ev.key === 'ArrowRight') viewGo(1);
+  else if (ev.key === 'ArrowLeft') viewGo(-1);
+  else return;
+  ev.preventDefault();
+}, true);
+function viewKeep(id, url) {
+  VIEW.full.delete(id);
+  VIEW.full.set(id, url);
+  while (VIEW.full.size > VIEW_KEEP) VIEW.full.delete(VIEW.full.keys().next().value);
+}
+function viewFetch(id) {
+  if (VIEW.full.has(id) || viewFetch.asked[id]) return;
+  viewFetch.asked[id] = true;
+  api('photoFull', [id]).then((res) => {
+    delete viewFetch.asked[id];
+    if (!res || !res.url) return;
+    viewKeep(id, res.url);
+    if (VIEW.box && VIEW.ids[VIEW.i] === id) viewShow(0, true);
+  }, () => {
+    delete viewFetch.asked[id];
+    const h = VIEW.box && VIEW.ids[VIEW.i] === id && VIEW.box.querySelector('.pv-hint');
+    if (h) h.textContent = 'Full size needs signal: this is the small picture.';
+  });
+}
+viewFetch.asked = {};
+// Shows photo i (+dir: the next or previous one, sliding in from that side). keep: same photo, sharper picture.
+function viewShow(dir, keep) {
+  const box = VIEW.box, id = VIEW.ids[VIEW.i], img = box.querySelector('.pv-img');
+  const url = VIEW.full.get(id) || S.thumbs[id] || '';
+  if (!keep) { VIEW.s = 1; VIEW.x = 0; VIEW.y = 0; }
+  if (url && img.getAttribute('src') !== url) img.src = url;
+  if (!url) img.removeAttribute('src');
+  img.classList.toggle('pv-small', !VIEW.full.has(id));
+  img.dataset.id = id;
+  const p = S.photos && S.photos.photos && S.photos.photos.find((x) => x.id === id);
+  box.querySelector('.pv-n').textContent = VIEW.ids.length > 1 ? (VIEW.i + 1) + ' of ' + VIEW.ids.length : '';
+  box.querySelector('.pv-info').textContent = p ? [p.area || 'Site photo', nameOfEmail(p.by), niceDay(photoDay(p.at)) + ' ' + p.at.slice(11, 16), p.caption].filter(Boolean).join(' · ') : '';
+  box.querySelector('.pv-hint').textContent = VIEW.full.has(id) ? '' : 'Loading full size…';
+  box.querySelector('.pv-prev').hidden = VIEW.i === 0;
+  box.querySelector('.pv-next').hidden = VIEW.i >= VIEW.ids.length - 1;
+  if (dir) { img.style.transition = 'none'; img.style.transform = 'translate(' + (dir * 40) + 'vw,0)'; void img.offsetWidth; }
+  viewApply(true);
+  wantThumb(id);
+  viewFetch(id);
+  // The neighbours load meanwhile, so a swipe shows them sharp straight away.
+  [VIEW.i + 1, VIEW.i - 1].forEach((j) => { if (VIEW.ids[j]) { wantThumb(VIEW.ids[j]); if (VIEW.full.has(id)) viewFetch(VIEW.ids[j]); } });
+}
+function viewGo(step) {
+  const j = VIEW.i + step;
+  if (!VIEW.box || j < 0 || j >= VIEW.ids.length) { viewApply(true); return; }
+  VIEW.i = j;
+  viewShow(step);
+}
+function viewApply(animate) {
+  const img = VIEW.box && VIEW.box.querySelector('.pv-img');
+  if (!img) return;
+  img.style.transition = animate ? 'transform 0.18s ease-out' : 'none';
+  img.style.transform = 'translate(' + VIEW.x + 'px,' + VIEW.y + 'px) scale(' + VIEW.s + ')';
+  VIEW.box.dataset.zoom = VIEW.s > 1.01 ? 'in' : 'out';
+}
+// Keeps a zoomed photo covering the screen (no dragging it away); at 1x it sits in the middle.
+function viewClamp() {
+  const img = VIEW.box.querySelector('.pv-img'), st = VIEW.box.querySelector('.pv-stage');
+  const mx = Math.max(0, (img.offsetWidth * VIEW.s - st.clientWidth) / 2), my = Math.max(0, (img.offsetHeight * VIEW.s - st.clientHeight) / 2);
+  VIEW.x = Math.min(mx, Math.max(-mx, VIEW.x));
+  VIEW.y = Math.min(my, Math.max(-my, VIEW.y));
+}
+// Zoom to scale s keeping the point under (cx, cy) where it is.
+function viewZoomAt(s, cx, cy) {
+  const st = VIEW.box.querySelector('.pv-stage').getBoundingClientRect();
+  s = Math.min(5, Math.max(1, s));
+  const px = cx - (st.left + st.width / 2), py = cy - (st.top + st.height / 2), k = s / VIEW.s;
+  VIEW.x = px - (px - VIEW.x) * k; VIEW.y = py - (py - VIEW.y) * k; VIEW.s = s;
+  if (s === 1) { VIEW.x = 0; VIEW.y = 0; }
+  viewClamp();
+  viewApply(true);
+}
+function viewDown(ev) {
+  ev.preventDefault();
+  try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) { /* moves still arrive while over the photo */ }
+  VIEW.pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  const p = Array.from(VIEW.pts.values());
+  if (p.length === 2) VIEW.g = { pinch: true, d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, s: VIEW.s, mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2, x: VIEW.x, y: VIEW.y };
+  else if (p.length === 1) VIEW.g = { x0: ev.clientX, y0: ev.clientY, x: VIEW.x, y: VIEW.y, t: Date.now(), moved: false };
+}
+function viewMove(ev) {
+  if (!VIEW.pts.has(ev.pointerId) || !VIEW.g) return;
+  VIEW.pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  const g = VIEW.g, p = Array.from(VIEW.pts.values());
+  if (g.pinch && p.length >= 2) {
+    const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2;
+    VIEW.s = g.s; VIEW.x = g.x + (mx - g.mx); VIEW.y = g.y + (my - g.my);
+    const st = VIEW.box.querySelector('.pv-stage').getBoundingClientRect();
+    const s = Math.min(5, Math.max(1, g.s * d / g.d)), px = mx - (st.left + st.width / 2), py = my - (st.top + st.height / 2), k = s / VIEW.s;
+    VIEW.x = px - (px - VIEW.x) * k; VIEW.y = py - (py - VIEW.y) * k; VIEW.s = s;
+    viewApply(false);
+    return;
+  }
+  if (g.pinch) return;
+  const dx = ev.clientX - g.x0, dy = ev.clientY - g.y0;
+  if (Math.abs(dx) > 8 || Math.abs(dy) > 8) g.moved = true;
+  if (VIEW.s > 1.01) { VIEW.x = g.x + dx; VIEW.y = g.y + dy; viewClamp(); viewApply(false); return; }
+  // At 1x the photo follows the finger: sideways to change photo, down to close.
+  const img = VIEW.box.querySelector('.pv-img');
+  img.style.transition = 'none';
+  img.style.transform = Math.abs(dx) >= Math.abs(dy) ? 'translate(' + dx + 'px,0)' : 'translate(0,' + Math.max(0, dy) + 'px)';
+}
+function viewUp(ev) {
+  if (!VIEW.pts.has(ev.pointerId)) return;
+  VIEW.pts.delete(ev.pointerId);
+  const g = VIEW.g;
+  if (!g) return;
+  if (g.pinch) {
+    // One finger still down after a pinch: it carries on moving the photo from here.
+    if (VIEW.s < 1.05) { VIEW.s = 1; VIEW.x = 0; VIEW.y = 0; }
+    viewClamp(); viewApply(true);
+    const rest = Array.from(VIEW.pts.values())[0];
+    VIEW.g = rest ? { x0: rest.x, y0: rest.y, x: VIEW.x, y: VIEW.y, t: 0, moved: true } : null;
+    return;
+  }
+  VIEW.g = null;
+  if (ev.type === 'pointercancel') { viewApply(true); return; }
+  const dx = ev.clientX - g.x0, dy = ev.clientY - g.y0;
+  if (!g.moved) {
+    // Double tap: zoom in there, or back out.
+    const now = Date.now();
+    if (now - VIEW.lastTap < 320) { VIEW.lastTap = 0; viewZoomAt(VIEW.s > 1.01 ? 1 : 2.5, ev.clientX, ev.clientY); }
+    else VIEW.lastTap = now;
+    return;
+  }
+  if (VIEW.s > 1.01) return;
+  if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) > 60) viewGo(dx < 0 ? 1 : -1);
+  else if (dy > 110 && Math.abs(dy) > Math.abs(dx)) closeViewer();
+  else viewApply(true);
+}
 
 // Photo buttons, the same for owners and engineers. Returns true when it handled the click.
 function photoClick(act, el) {
@@ -3234,6 +3414,10 @@ function photoClick(act, el) {
     redraw();
     const panel = $('phPanel');
     if (panel && photosInline()) panel.scrollIntoView({ block: 'start' });
+  } else if (act === 'ph-view') {
+    const id = el.dataset.id, ids = (S.feedIds || []).indexOf(id) >= 0 ? S.feedIds : [id];
+    // Closing on another photo opens that one in the panel, with its comments.
+    openViewer(ids, id, (last) => { if (last !== S.photoSel && S.photos && S.photos.photos.some((x) => x.id === last)) { openPhoto(last); redraw(); } });
   } else if (act === 'ph-comment') sendPhotoComment(false);
   else if (act === 'ph-task') sendPhotoComment(true);
   else if (act === 'ph-delete') {
