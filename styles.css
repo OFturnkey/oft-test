@@ -1139,3 +1139,25 @@ ul.warn-line { padding-left: 28px; }
 
 /* Engineer Today: the weekly-log reminder at the top (red once 10 am has passed). */
 .sl-top.late b { color: #A3271B; }
+
+/* Photo viewer (full screen): pinch / double-tap zoom, swipe to the next photo */
+body.pv-on { overflow: hidden }
+.pv { position: fixed; inset: 0; z-index: 120; background: #111312; color: #fff; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none }
+.pv-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 10px 8px 16px; padding-top: max(10px, env(safe-area-inset-top)); background: rgba(17,19,18,0.85); position: relative; z-index: 2 }
+.pv-cap { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 14px; line-height: 1.35 }
+.pv-cap b { font-weight: 700 }
+.pv-info { color: #D6D8D4; overflow-wrap: anywhere }
+.pv-x { flex: none; width: 48px; height: 48px; border: 0; border-radius: 24px; background: rgba(255,255,255,0.14); color: #fff; font-size: 30px; line-height: 1; cursor: pointer }
+.pv-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; cursor: grab }
+.pv[data-zoom="out"] .pv-stage { cursor: zoom-in }
+.pv-img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center center; will-change: transform; -webkit-user-drag: none }
+.pv-img.pv-small { filter: blur(0.5px) }
+.pv-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 2; width: 52px; height: 72px; border: 0; border-radius: 10px; background: rgba(255,255,255,0.12); color: #fff; font-size: 40px; line-height: 1; cursor: pointer }
+.pv-prev { left: 8px }
+.pv-next { right: 8px }
+.pv-nav[hidden] { display: none }
+.pv-hint { position: absolute; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 13px; color: #D6D8D4; background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 12px; pointer-events: none }
+.pv-hint:empty { display: none }
+@media (hover: none) { .pv-nav { display: none } }
+.ph-view { display: block; position: relative; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in }
+.ph-view-tag { position: absolute; right: 8px; bottom: 8px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(17,19,18,0.65); padding: 3px 8px; border-radius: 10px; pointer-events: none }
