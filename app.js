@@ -186,7 +186,8 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'ph-view': 1,
   'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1, 'sc-log-jump': 1,
-  'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-logsum': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
+  'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-logsum': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1,
+  'sc-actlog': 1, 'sc-actnote': 1, 'sc-note-ask': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
 // Reads only: safe to ask again.
@@ -1856,6 +1857,10 @@ function alertsPanelHtml() {
     (S.briefs ? S.briefs.map((b) => '<div class="brief"><b>' + esc(b.name) + '</b> <span class="muted small">' + esc(b.email) + '</span>' +
       '<div class="brief-card"><div class="brief-title">' + esc(b.title) + '</div><pre>' + esc(b.body) + '</pre></div>' +
       (b.total ? '' : '<span class="muted small">Nothing due: on a normal morning nothing is sent.</span>') + '</div>').join('') : '') +
+    // Mondays 12:00, to owners: whose weekly log is missing, and who logged what.
+    (S.briefs ? '<div class="brief brief-log"><b>Monday 12:00 · weekly log alert to owners</b> <span class="muted small">' + esc(S.logAlert ? niceDay(S.logAlert.monday) + ', with today’s data' : '') + '</span>' +
+      (S.logAlert ? '<div class="brief-card"><div class="brief-title">' + esc(S.logAlert.title) + '</div><pre>' + esc(S.logAlert.body) + '</pre></div>'
+        : '<p class="empty">Nothing to say this Monday (no site with planned work last week).</p>') + '</div>' : '') +
     // Test app: the instant alerts it would have sent (new site photos, queries, replies, tasks), newest first.
     (S.instant ? '<div class="brief"><b>Instant alerts the test app would have sent</b> <span class="muted small">(never sent)</span>' +
       (S.instant.length ? S.instant.map((x) => '<div class="brief-card"><div class="brief-title">' + esc(x.title) + '</div><pre>' + esc(x.body) + '</pre>' +
@@ -2238,18 +2243,26 @@ function liveProjects() {
   return ((S.data && S.data.projects) || []).filter((p) => p.active && p.stage !== 'archive')
     .sort((a, b) => (order[a.stage] - order[b.stage]) || (a.code < b.code ? -1 : 1));
 }
+// The plan's last day (its longest bar's end), or 0 without a plan.
+function planLastDay(code) {
+  const sc = schedAll()[code];
+  if (!sc || !sc.acts.length) return 0;
+  const spans = LC.planSpans(sc.acts);
+  return Object.keys(spans).reduce((m, k) => Math.max(m, spans[k].end || 0), 0);
+}
 function stagePill(stage) { return '<span class="stage-pill st-' + esc(stage) + '">' + esc(STAGE_LABEL[stage] || stage) + '</span>'; }
-// "Execution · Day 38 of 113 · Handover Sun 7 Feb · Site engineer Venky"
+// "Execution · Started Mon 2 Nov · Day 38 of 113 · Handover Sun 7 Feb · Site engineer Venky"
 // The project is called by its code everywhere; the site name (its location, e.g. E-City) leads this line.
+// Without a handover day in Directory, the plan's last day stands in for it ("Handover … (plan)").
 function projectLine(p) {
   const bits = [STAGE_LABEL[p.stage]];
   if (p.scheduleType === 'light' || p.scheduleType === 'full') bits.push(p.scheduleType + ' schedule');
-  const t = todayIso(), n = dayNumber(p, t);
+  const t = todayIso(), n = dayNumber(p, t), planEnd = planLastDay(p.code), last = p.handoverDay || planEnd;
   if (p.stage === 'execution' && n !== null) {
     if (n < 1) bits.push((p.day1 ? 'Site starts ' : 'Planned start ') + niceDay(day1Of(p)));
-    else bits.push('Day ' + n + (p.handoverDay ? ' of ' + p.handoverDay : ''));
+    else bits.push('Started ' + niceDay(day1Of(p)), 'Day ' + n + (last ? ' of ' + last : ''));
   }
-  if (p.handoverDay && day1Of(p)) bits.push('Handover ' + niceDay(dayDate(p, p.handoverDay)));
+  if (last && day1Of(p)) bits.push('Handover ' + niceDay(dayDate(p, last)) + (p.handoverDay ? '' : ' (plan)'));
   const eng = engineersOf(p.code);
   if (eng.length) bits.push('Site engineer ' + eng.map((u) => u.name).join(', '));
   return bits.join(' · ');
@@ -4753,7 +4766,7 @@ function renderAll() {
  * real dates side by side before anything replaces the draft. Engineers log last week's % per activity on Mondays
  * (Today), through the outbox; owners can log or correct any week. The rules themselves are in LedgerCore (core.js). */
 const XLSX_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-S.schedFold = {}; S.schedSel = {}; S.imp = null; S.logs = {}; S.ownerLog = null; S.schedConfirm = '';
+S.schedFold = {}; S.schedSel = {}; S.imp = null; S.logs = {}; S.ownerLog = null; S.schedConfirm = ''; S.actLog = null; S.actNote = null;
 function schedAll() { return (S.engineer ? S.site && S.site.schedule : S.data && S.data.schedule) || {}; }
 function schedProj(code) { return S.engineer ? ((S.site && S.site.projects) || []).find((p) => p.code === code) || null : projInfo(code); }
 function schedDate(p, n) { return LC.planDate(day1Of(p), n, !!p.sundayOff); }
@@ -4785,6 +4798,23 @@ function teamOf(t) {
 }
 // As shown: the name, else exactly what was typed.
 function teamText(t) { return teamOf(t) || String(t || '').trim(); }
+// A row's team: its own, else (a sub-item with none in the planner) the nearest row above it that has one, marked
+// as inherited. { name, from (the row it comes from, or null) }; name '' when there is none.
+const ACT_BY_ID = new WeakMap();
+function actTeam(a, acts) {
+  if (String(a.team || '').trim()) return { name: teamText(a.team), from: null };
+  let byId = ACT_BY_ID.get(acts);
+  if (!byId) { byId = {}; acts.forEach((x) => { byId[x.id] = x; }); ACT_BY_ID.set(acts, byId); }
+  for (let up = byId[a.parent], n = 0; up && n < 10; up = byId[up.parent], n++) {
+    if (String(up.team || '').trim()) return { name: teamText(up.team), from: up };
+  }
+  return { name: '', from: null };
+}
+function actTeamHtml(t, cls) {
+  if (!t.name) return '';
+  return t.from ? '<span class="' + cls + ' team-inh" title="' + esc('Team of ' + (t.from.no ? '#' + t.from.no + ' ' : '') + t.from.name) + '">' + esc(t.name) + '</span>'
+    : '<span class="' + cls + '">' + esc(t.name) + '</span>';
+}
 function dayRange(p, s, e) {
   const d1 = day1Of(p);
   return 'Day ' + s + (e !== s ? '–' + e : '') + (d1 ? ' · ' + niceDay(schedDate(p, s)) + (e !== s ? ' to ' + niceDay(schedDate(p, e)) : '') : '') + ' · ' + plural(e - s + 1, 'day', 'days');
@@ -4875,10 +4905,10 @@ function schedChartHtml(p, sc, compact) {
     const miss = missed(a, s);
     miss.forEach((w) => { track += bar(Math.max(s.start, w.a), Math.min(s.end, w.b), 'sc-unlog'); });
     // The team (agency) beside its bar: after it, or before it when the bar ends near the right edge.
-    const team = teamText(a.team);
+    const tm = actTeam(a, sc.acts), team = tm.name, inh = tm.from ? ' team-inh' : '';
     // Phones: the team sits under the name (it stays put while the bars scroll); laptops: beside the bar.
-    if (s && team && !compact) track += s.end / N < 0.8 ? '<span class="sc-blabel" style="left:calc(' + pos(s.end + 1) + '% + 6px)">' + esc(team) + '</span>'
-      : '<span class="sc-blabel" style="right:calc(' + (100 - Number(pos(s.start))).toFixed(3) + '% + 6px)">' + esc(team) + '</span>';
+    if (s && team && !compact) track += s.end / N < 0.8 ? '<span class="sc-blabel' + inh + '" style="left:calc(' + pos(s.end + 1) + '% + 6px)">' + esc(team) + '</span>'
+      : '<span class="sc-blabel' + inh + '" style="right:calc(' + (100 - Number(pos(s.start))).toFixed(3) + '% + 6px)">' + esc(team) + '</span>';
     let actText = '';
     if (act && act.start) {
       const as = Math.max(1, schedDayOf(p, act.start)), pe = s ? s.end : N;
@@ -4894,8 +4924,8 @@ function schedChartHtml(p, sc, compact) {
       (miss.length ? ' · not logged: ' + miss.map((w) => 'Wk ' + LC.weekNo(d1, w.m)).join(', ') : '');
     rows += '<button type="button" class="sc-row lv' + a.level + (sel === a.id ? ' on' : '') + (a.status === 'gone' ? ' gone' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) +
       '" data-id="' + esc(a.id) + '" title="' + esc(tip) + '"><span class="sc-no">' + esc(a.no) + '</span><span class="sc-name" title="' + esc(a.name + (team ? ' · ' + team : '')) + '">' +
-      (compact ? '<span class="sc-n1">' + esc(a.name) + '</span>' + (team ? '<span class="sc-n2">' + esc(team) + '</span>' : '') : esc(a.name)) + '</span>' +
-      (compact ? '' : '<span class="sc-team">' + esc(team || (a.clientScope ? 'Client' : '')) + '</span>') +
+      (compact ? '<span class="sc-n1">' + esc(a.name) + '</span>' + (team ? '<span class="sc-n2' + inh + '">' + esc(team) + '</span>' : '') : esc(a.name)) + '</span>' +
+      (compact ? '' : '<span class="sc-team' + inh + '">' + esc(team || (a.clientScope ? 'Client' : '')) + '</span>') +
       '<span class="sc-done">' + (last ? last.pct + '%' : '') + '</span><span class="sc-track">' + track + todayLine + '</span></button>';
     if (sel === a.id) rows += '<div class="sc-inline">' + schedDetailHtml(p, sc, a.id) + '</div>';
   });
@@ -4957,11 +4987,47 @@ function schedDetailHtml(p, sc, id) {
     return '<tr><td>' + esc(weekLabel(p, g.week, true)) + '</td><td class="num">' + (pl === null ? '' : pl + '%') + '</td><td class="num' + (behind ? ' bad' : '') + '">' + g.pct + '%' + (g.rework ? ' <span class="sc-redone" title="Lower than the week before: work redone">redone</span>' : '') + '</td>' +
       '<td>' + esc(g.reason) + '</td><td class="muted">' + esc(firstName(g.by)) + (g.pending ? ' · <span class="sending">Sending…</span>' : '') + '</td></tr>';
   }).join('');
-  const meta = [a.section, a.no ? '#' + a.no : '', teamText(a.team), a.clientScope ? 'Client’s scope' : '', a.kind === 'procurement' ? 'Purchase' : ''].filter(Boolean).join(' · ');
+  const tm = actTeam(a, sc.acts);
+  const meta = [a.section, a.no ? '#' + a.no : '', tm.from ? tm.name + ' (team of #' + (tm.from.no || tm.from.name) + ')' : tm.name, a.clientScope ? 'Client’s scope' : '', a.kind === 'procurement' ? 'Purchase' : ''].filter(Boolean).join(' · ');
   return '<div class="sc-detail"><div class="muted small">' + esc(meta) + '</div><h3>' + esc(a.name) + '</h3>' +
     (a.status === 'gone' ? '<p class="warn-line">Not in the planner any more. Kept because progress was logged for it.</p>' : '') +
-    '<dl class="pdl"><dt>Plan</dt><dd>' + esc(plan) + '</dd>' + (actual ? '<dt>Done</dt><dd>' + esc(actual) + '</dd>' : '') + (a.note ? '<dt>Note</dt><dd>' + esc(a.note) + '</dd>' : '') + '</dl>' +
-    (weeks ? '<table class="sc-weeks"><thead><tr><th>Week</th><th class="num">Plan</th><th class="num">Done</th><th>Why behind</th><th>By</th></tr></thead><tbody>' + weeks + '</tbody></table>' : '') + '</div>';
+    '<dl class="pdl"><dt>Plan</dt><dd>' + esc(plan) + '</dd>' + (actual ? '<dt>Done</dt><dd>' + esc(actual) + '</dd>' : '') + (a.note ? '<dt>Remark</dt><dd>' + esc(a.note) + ' <span class="muted small">(planner)</span></dd>' : '') + '</dl>' +
+    (weeks ? '<table class="sc-weeks"><thead><tr><th>Week</th><th class="num">Plan</th><th class="num">Done</th><th>Why behind</th><th>By</th></tr></thead><tbody>' + weeks + '</tbody></table>' : '') +
+    actHistoryHtml(p, sc, a) + (isOwner() && !S.engineer ? actOwnerHtml(p, sc, a, spans) : '') + '</div>';
+}
+// The panel's history: owners' notes and what they saw on site, newest first, each with who and when.
+function actHistoryHtml(p, sc, a) {
+  const me = S.me && S.me.email;
+  const items = (sc.notes || []).filter((n) => n.activity === a.id).sort((x, y) => (x.at < y.at ? 1 : -1));
+  if (!items.length) return '';
+  return '<div class="an-list"><h4 class="an-h">Notes and site visits</h4>' + items.map((n) => {
+    const head = n.kind === 'seen' ? firstName(n.by) + ' · ' + n.pct + '% · seen ' + niceDay(n.on) : firstName(n.by) + ' · ' + niceDay(n.at.slice(0, 10)) + ' ' + n.at.slice(11, 16);
+    const body = n.kind === 'seen' ? (n.reason ? 'Behind: ' + n.reason : '') : n.text;
+    const del = n.by === me && !S.engineer ? (S.schedConfirm === 'note:' + n.id ? '<button type="button" class="link-btn an-del" data-act="sc-note-del" data-code="' + esc(p.code) + '" data-id="' + esc(n.id) + '">Confirm: remove?</button>'
+      : '<button type="button" class="link-btn an-del" data-act="sc-note-ask" data-code="' + esc(p.code) + '" data-id="' + esc(n.id) + '">Remove</button>') : '';
+    return '<div class="an-item ' + (n.kind === 'seen' ? 'an-seen' : 'an-note') + '"><div class="an-head"><b>' + esc(head) + '</b>' + del + '</div>' + (body ? '<div class="an-body">' + esc(body) + '</div>' : '') + '</div>';
+  }).join('') + '</div>';
+}
+// Owners, in the panel: "Log progress" for this activity only, and "Add note".
+function actOwnerHtml(p, sc, a, spans) {
+  const c = esc(p.code), id = esc(a.id), canLog = LC.loggable(a, spans) && !!day1Of(p) && ownerWeeks(p).length > 0;
+  const logOn = S.actLog && S.actLog.code === p.code && S.actLog.id === a.id, noteOn = S.actNote && S.actNote.code === p.code && S.actNote.id === a.id;
+  let html = '<div class="an-btns">' + (canLog ? '<button type="button" class="btn-outline" data-act="sc-actlog" data-code="' + c + '" data-id="' + id + '" aria-pressed="' + !!logOn + '">Log progress</button>' : '') +
+    '<button type="button" class="btn-outline" data-act="sc-actnote" data-code="' + c + '" data-id="' + id + '" aria-pressed="' + !!noteOn + '">Add note</button></div>';
+  if (logOn) {
+    const weeks = ownerWeeks(p);
+    if (weeks.indexOf(S.actLog.week) < 0) S.actLog.week = weeks[0]; // this week, so far
+    html += '<div class="an-form an-log">' + weekPickHtml(p, weeks, S.actLog.week, 'data-alweek="' + c + '"') + seenNoteHtml(p, S.actLog.week) + logFormHtml(p, S.actLog.week, false, a.id) + '</div>';
+  }
+  if (noteOn) {
+    const n = S.actNote;
+    html += '<div class="an-form an-noteform"><label for="actNote">Note on ' + esc(a.name) + '</label><textarea id="actNote" data-actnote="1" rows="3" maxlength="1000">' + esc(n.text) + '</textarea>' +
+      (n.err ? '<p class="err" role="alert">' + esc(n.err) + '</p>' : '') +
+      '<div class="an-btns"><button type="button" class="btn-accent" data-act="sc-note-save" data-code="' + c + '" data-id="' + id + '">Save note</button>' +
+      '<button type="button" class="btn-outline" data-act="sc-actnote" data-code="' + c + '" data-id="' + id + '">Cancel</button></div>' +
+      '<span class="muted small">Dated today, with your name. Only owners add notes.</span></div>';
+  }
+  return html;
 }
 
 // The project's Schedule section (laptop and phone): the plan, and for owners import and the weekly log.
@@ -5103,40 +5169,57 @@ function importGo() {
  * starts at this week's value if logged, else unpicked with last week's value as a hint; one tap picks it. 25 points
  * or more behind plan needs a reason. */
 function logState(code, monday) { const k = code + '|' + monday; return S.logs[k] || (S.logs[k] = { vals: {}, why: {}, rework: {}, extra: [], err: '', open: false }); }
-function logRows(p, monday) {
+// The current week (owners only): not a log but what they saw so far ("Shruthi · 50% · seen Thu"), against the plan
+// by today. It is saved beside the log; the engineer's Monday value stays the week's value.
+function isSeenWeek(monday) { return monday === LC.weekMonday(todayIso()); }
+// Owners' observations of one activity in one week, newest first (sc.notes, kind 'seen').
+function seenIn(sc, actId, monday) {
+  return (sc.notes || []).filter((n) => n.kind === 'seen' && n.activity === actId && n.week === monday).sort((x, y) => (x.at < y.at ? 1 : -1));
+}
+function seenText(n) { return firstName(n.by) + ' saw ' + n.pct + '% on ' + niceDay(n.on); }
+// only: one activity (its panel's "Log progress"), whether or not the plan has it that week.
+function logRows(p, monday, only) {
   const sc = schedOf(p.code), d1 = day1Of(p), st = logState(p.code, monday), spans = LC.planSpans(sc.acts), by = LC.progressBy(sc.progress);
-  const list = LC.weekList(sc.acts, sc.progress, d1, monday), end = schedDayOf(p, addDays(monday, 6));
-  st.extra.forEach((id) => {
+  const seen = isSeenWeek(monday), me = S.me && S.me.email;
+  let list = LC.weekList(sc.acts, sc.progress, d1, monday);
+  const end = seen ? schedDayOf(p, todayIso()) : schedDayOf(p, addDays(monday, 6));
+  st.extra.concat(only ? [only] : []).forEach((id) => {
     const a = sc.acts.find((y) => y.id === id);
     if (!a || list.some((x) => x.act.id === id) || !LC.loggable(a, spans)) return;
     list.push({ act: a, span: spans[id], plan: LC.planPct(spans[id], end), before: (by[id] || []).filter((g) => g.week < monday).pop() || null, now: null });
   });
+  if (only) list = list.filter((x) => x.act.id === only);
   const prevMonday = addDays(monday, -7), prevEnd = schedDayOf(p, addDays(monday, -1));
   list.forEach((x) => {
+    // This week: the plan by today, and what I saw today (if I saved it) as the starting value.
+    const obs = seenIn(sc, x.act.id, monday);
+    if (seen) { x.plan = LC.planPct(x.span, end); x.now = obs.find((n) => n.by === me && n.on === todayIso()) || null; }
+    x.seen = obs.find((n) => n !== x.now) || null;
     x.val = st.vals[x.act.id] !== undefined ? st.vals[x.act.id] : x.now ? x.now.pct : null;
     const prev = (by[x.act.id] || []).find((g) => g.week === prevMonday) || null;
     x.behind = LC.needsWhy(x.plan, x.val, prev, LC.planPct(x.span, prevEnd));
     x.twice = x.behind && x.plan - x.val < LC.BEHIND; // behind for the second week running (under 25 points)
     // Lower than the last week logged: asked once ("Fix it" puts it back; "Yes, it was redone" keeps it as rework).
-    x.lower = x.val !== null && !!x.before && x.val < x.before.pct;
+    x.lower = !seen && x.val !== null && !!x.before && x.val < x.before.pct;
     x.redone = x.lower && (st.rework[x.act.id] !== undefined ? st.rework[x.act.id] : !!(x.now && x.now.rework && x.now.pct === x.val));
     x.why = x.behind ? (st.why[x.act.id] !== undefined ? st.why[x.act.id] : x.now ? x.now.reason : '') : '';
   });
-  const others = sc.acts.filter((a) => LC.loggable(a, spans) && !list.some((x) => x.act.id === a.id));
-  return { list: list, others: others, st: st };
+  const others = only ? [] : sc.acts.filter((a) => LC.loggable(a, spans) && !list.some((x) => x.act.id === a.id));
+  return { list: list, others: others, st: st, seen: seen };
 }
-function logFormHtml(p, monday, forEngineer) {
-  const r = logRows(p, monday), c = esc(p.code), w = esc(monday);
+function logFormHtml(p, monday, forEngineer, only) {
+  const r = logRows(p, monday, only), c = esc(p.code), w = esc(monday), byWhen = r.seen ? ' by today' : '';
   if (!r.list.length && !r.others.length) return '<p class="muted">Nothing in the plan to log.</p>';
   const rows = r.list.map((x) => {
     const id = esc(x.act.id);
-    const tag = x.val === null ? ['plan', 'Plan ' + x.plan + '%'] : x.val >= 100 ? ['done', 'Done'] : x.twice ? ['bad', 'Behind 2 weeks · plan ' + x.plan + '%']
-      : x.behind ? ['bad', 'Behind · plan ' + x.plan + '%'] : ['ok', (x.val < x.plan ? 'A little behind' : 'On track') + ' · plan ' + x.plan + '%'];
-    const team = teamText(x.act.team);
+    const tag = x.val === null ? ['plan', 'Plan ' + x.plan + '%' + byWhen] : x.val >= 100 ? ['done', 'Done'] : x.twice ? ['bad', 'Behind 2 weeks · plan ' + x.plan + '%']
+      : x.behind ? ['bad', 'Behind · plan ' + x.plan + '%' + byWhen] : ['ok', (x.val < x.plan ? 'A little behind' : 'On track') + ' · plan ' + x.plan + '%' + byWhen];
+    // Hints, never a value: last week's log, and what an owner saw on site that week.
+    const hints = [x.before ? 'Last time ' + x.before.pct + '% (' + weekLabel(p, x.before.week, true) + ')' : '', x.seen ? seenText(x.seen) : ''].filter(Boolean);
     return '<div class="sl-row"><div class="sl-head"><span class="sl-name">' + esc((x.act.no ? x.act.no + ' · ' : '') + x.act.name) +
-      (team ? '<span class="sl-team">' + esc(team) + '</span>' : '') + '</span><span class="sl-tag ' + tag[0] + '">' + esc(tag[1]) + '</span></div>' +
-      (x.before ? '<span class="muted small">Last time ' + x.before.pct + '% (' + esc(weekLabel(p, x.before.week, true)) + ')</span>' : '') +
-      '<div class="sl-steps" role="group" aria-label="' + esc(x.act.name) + ': done by the end of the week">' + LC.STEPS.map((n) =>
+      actTeamHtml(actTeam(x.act, schedOf(p.code).acts), 'sl-team') + '</span><span class="sl-tag ' + tag[0] + '">' + esc(tag[1]) + '</span></div>' +
+      (hints.length ? '<span class="muted small sl-hint">' + esc(hints.join(' · ')) + '</span>' : '') +
+      '<div class="sl-steps" role="group" aria-label="' + esc(x.act.name) + (r.seen ? ': seen so far this week' : ': done by the end of the week') + '">' + LC.STEPS.map((n) =>
         '<button type="button" class="sl-step' + (x.val === n ? ' on' : '') + '" data-act="sc-step" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + n + '" aria-pressed="' + (x.val === n) + '">' + n + '%</button>').join('') + '</div>' +
       (x.behind ? '<div class="sl-why"><span>' + (x.twice ? 'Behind plan two weeks in a row' : 'Behind plan') + ' (plan said ' + x.plan + '%). Why?</span><div class="sl-chips">' + LC.REASONS.map((t) =>
         '<button type="button" class="sl-chip' + (x.why === t ? ' on' : '') + '" data-act="sc-why" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + esc(t) + '" aria-pressed="' + (x.why === t) + '">' + esc(t) + '</button>').join('') + '</div></div>' : '') +
@@ -5148,18 +5231,29 @@ function logFormHtml(p, monday, forEngineer) {
     r.others.map((a) => '<option value="' + esc(a.id) + '">' + esc((a.no ? a.no + ' · ' : '') + a.name) + '</option>').join('') + '</select></label>' : '';
   // The button names the project and week, so the wrong site can't be saved by mistake.
   const sp = LC.weekSpan(day1Of(p), monday);
+  const label = r.seen ? 'Save what I saw · ' + (p.name || p.code) + ' · ' + LC.nice(todayIso()) : 'Save ' + (p.name || p.code) + ' · ' + LC.nice(sp.from) + '–' + LC.nice(sp.to);
   return '<div class="sl-form">' + rows + '<div class="sl-foot">' + add + (r.st.err ? '<p class="err" role="alert">' + esc(r.st.err) + '</p>' : '') +
-    '<button type="button" class="sl-save" data-act="sc-log-save" data-code="' + c + '" data-week="' + w + '">' + esc('Save ' + (p.name || p.code) + ' · ' + LC.nice(sp.from) + '–' + LC.nice(sp.to)) + '</button></div></div>';
+    '<button type="button" class="sl-save" data-act="sc-log-save" data-code="' + c + '" data-week="' + w + '"' + (only ? ' data-id="' + esc(only) + '"' : '') + '>' + esc(label) + '</button></div></div>';
 }
-function logSave(code, monday) {
+function logSave(code, monday, only) {
   const p = schedProj(code);
   if (!p) return;
-  const r = logRows(p, monday), st = r.st;
-  const missing = r.list.filter((x) => x.val === null), noWhy = r.list.filter((x) => x.behind && !x.why), lower = r.list.filter((x) => x.lower && !x.redone);
-  st.err = missing.length ? 'Pick a % for ' + missing.map((x) => x.act.name).join(', ') + '.' : noWhy.length ? 'Pick why ' + noWhy.map((x) => x.act.name).join(', ') + (noWhy.length > 1 ? ' are' : ' is') + ' behind plan.'
+  const r = logRows(p, monday, only), st = r.st;
+  // What an owner saw this week: the activities tapped (at least one); the rest stay as they were.
+  const rows = r.seen ? r.list.filter((x) => x.val !== null) : r.list;
+  const missing = r.seen ? (rows.length ? [] : r.list) : r.list.filter((x) => x.val === null), noWhy = rows.filter((x) => x.behind && !x.why), lower = rows.filter((x) => x.lower && !x.redone);
+  st.err = missing.length ? 'Pick a % for ' + (r.seen && missing.length > 1 ? 'at least one activity' : missing.map((x) => x.act.name).join(', ')) + '.' : noWhy.length ? 'Pick why ' + noWhy.map((x) => x.act.name).join(', ') + (noWhy.length > 1 ? ' are' : ' is') + ' behind plan.'
     : lower.length ? 'Lower than last week: ' + lower.map((x) => x.act.name).join(', ') + '. Fix it, or say it was redone.' : '';
-  if (st.err || !r.list.length) { redraw(); return; }
-  const entries = r.list.map((x) => ({ a: x.act.id, pct: x.val, reason: x.behind ? x.why : '', rework: !!x.redone }));
+  if (st.err || !rows.length) { redraw(); return; }
+  const entries = rows.map((x) => ({ a: x.act.id, pct: x.val, reason: x.behind ? x.why : '', rework: !!x.redone }));
+  if (r.seen) {
+    call('observeProgress', [code, entries], (res) => {
+      delete S.logs[code + '|' + monday];
+      if (only) S.actLog = null;
+      snack(res && res.saved ? 'Saved what you saw (' + plural(res.saved, 'activity', 'activities') + '). The Monday log stays the week’s value.' : 'Nothing changed.');
+    }, (msg) => { st.err = msg; });
+    return;
+  }
   if (S.engineer) {
     outboxAdd('logProgress', [code, monday, entries], 'Progress', { project: code, week: monday }).then(() => {
       delete S.logs[code + '|' + monday];
@@ -5170,16 +5264,33 @@ function logSave(code, monday) {
   }
   call('logProgress', [code, monday, entries], (res) => {
     delete S.logs[code + '|' + monday];
+    if (only) S.actLog = null;
     snack(res && res.saved ? 'Progress saved: ' + weekLabel(p, monday) + '.' : 'Nothing changed.');
   }, (msg) => { st.err = msg; });
 }
+// The weeks an owner can pick: this week ("so far", once the site has started), then the ended weeks, newest first.
+function ownerWeeks(p) {
+  const d1 = day1Of(p), weeks = endedWeeks(p).slice().reverse(), t = todayIso();
+  if (d1 && t >= d1) weeks.unshift(LC.weekMonday(t));
+  return weeks;
+}
+function weekPickHtml(p, weeks, cur, attr) {
+  return '<label class="small">Week <select ' + attr + '>' + weeks.map((m) => '<option value="' + m + '"' + (m === cur ? ' selected' : '') + '>' +
+    esc(isSeenWeek(m) ? weekLabel(p, m).replace(/ · .*/, '') + ' · this week, so far' : weekLabel(p, m)) + '</option>').join('') + '</select></label>';
+}
+function seenNoteHtml(p, monday) {
+  return isSeenWeek(monday) ? '<p class="muted small">What you saw on site so far this week, saved as your observation with today’s date. ' + esc(engNamesOf(p.code) || 'The site engineer') + '’s Monday log stays the week’s value; he sees yours as a hint.</p>'
+    : '<p class="muted small">What was done by the end of that week. ' + esc(engNamesOf(p.code) || 'The site engineer') + ' logs every Monday; change a value here if it needs correcting.</p>';
+}
+function engNamesOf(code) { return engineersOf(code).map((u) => firstName(u.email)).join(' or '); }
 function ownerLogHtml(p) {
-  const weeks = endedWeeks(p), d1 = day1Of(p);
-  if (!weeks.length) return '<section class="card sl-panel"><p class="muted">Week 1 ends on ' + esc(niceDay(addDays(LC.firstWeek(d1), 6))) + '. A week is logged from the Monday after it.</p></section>';
-  if (weeks.indexOf(S.ownerLog.week) < 0) S.ownerLog.week = weeks[weeks.length - 1];
+  const weeks = ownerWeeks(p), d1 = day1Of(p);
+  if (!weeks.length) return '<section class="card sl-panel"><p class="muted">The site starts on ' + esc(niceDay(d1)) + '. Progress is logged from then.</p></section>';
+  // Opens on the last ended week (the one to check or correct); this week is one pick away.
+  if (weeks.indexOf(S.ownerLog.week) < 0) S.ownerLog.week = weeks.find((m) => !isSeenWeek(m)) || weeks[0];
   return '<section class="card sl-panel" aria-labelledby="ol-h"><div class="sc-imp-head"><h3 id="ol-h">Log progress</h3>' +
-    '<label class="small">Week <select data-slweek="' + esc(p.code) + '">' + weeks.slice().reverse().map((m) => '<option value="' + m + '"' + (m === S.ownerLog.week ? ' selected' : '') + '>' + esc(weekLabel(p, m)) + '</option>').join('') + '</select></label></div>' +
-    '<p class="muted small">What was done by the end of that week. Venky logs every Monday; change a value here if it needs correcting.</p>' + logFormHtml(p, S.ownerLog.week, false) + '</section>';
+    weekPickHtml(p, weeks, S.ownerLog.week, 'data-slweek="' + esc(p.code) + '"') + '</div>' +
+    seenNoteHtml(p, S.ownerLog.week) + logFormHtml(p, S.ownerLog.week, false) + '</section>';
 }
 // His projects with planned work last week to log: { code, p, list, monday, open (still to save) }.
 function engLogItems() {
@@ -5193,8 +5304,10 @@ function engLogItems() {
     return list.length ? { code: code, p: p, list: list, monday: monday, open: !list.every((x) => x.now) || logState(code, monday).open } : null;
   }).filter(Boolean);
 }
-function engLogDue(monday) {
-  const t = todayIso(), late = t > addDays(monday, 7) || new Date().getHours() >= 10;
+// Red from 10:00 on the Monday after the week (and every day after it). at: 'yyyy-mm-dd hh:mm' for the checks; now by default.
+function engLogDue(monday, at) {
+  const t = at ? at.slice(0, 10) : todayIso(), h = at ? Number(at.slice(11, 13)) : new Date().getHours();
+  const late = t > addDays(monday, 7) || h >= 10;
   return { late: late, text: t === addDays(monday, 7) ? (late ? 'was due today at 10 am' : 'due today by 10 am') : 'was due Monday at 10 am' };
 }
 // Top of his Today, while a log is still to save: one line for all his projects ("Log last week's progress · Nest,
@@ -5245,7 +5358,7 @@ function schedWeekHtml(p, sc) {
     else if (s.start > a1 && s.start <= a1 + 7) next.push({ a: a, s: s, l: l });
   });
   const item = (x, kind) => {
-    const a = x.a, s = x.s, team = teamText(a.team), on = S.schedSel[p.code] === a.id;
+    const a = x.a, s = x.s, on = S.schedSel[p.code] === a.id;
     const days = 'Day ' + s.start + (s.end > s.start ? '–' + s.end : '') + ' · ' + LC.nice(schedDate(p, s.start)) + (s.end > s.start ? ' to ' + LC.nice(schedDate(p, s.end)) : '');
     // Coloured by the gap between the plan by Sunday and the last value logged: on track, behind, or far behind.
     const plan = LC.planPct(s, a1), gap = x.l ? plan - x.l.pct : null;
@@ -5257,7 +5370,7 @@ function schedWeekHtml(p, sc) {
       : s.end < a1 ? 'Should finish ' + niceDay(schedDate(p, s.end)) + last
       : 'Should be ' + plan + '% by Sunday' + last;
     return '<button type="button" class="sw-item' + (kind === 'late' ? ' late' : '') + tone + (on ? ' on' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) + '" data-id="' + esc(a.id) + '">' +
-      '<span class="sw-name">' + esc((a.no ? a.no + ' · ' : '') + a.name) + (team ? ' <span class="sl-team">' + esc(team) + '</span>' : '') + '</span>' +
+      '<span class="sw-name">' + esc((a.no ? a.no + ' · ' : '') + a.name) + (actTeam(a, sc.acts).name ? ' ' + actTeamHtml(actTeam(a, sc.acts), 'sl-team') : '') + '</span>' +
       '<span class="sw-days">' + esc(days) + '</span><span class="sw-line">' + esc(line) + '</span></button>' +
       (on ? '<div class="sw-detail">' + schedDetailHtml(p, sc, a.id) + '</div>' : '');
   };
@@ -5337,7 +5450,19 @@ function schedClick(act, el) {
   else if (act === 'sc-why') { const st = logState(code, week); st.why[id] = el.dataset.v; st.err = ''; }
   else if (act === 'sc-lower-fix') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); st.rework[id] = false; st.err = ''; }
   else if (act === 'sc-lower-ok') { const st = logState(code, week); st.rework[id] = !st.rework[id]; st.err = ''; }
-  else if (act === 'sc-log-save') { logSave(code, week); return true; }
+  else if (act === 'sc-log-save') { logSave(code, week, id || ''); return true; }
+  else if (act === 'sc-actlog') { const on = S.actLog && S.actLog.code === code && S.actLog.id === id; S.actLog = on ? null : { code: code, id: id, week: '' }; S.actNote = null; }
+  else if (act === 'sc-actnote') { const on = S.actNote && S.actNote.code === code && S.actNote.id === id; S.actNote = on ? null : { code: code, id: id, text: '', err: '' }; S.actLog = null; }
+  else if (act === 'sc-note-save') {
+    const n = S.actNote;
+    if (!n || n.sending) return true;
+    if (!String(n.text || '').trim()) { n.err = 'Type the note first.'; redraw(); return true; }
+    n.sending = true;
+    call('addActivityNote', [code, id, n.text], () => { S.actNote = null; snack('Note saved.'); }, (msg) => { n.sending = false; n.err = msg; });
+    return true;
+  }
+  else if (act === 'sc-note-ask') S.schedConfirm = 'note:' + id;
+  else if (act === 'sc-note-del') { call('removeActivityNote', [id], () => snack('Removed.')); return true; }
   else if (act === 'sc-log-open') logState(code, week).open = true;
   else if (act === 'sc-whole') { S.schedWhole[code] = !S.schedWhole[code]; window.scrollTo(0, 0); }
   else if (act === 'sc-ownerlog') S.ownerLog = S.ownerLog && S.ownerLog.code === code ? null : { code: code, week: '' };
@@ -5361,6 +5486,7 @@ function schedChange(t) {
   }
   if (t.dataset.sladd !== undefined) { if (t.value) logState(t.dataset.sladd, t.dataset.week).extra.push(t.value); redraw(); return true; }
   if (t.dataset.slweek !== undefined && S.ownerLog) { S.ownerLog.week = t.value; renderAll(); return true; }
+  if (t.dataset.alweek !== undefined && S.actLog) { S.actLog.week = t.value; renderAll(); return true; }
   return false;
 }
 
@@ -5501,7 +5627,7 @@ function onAct(el) {
     case 'pp-paper': S.paper = el.dataset.v; savePrintChoices(); break;
     case 'pp-orient': S.orient = el.dataset.v; savePrintChoices(); break;
     case 'brief-preview':
-      call('previewBriefs', [], (res) => { S.briefs = res.previews; S.instant = CONFIG.env === 'test' ? res.instant || [] : null; });
+      call('previewBriefs', [], (res) => { S.briefs = res.previews; S.logAlert = res.logAlert || null; S.instant = CONFIG.env === 'test' ? res.instant || [] : null; });
       break;
     case 'alerts-on': enableAlerts(); return;
     case 'test-alert':
@@ -5547,6 +5673,7 @@ function onAct(el) {
 
 document.addEventListener('input', (ev) => {
   const t = ev.target;
+  if (t.dataset.actnote !== undefined) { if (S.actNote) { S.actNote.text = t.value; S.actNote.err = ''; } return; }
   if (t.id === 'code') {
     S.code = t.value; S.armed = ''; S.saveErr = '';
     renderCodebar();
