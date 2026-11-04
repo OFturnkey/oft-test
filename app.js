@@ -185,7 +185,7 @@ function actKey(el) { const d = el.dataset; return d.act + ':' + (d.id || d.code
 // background: the bottom bar and tabs must always answer. Only saves lock their button.
 const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view': 1, 'q-open': 1, 'eq-open': 1, 'eq-back': 1, 'eq-register': 1, 'eng-task-open': 1,
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'lightbox-close': 1,
-  'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1,
+  'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1, 'sc-log-jump': 1,
   'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-logsum': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
@@ -776,7 +776,7 @@ function engTodayHtml() {
       (doneOpen ? done.map(row).join('') : '') + '</section>'
     : engBoxHtml('eng-box-done', 'Done recently', 0, '', 'nothing in the last 24 hours');
   return '<div class="eng-greet"><div class="muted">' + esc(niceDay(t)) + '</div><h1>' + esc(greet + ', ' + name) + '</h1></div>' +
-    outboxStatusHtml() + engAlertsHtml() +
+    engLogTopHtml() + outboxStatusHtml() + engAlertsHtml() +
     (unsentHtml ? '<section class="card eng-card eng-needs">' + unsentHtml + '</section>' : '') +
     '<button type="button" class="eng-big" data-act="eng-tab" data-tab="queries">' + CAMERA_ICON + '<span>Ask a question</span></button>' +
     engLogCardHtml() +
@@ -4997,30 +4997,48 @@ function ownerLogHtml(p) {
     '<label class="small">Week <select data-slweek="' + esc(p.code) + '">' + weeks.slice().reverse().map((m) => '<option value="' + m + '"' + (m === S.ownerLog.week ? ' selected' : '') + '>' + esc(weekLabel(p, m)) + '</option>').join('') + '</select></label></div>' +
     '<p class="muted small">What was done by the end of that week. Venky logs every Monday; change a value here if it needs correcting.</p>' + logFormHtml(p, S.ownerLog.week, false) + '</section>';
 }
-// Engineer Today: last week's log for each of his projects, until it is saved (then one line, with Change for 24 hours).
-function engLogCardHtml() {
-  const t = todayIso(), monday = addDays(LC.weekMonday(t), -7);
+// His projects with planned work last week to log: { code, p, list, monday, open (still to save) }.
+function engLogItems() {
+  const monday = addDays(LC.weekMonday(todayIso()), -7);
   return (engMe().projects || []).map((code) => {
     const p = schedProj(code);
-    if (!p || p.stage !== 'execution') return '';
+    if (!p || p.stage !== 'execution') return null;
     const d1 = day1Of(p), sc = schedOf(code);
-    if (!d1 || !sc.acts.length || monday < LC.firstWeek(d1)) return '';
+    if (!d1 || !sc.acts.length || monday < LC.firstWeek(d1)) return null;
     const list = LC.weekList(sc.acts, sc.progress, d1, monday);
-    if (!list.length) return '';
-    const st = logState(code, monday), wl = weekLabel(p, monday), when = wl.replace(/^Week \d+ · /, ''), name = engProjName(code);
+    return list.length ? { code: code, p: p, list: list, monday: monday, open: !list.every((x) => x.now) || logState(code, monday).open } : null;
+  }).filter(Boolean);
+}
+function engLogDue(monday) {
+  const t = todayIso(), late = t > addDays(monday, 7) || new Date().getHours() >= 10;
+  return { late: late, text: t === addDays(monday, 7) ? (late ? 'was due today at 10 am' : 'due today by 10 am') : 'was due Monday at 10 am' };
+}
+// Top of his Today, while a log is still to save: one line for all his projects ("Log last week's progress · Nest,
+// Unicourt"), above everything else; a tap goes to the first card.
+function engLogTopHtml() {
+  const open = engLogItems().filter((x) => x.open);
+  if (!open.length) return '';
+  const due = engLogDue(open[0].monday);
+  return '<section class="card eng-card eng-needs"><button type="button" class="eng-need eng-need-main sl-top' + (due.late ? ' late' : '') + '" data-act="sc-log-jump">' +
+    '<b>' + esc('Log last week’s progress · ' + open.map((x) => engProjName(x.code)).join(', ')) + '</b><span class="muted small">' + esc(due.text) + '</span></button></section>';
+}
+// Engineer Today: last week's log for each of his projects, until it is saved (then one line, with Change for 24 hours).
+function engLogCardHtml() {
+  return engLogItems().map((it) => {
+    const code = it.code, p = it.p, list = it.list, monday = it.monday;
+    const wl = weekLabel(p, monday), when = wl.replace(/^Week \d+ · /, ''), name = engProjName(code);
     const chip = '<span class="code-tag">' + esc(code) + '</span>';
-    if (list.every((x) => x.now) && !st.open) {
+    if (!it.open) {
       const sending = list.some((x) => x.now.pending), newest = Math.max.apply(null, list.map((x) => stampMs(x.now.at)));
       const canChange = !sending && list.every((x) => x.now.by === S.me.email) && Date.now() - newest < 86400000;
       return '<section class="card eng-card sl-card sl-done"><div class="eng-box-h"><b>Last week’s progress logged</b><span class="muted small">' + chip + ' ' + esc(name + ' · ' + when) + '</span>' +
         (sending ? '<span class="sending small">Sending…</span>' : '') + '</div>' +
         (canChange ? '<button type="button" class="link-btn" data-act="sc-log-open" data-code="' + esc(code) + '" data-week="' + esc(monday) + '">Change</button>' : '') + '</section>';
     }
-    const late = t > addDays(monday, 7) || new Date().getHours() >= 10;
-    const due = t === addDays(monday, 7) ? (late ? 'was due today at 10 am' : 'due today by 10 am') : 'was due Monday at 10 am';
+    const due = engLogDue(monday);
     // One card per project, titled by the project in capitals, so it can't be taken for the site picked at the top.
     return '<section class="card eng-card sl-card"><div class="sl-title"><h2 class="eng-h2">' + esc(name.toUpperCase() + ' · Log last week') + '</h2>' + chip + '</div>' +
-      '<div class="sl-due' + (late ? ' late' : '') + '">' + esc(when + ' · ' + wl.replace(/ · .*/, '') + ' · ' + due) + '</div>' +
+      '<div class="sl-due' + (due.late ? ' late' : '') + '">' + esc(when + ' · ' + wl.replace(/ · .*/, '') + ' · ' + due.text) + '</div>' +
       logFormHtml(p, monday, true) + '</section>';
   }).join('');
 }
@@ -5126,6 +5144,7 @@ function engScheduleHtml() {
 function schedClick(act, el) {
   if (act.indexOf('sc-') !== 0) return false;
   if (act === 'sc-logsum') { openLogSummary(el.dataset.code || el.dataset.id, addDays(LC.weekMonday(todayIso()), -7)); return true; }
+  if (act === 'sc-log-jump') { const c = document.querySelector('.sl-card:not(.sl-done)'); if (c) c.scrollIntoView({ block: 'start', behavior: 'smooth' }); return true; }
   const code = el.dataset.code, id = el.dataset.id, week = el.dataset.week;
   if (act !== 'sc-undo') S.schedConfirm = '';
   if (act === 'sc-fold') { const k = code + '|' + id; S.schedFold[k] = !S.schedFold[k]; }
