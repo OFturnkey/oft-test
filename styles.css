@@ -1136,3 +1136,6 @@ ul.warn-line { padding-left: 28px; }
 .ls-line.behind { color: #8A5A00; }
 .ls-line.ls-more { color: #5C615D; }
 .ls-fin { color: #455B28; font-weight: 600; }
+
+/* Engineer Today: the weekly-log reminder at the top (red once 10 am has passed). */
+.sl-top.late b { color: #A3271B; }
