@@ -1161,3 +1161,18 @@ body.pv-on { overflow: hidden }
 @media (hover: none) { .pv-nav { display: none } }
 .ph-view { display: block; position: relative; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in }
 .ph-view-tag { position: absolute; right: 8px; bottom: 8px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(17,19,18,0.65); padding: 3px 8px; border-radius: 10px; pointer-events: none }
+/* A sub-item's team taken from its parent row */
+.team-inh { font-style: italic; opacity: 0.8 }
+.team-inh::before { content: "↳ " ; font-style: normal }
+/* Activity panel: owners' notes and site visits, Log progress / Add note */
+.an-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px }
+.an-h { margin: 0 0 2px; font-size: 14px }
+.an-item { border-left: 3px solid #C9CCC5; padding: 4px 0 4px 10px }
+.an-item.an-seen { border-left-color: #3E6FA8 }
+.an-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 14px }
+.an-body { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere }
+.an-del { font-size: 13px }
+.an-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px }
+.an-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px }
+.an-form textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid #C9CCC5 }
+.sl-hint { display: block }
