@@ -187,7 +187,7 @@ const NAV_ACTS = { 'eng-tab': 1, tab: 1, 'proj-tab': 1, 'proj-sec': 1, 'q-view':
   'task-src': 1, 'needs-query': 1, 'today-query': 1, 'today-mine': 1, 'ph-open': 1, 'ph-open-site': 1, lightbox: 1, 'ph-view': 1,
   'eng-done-toggle': 1, 'done-toggle': 1, 'reg-open': 1, 'sc-log-jump': 1,
   'sc-pick': 1, 'sc-fold': 1, 'sc-whole': 1, 'sc-logsum': 1, 'sc-lower-fix': 1, 'sc-lower-ok': 1, 'sc-step': 1, 'sc-why': 1, 'sc-log-open': 1, 'sc-ownerlog': 1, 'sc-imp-only': 1, 'sc-imp-cancel': 1,
-  'sc-actlog': 1, 'sc-actnote': 1, 'sc-note-ask': 1 };
+  'sc-actlog': 1, 'sc-actnote': 1, 'sc-note-ask': 1, 'ph-pick': 1, 'ph-pickday': 1, 'ph-pick-save': 1 };
 // Background reads (and "opened") never make a button look busy.
 const QUIET_CALLS = { getData: 1, getSite: 1, listPhotos: 1, photoThumbs: 1, photoFull: 1, listQueries: 1, devices: 1, markSeen: 1, changed: 1, refresh: 1 };
 // Reads only: safe to ask again.
@@ -2985,9 +2985,12 @@ function photoFeedHtml(photos, opts) {
   ((S.photos && S.photos.comments) || []).forEach((c) => { counts[c.photoId] = (counts[c.photoId] || 0) + 1; });
   return days.map((g) => {
     const who = Array.from(new Set(g.items.map((p) => nameOf(p.by)))).join(', ');
-    return '<section class="ph-day' + (opts.cards ? ' card' : '') + '"><div class="ph-day-h"><b>' + esc(g.d === todayIso() ? 'Today · ' + niceDay(g.d) : niceDay(g.d)) + '</b><span class="muted">' + esc(who) + ' · ' + plural(g.items.length, 'photo', 'photos') + '</span></div>' +
-      '<div class="ph-grid">' + g.items.map((p) => '<div class="ph-cell"><button type="button" class="ph-tile' + (S.photoSel === p.id ? ' on' : '') + '" data-act="ph-open" data-id="' + esc(p.id) + '">' +
-        '<span class="ph-frame">' + thumbImg(p) + (counts[p.id] ? '<span class="ph-badge">' + plural(counts[p.id], 'comment', 'comments') + '</span>' : '') + '</span>' +
+    // Select mode (owners): a tick on each photo, "Select all" for the day.
+    const picked = (id) => opts.pick && S.phPick.ids.indexOf(id) >= 0;
+    return '<section class="ph-day' + (opts.cards ? ' card' : '') + '"><div class="ph-day-h"><b>' + esc(g.d === todayIso() ? 'Today · ' + niceDay(g.d) : niceDay(g.d)) + '</b><span class="muted">' + esc(who) + ' · ' + plural(g.items.length, 'photo', 'photos') + '</span>' +
+      (opts.pick ? '<button type="button" class="link-btn ph-pickday" data-act="ph-pickday" data-d="' + esc(g.d) + '">' + (g.items.every((p) => picked(p.id)) ? 'Clear day' : 'Select all') + '</button>' : '') + '</div>' +
+      '<div class="ph-grid' + (opts.pick ? ' picking' : '') + '">' + g.items.map((p) => '<div class="ph-cell"><button type="button" class="ph-tile' + (!opts.pick && S.photoSel === p.id ? ' on' : '') + (picked(p.id) ? ' picked' : '') + '" data-act="ph-open" data-id="' + esc(p.id) + '"' + (opts.pick ? ' aria-pressed="' + picked(p.id) + '"' : '') + '>' +
+        '<span class="ph-frame">' + thumbImg(p) + (counts[p.id] ? '<span class="ph-badge">' + plural(counts[p.id], 'comment', 'comments') + '</span>' : '') + (opts.pick ? '<span class="ph-tick" aria-hidden="true">' + (picked(p.id) ? '✓' : '') + '</span>' : '') + '</span>' +
         '<span class="ph-area">' + esc(p.area || '—') + '</span></button>' +
         (opts.ask ? '<button type="button" class="link-btn ph-ask" data-act="ph-ask" data-id="' + esc(p.id) + '">Ask about this photo</button>' : '') + '</div>').join('') + '</div>' +
       // Phones and narrow windows: the opened photo right under its day (one at a time).
@@ -3112,11 +3115,13 @@ function askAboutPhoto(id) {
 // under its day). Opening the feed (a tap on Site, All photos, a photo or "N new site photos") clears "N new site
 // photos"; photos arriving while the screen just stays open don't count as seen.
 function projectSiteHtml(p) {
-  if (S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; loadPhotos(p.code); }
+  if (S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; S.phPick = null; loadPhotos(p.code); }
   if (S.photosSeenWant === p.code && S.photos && S.photos.project === p.code) { S.photosSeenWant = ''; markPhotosSeen(p.code); }
-  return '<div class="pgrid"><div class="pmain"><div class="sec-head"><h3>Photos from site</h3>' +
-    '<button type="button" class="btn-outline" data-act="ph-reload">Refresh</button></div>' +
-    (S.photos ? photoFeedHtml(S.photos.photos, { cards: true }) : '<p class="empty">Loading…</p>') + '</div>' +
+  const pick = canSavePhotos() && S.phPick;
+  return '<div class="pgrid"><div class="pmain"><div class="sec-head"><h3>Photos from site</h3><span class="sec-btns">' +
+    (canSavePhotos() && S.photos && S.photos.photos.length && !pick ? '<button type="button" class="btn-outline" data-act="ph-pick">Select</button>' : '') +
+    '<button type="button" class="btn-outline" data-act="ph-reload">Refresh</button></span></div>' +
+    (S.photos ? photoFeedHtml(S.photos.photos, { cards: true, pick: pick }) : '<p class="empty">Loading…</p>') + (pick ? pickBarHtml() : '') + '</div>' +
     (photosInline() ? '' : '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div>') + '</div>';
 }
 // "N new site photos" clears for this person once they have opened the project's Site photos.
@@ -3249,13 +3254,14 @@ function openViewer(ids, id, onClose) {
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-label', 'Photo viewer');
   box.innerHTML = '<div class="pv-top"><div class="pv-cap"><b class="pv-n"></b><span class="pv-info"></span></div>' +
-    '<button type="button" class="pv-x" aria-label="Close">×</button></div>' +
+    '<span class="pv-btns"><button type="button" class="pv-save" hidden></button><button type="button" class="pv-x" aria-label="Close">×</button></span></div>' +
     '<div class="pv-stage"><img class="pv-img" alt="Photo" draggable="false"></div>' +
     '<button type="button" class="pv-nav pv-prev" aria-label="Previous photo">‹</button><button type="button" class="pv-nav pv-next" aria-label="Next photo">›</button>' +
     '<span class="pv-hint"></span>';
   document.body.appendChild(box);
   document.body.classList.add('pv-on');
   box.querySelector('.pv-x').addEventListener('click', () => closeViewer());
+  box.querySelector('.pv-save').addEventListener('click', viewSave);
   box.querySelector('.pv-prev').addEventListener('click', () => viewGo(-1));
   box.querySelector('.pv-next').addEventListener('click', () => viewGo(1));
   const stage = box.querySelector('.pv-stage');
@@ -3320,6 +3326,11 @@ function viewShow(dir, keep) {
   box.querySelector('.pv-hint').textContent = VIEW.full.has(id) ? '' : 'Loading full size…';
   box.querySelector('.pv-prev').hidden = VIEW.i === 0;
   box.querySelector('.pv-next').hidden = VIEW.i >= VIEW.ids.length - 1;
+  // Owners: Share (phones) or Download (laptops), once the full-size photo is here.
+  const save = box.querySelector('.pv-save');
+  save.hidden = !canSavePhotos();
+  save.textContent = shareMode() ? 'Share' : 'Download';
+  save.classList.toggle('wait', !VIEW.full.has(id));
   if (dir) { img.style.transition = 'none'; img.style.transform = 'translate(' + (dir * 40) + 'vw,0)'; void img.offsetWidth; }
   viewApply(true);
   wantThumb(id);
@@ -3416,10 +3427,126 @@ function viewUp(ev) {
   else viewApply(true);
 }
 
+// Owners: Share (phones: the phone's share sheet with the photo files, nothing saved to the gallery) or Download
+// (laptops: a .jpg, several as one .zip), from the viewer or Select in Site photos. A copy of the photo, never a link.
+const PICK_MAX = 30; // WhatsApp takes 30 at a time
+function canSavePhotos() { return !S.engineer && isOwner(); }
+function shareMode() {
+  if (!navigator.canShare || !(/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) || window.matchMedia('(pointer: coarse)').matches)) return false;
+  try { return navigator.canShare({ files: [new File([new Uint8Array(1)], 'x.jpg', { type: 'image/jpeg' })] }); } catch (e) { return false; }
+}
+function photoById(id) { return (S.photos && S.photos.photos && S.photos.photos.find((x) => x.id === id)) || null; }
+// "NST-Kitchen-5Nov-1432.jpg"
+function photoFileName(p, n) {
+  if (!p) return 'Photo-' + (n || 1) + '.jpg';
+  const d = new Date(photoDay(p.at) + 'T00:00:00');
+  const day = d.getDate() + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return [p.project, String(p.area || '').slice(0, 30), day, p.at.slice(11, 16).replace(':', '')].map((x) => String(x || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')).filter(Boolean).join('-') + '.jpg';
+}
+function dataBytes(url) {
+  const s = atob(String(url).split(',')[1] || ''), b = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+  return b;
+}
+// items: [{ id, url }] with the full-size pictures already here, so the share sheet opens within the same tap
+// (iPhones refuse it after a wait). say: where to show a message.
+function savePhotos(items, say) {
+  const used = {};
+  const files = items.map((x, i) => {
+    let name = photoFileName(photoById(x.id), i + 1);
+    if (used[name]) name = name.replace(/\.jpg$/, '-' + (++used[name]) + '.jpg'); else used[name] = 1;
+    return { name: name, bytes: dataBytes(x.url), at: (photoById(x.id) || {}).at || '' };
+  });
+  if (shareMode()) {
+    const list = files.map((f) => new File([f.bytes], f.name, { type: 'image/jpeg' }));
+    if (!navigator.canShare({ files: list })) { say('This phone can’t share these from the app.', true); return; }
+    navigator.share({ files: list }).catch((err) => { if (!err || err.name !== 'AbortError') say('Could not share: ' + ((err && err.message) || 'try again'), true); });
+    return;
+  }
+  const one = files.length === 1;
+  saveBlob(one ? new Blob([files[0].bytes], { type: 'image/jpeg' }) : zipStore(files),
+    one ? files[0].name : (photoById(items[0].id) || { project: 'Photos' }).project + '-photos-' + todayIso() + '.zip');
+  say(one ? 'Downloaded ' + files[0].name : 'Downloaded ' + files.length + ' photos as one .zip');
+}
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+// A plain .zip (stored, not compressed: photos are compressed already). files: [{ name, bytes, at }].
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function zipStore(files) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let off = 0;
+  files.forEach((f) => {
+    const name = enc.encode(f.name), n = f.bytes.length, crc = crc32(f.bytes);
+    // The photo's own date and time, as a file date.
+    const m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(f.at || '');
+    const date = m ? ((Number(m[1]) - 1980) << 9) | (Number(m[2]) << 5) | Number(m[3]) : 0x21, time = m ? (Number(m[4]) << 11) | (Number(m[5]) << 5) : 0;
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(10, time, true); h.setUint16(12, date, true);
+    h.setUint32(14, crc, true); h.setUint32(18, n, true); h.setUint32(22, n, true); h.setUint16(26, name.length, true);
+    parts.push(h.buffer, name, f.bytes);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(12, time, true); c.setUint16(14, date, true);
+    c.setUint32(16, crc, true); c.setUint32(20, n, true); c.setUint32(24, n, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(c.buffer, name);
+    off += 30 + name.length + n;
+  });
+  const size = central.reduce((s, x) => s + x.byteLength, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, size, true); e.setUint32(16, off, true);
+  return new Blob(parts.concat(central, [e.buffer]), { type: 'application/zip' });
+}
+function viewSave() {
+  const id = VIEW.ids[VIEW.i], url = VIEW.full.get(id), h = VIEW.box.querySelector('.pv-hint');
+  const say = (t) => { h.textContent = t; clearTimeout(viewSave.t); viewSave.t = setTimeout(() => { if (VIEW.box) h.textContent = VIEW.full.has(VIEW.ids[VIEW.i]) ? '' : 'Loading full size…'; }, 4000); };
+  if (!url) { say('Still getting the full-size photo…'); viewFetch(id); return; }
+  savePhotos([{ id: id, url: url }], say);
+}
+// Select in Site photos: tap photos to tick them (or a day's "Select all"), then Share / Download. Their full-size
+// pictures load as they are ticked.
+S.phPick = null;
+function pickFetch(id) {
+  const k = S.phPick;
+  if (!k || k.full[id] || k.asked[id]) return;
+  if (VIEW.full.has(id)) { k.full[id] = VIEW.full.get(id); return; }
+  k.asked[id] = true;
+  api('photoFull', [id]).then((res) => { delete k.asked[id]; if (res && res.url && k.ids.indexOf(id) >= 0) { k.full[id] = res.url; bgRedraw(); } }, () => { delete k.asked[id]; });
+}
+function pickToggle(ids, on) {
+  const k = S.phPick;
+  ids.forEach((id) => {
+    const i = k.ids.indexOf(id);
+    if (on && i < 0) { if (k.ids.length >= PICK_MAX) return; k.ids.push(id); pickFetch(id); }
+    else if (!on && i >= 0) { k.ids.splice(i, 1); delete k.full[id]; }
+  });
+  if (on && ids.some((id) => k.ids.indexOf(id) < 0)) snack('Up to ' + PICK_MAX + ' photos at a time.');
+}
+function pickBarHtml() {
+  const k = S.phPick, n = k.ids.length, ready = k.ids.filter((id) => k.full[id]).length;
+  return '<div class="ph-pickbar" role="region" aria-label="Selected photos"><b>' + (n ? plural(n, 'photo', 'photos') + ' selected' : 'Tap photos to select them') + '</b>' +
+    (n ? '<button type="button" class="btn-accent" data-act="ph-pick-save">' + (ready < n ? 'Getting photos… ' + ready + ' of ' + n : (shareMode() ? 'Share ' : 'Download ') + n) + '</button>' : '') +
+    '<button type="button" class="btn-outline" data-act="ph-pick">Cancel</button></div>';
+}
+function pickSave() {
+  const k = S.phPick, missing = k.ids.filter((id) => !k.full[id]);
+  if (missing.length) { missing.forEach(pickFetch); snack('Still getting the full-size photos (' + (k.ids.length - missing.length) + ' of ' + k.ids.length + ')…'); return; }
+  const order = S.feedIds || [];
+  savePhotos(k.ids.slice().sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((id) => ({ id: id, url: k.full[id] })), (t, err) => snack(t, { error: !!err }));
+}
+
 // Photo buttons, the same for owners and engineers. Returns true when it handled the click.
 function photoClick(act, el) {
   const redraw = () => { if (S.engineer) renderEng(); else renderAll(); };
-  if (act === 'ph-open') {
+  if (act === 'ph-open' && S.phPick) { const id = el.dataset.id; pickToggle([id], S.phPick.ids.indexOf(id) < 0); redraw(); }
+  else if (act === 'ph-pick') { S.phPick = S.phPick ? null : { ids: [], full: {}, asked: {} }; S.photoSel = ''; redraw(); }
+  else if (act === 'ph-pickday') {
+    const ids = ((S.photos && S.photos.photos) || []).filter((p) => photoDay(p.at) === el.dataset.d).map((p) => p.id);
+    pickToggle(ids, ids.some((id) => S.phPick.ids.indexOf(id) < 0));
+    redraw();
+  } else if (act === 'ph-pick-save') pickSave();
+  else if (act === 'ph-open') {
     // Opened under its day: tapping the open photo again closes it.
     if (photosInline() && S.photoSel === el.dataset.id) { S.photoSel = ''; redraw(); return true; }
     if (!S.engineer && S.projSec === 'site') S.photosSeenWant = S.projTab;
