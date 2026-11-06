@@ -5134,6 +5134,8 @@ function schedDetailHtml(p, sc, id) {
     (a.status === 'gone' ? '<p class="warn-line">Not in the planner any more. Kept because progress was logged for it.</p>' : '') +
     '<dl class="pdl"><dt>Plan</dt><dd>' + esc(plan) + '</dd>' + (actual ? '<dt>Done</dt><dd>' + esc(actual) + '</dd>' : '') + (a.note ? '<dt>Remark</dt><dd>' + esc(a.note) + ' <span class="muted small">(planner)</span></dd>' : '') + '</dl>' +
     (weeks ? '<table class="sc-weeks"><thead><tr><th>Week</th><th class="num">Plan</th><th class="num">Done</th><th>Why behind</th><th>By</th></tr></thead><tbody>' + weeks + '</tbody></table>' : '') +
+    // Owners: where what they saw and what was logged are 25+ points apart.
+    (S.engineer || !isOwner() ? '' : list.map((g) => { const t = seenGap(sc, g); return t ? '<p class="warn-line an-gap">' + esc(weekLabel(p, g.week).replace(/ · .*/, '') + ': ' + t) + '</p>' : ''; }).join('')) +
     actHistoryHtml(p, sc, a) + (isOwner() && !S.engineer ? actOwnerHtml(p, sc, a, spans) : '') + '</div>';
 }
 // The panel's history: owners' notes and what they saw on site, newest first, each with who and when.
@@ -5318,6 +5320,12 @@ function seenIn(sc, actId, monday) {
   return (sc.notes || []).filter((n) => n.kind === 'seen' && n.activity === actId && n.week === monday).sort((x, y) => (x.at < y.at ? 1 : -1));
 }
 function seenText(n) { return firstName(n.by) + ' saw ' + n.pct + '% on ' + niceDay(n.on); }
+// A week's logged value and an owner's observation that week 25+ points apart: the observation furthest from it
+// ("Logged 75% · Shruthi saw 25% on Sat 7 Nov"), or null.
+function seenGap(sc, g) {
+  const far = seenIn(sc, g.activity, g.week).filter((n) => Math.abs(n.pct - g.pct) >= LC.BEHIND).sort((x, y) => Math.abs(y.pct - g.pct) - Math.abs(x.pct - g.pct))[0];
+  return far ? 'Logged ' + g.pct + '% · ' + seenText(far) : null;
+}
 // only: one activity (its panel's "Log progress"), whether or not the plan has it that week.
 function logRows(p, monday, only) {
   const sc = schedOf(p.code), d1 = day1Of(p), st = logState(p.code, monday), spans = LC.planSpans(sc.acts), by = LC.progressBy(sc.progress);
@@ -5550,8 +5558,10 @@ function logSummaryFor(code) {
   const finished = rows.filter((g) => g.pct === 100 && !(by[g.activity] || []).some((x) => x.week < monday && x.pct === 100));
   const lines = behind.slice(0, LOG_LIST_MAX).map((g) => '<span class="ls-line ' + (gap(g) >= LC.BEHIND ? 'far' : 'behind') + '">' + esc(byId[g.activity].name + ': ' + g.reason) + '</span>').join('') +
     (behind.length > LOG_LIST_MAX ? '<span class="ls-line ls-more">+ ' + (behind.length - LOG_LIST_MAX) + ' more</span>' : '');
+  // Logged values 25+ points from what an owner saw on site that week.
+  const gaps = rows.map((g) => { const t = seenGap(sc, g); return t ? '<span class="ls-line far ls-gap">' + esc(byId[g.activity].name + ': ' + t) + '</span>' : ''; }).join('');
   return { box: 'new', kind: 'Log', cls: 'blue', fresh: true, who: who, title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + (p.name || code),
-    subHtml: '<span class="ls">' + (behind.length ? lines : '<span class="ls-line">None behind</span>') +
+    subHtml: '<span class="ls">' + (behind.length ? lines : '<span class="ls-line">None behind</span>') + gaps +
       '<span class="ls-line ls-foot"><span class="ls-fin">' + esc(finished.length + ' finished') + '</span> · ' + esc(rows.length + ' logged') + '</span></span>',
     short: (behind.length ? behind.length + ' behind · ' : '') + finished.length + ' finished', act: 'sc-logsum', id: code, week: monday, label: 'Open', canAct: true };
 }
