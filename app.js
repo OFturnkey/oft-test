@@ -3268,6 +3268,7 @@ function openViewer(ids, id, onClose) {
   stage.addEventListener('pointerdown', viewDown);
   stage.addEventListener('pointermove', viewMove);
   ['pointerup', 'pointercancel'].forEach((t) => stage.addEventListener(t, viewUp));
+  box.querySelector('.pv-img').addEventListener('load', viewFit);
   stage.addEventListener('wheel', (ev) => { ev.preventDefault(); viewZoomAt(VIEW.s * (ev.deltaY < 0 ? 1.25 : 0.8), ev.clientX, ev.clientY); }, { passive: false });
   // The phone's Back closes the viewer, not the app.
   try { history.pushState({ pv: 1 }, ''); } catch (e) { /* not available: × still closes */ }
@@ -3283,6 +3284,18 @@ function closeViewer(quiet) {
   if (!quiet && then) then(last);
 }
 window.addEventListener('popstate', () => { if (VIEW.box) closeViewer(); });
+// The whole photo fits the screen, tall or wide (sized here, not left to the browser's CSS); the small picture
+// shown while the full size loads is stretched to the same size. Again when the window or phone turns.
+function viewFit() {
+  const img = VIEW.box && VIEW.box.querySelector('.pv-img'), st = VIEW.box && VIEW.box.querySelector('.pv-stage');
+  if (!img || !img.naturalWidth || !st.clientHeight) return;
+  const k = Math.min(st.clientWidth / img.naturalWidth, st.clientHeight / img.naturalHeight, img.classList.contains('pv-small') ? Infinity : 1);
+  img.style.width = Math.round(img.naturalWidth * k) + 'px';
+  img.style.height = Math.round(img.naturalHeight * k) + 'px';
+  if (VIEW.s > 1.01) viewClamp();
+  viewApply(false);
+}
+window.addEventListener('resize', () => { if (VIEW.box) viewFit(); });
 document.addEventListener('keydown', (ev) => {
   if (!VIEW.box) return;
   if (ev.key === 'Escape') closeViewer();
@@ -3320,6 +3333,7 @@ function viewShow(dir, keep) {
   if (!url) img.removeAttribute('src');
   img.classList.toggle('pv-small', !VIEW.full.has(id));
   img.dataset.id = id;
+  if (img.complete) viewFit();
   const p = S.photos && S.photos.photos && S.photos.photos.find((x) => x.id === id);
   box.querySelector('.pv-n').textContent = VIEW.ids.length > 1 ? (VIEW.i + 1) + ' of ' + VIEW.ids.length : '';
   box.querySelector('.pv-info').textContent = p ? [p.area || 'Site photo', nameOfEmail(p.by), niceDay(photoDay(p.at)) + ' ' + p.at.slice(11, 16), p.caption].filter(Boolean).join(' · ') : '';
