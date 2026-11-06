@@ -1176,3 +1176,18 @@ body.pv-on { overflow: hidden }
 .an-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px }
 .an-form textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid #C9CCC5 }
 .sl-hint { display: block }
+/* Owners: Share / Download (viewer and Select in Site photos) */
+.pv-btns { flex: none; display: flex; align-items: center; gap: 8px }
+.pv-save { min-height: 44px; padding: 0 16px; border: 0; border-radius: 22px; background: #fff; color: #1C1E1D; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer }
+.pv-save[hidden] { display: none }
+.pv-save.wait { opacity: 0.55 }
+.sec-btns { display: inline-flex; gap: 8px; flex-wrap: wrap }
+.ph-pickday { margin-left: auto; font-size: 14px }
+.ph-grid.picking .ph-tile { position: relative }
+.ph-tick { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 13px; border: 2px solid #fff; background: rgba(28,30,29,0.35); color: #fff; font-size: 16px; font-weight: 700; line-height: 22px; text-align: center; box-shadow: 0 0 0 1px rgba(0,0,0,0.25) }
+.ph-tile.picked { box-shadow: 0 0 0 3px #455B28 }
+.ph-tile.picked .ph-tick { background: #455B28 }
+.ph-tile.picked .ph-img { opacity: 0.85 }
+.ph-pickbar { position: sticky; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; background: #FFFFFF; border: 1px solid #DEDED8; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12) }
+.ph-pickbar b { flex: 1 1 auto; font-size: 15px }
+.ph-pickbar button { min-height: 44px }
