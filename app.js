@@ -292,7 +292,8 @@ function bgRedraw() {
     return;
   }
   redrawWaiting = false;
-  if (S.engineer) renderEng(); else if (S.started) renderAll();
+  // Signed out meanwhile (S.me gone): the sign-in screen is up; nothing to redraw.
+  if (S.engineer) renderEng(); else if (S.started && S.me) renderAll();
 }
 document.addEventListener('focusout', () => { if (redrawWaiting) setTimeout(() => { if (!isTyping()) { redrawWaiting = false; bgRedraw(); } }, 0); });
 
@@ -2714,7 +2715,7 @@ function outboxAdd(action, args, label, meta) {
 }
 function refreshOutbox() {
   // Owners and associates too: their site photos go through the outbox ("Sending from this device" on Site photos).
-  return idbAll('outbox').then((items) => { const had = OUT.items.length; OUT.items = items; renderNetStrip(); if (S.engineer || had || items.length) bgRedraw(); }, () => { /* no storage: nothing waiting */ });
+  return idbAll('outbox').then((items) => { const had = OUT.items.length; OUT.items = items; renderNetStrip(); if (S.me && (S.engineer || had || items.length)) bgRedraw(); }, () => { /* no storage: nothing waiting */ });
 }
 // Items of one kind still waiting on this phone (drawn as "Sending…").
 function waiting(action) { return OUT.items.filter((x) => x.action === action && !x.error && S.me && x.email === S.me.email); }
@@ -3917,7 +3918,7 @@ S.queries = null;
 function teamUsers() { return ((S.engineer ? S.site && S.site.users : S.data && S.data.users) || []); }
 function nameOfEmail(email) { const u = teamUsers().find((x) => x.email === email); return u ? u.name : email; }
 function initialsOfName(n) { const w = String(n || '').replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean); return ((w[0] || '').charAt(0) + (w[1] || '').charAt(0)).toUpperCase() || '?'; }
-function redraw() { if (S.engineer) renderEng(); else if (S.started) renderAll(); }
+function redraw() { if (S.engineer) renderEng(); else if (S.started && S.me) renderAll(); }
 function loadQueries(then) {
   const t0 = Date.now();
   api('listQueries', ['']).then((res) => {
