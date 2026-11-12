@@ -263,7 +263,8 @@ function wirePhotoPicks(root) {
     if (el.oftWired) return;
     el.oftWired = true;
     el.addEventListener('change', () => {
-      const project = S.engProject;
+      // Engineers: the project picked at the top. Owners and associates: the project whose Site photos are open.
+      const project = S.engineer ? S.engProject : (el.dataset.project || S.photosFor);
       if (el.dataset.phPick) addDraftFiles(el.files, project); else addQueryDraftFiles(el.files, el.dataset.qPick, project);
       el.value = '';
     });
@@ -2712,7 +2713,8 @@ function outboxAdd(action, args, label, meta) {
   return idbPut('outbox', item).then(() => { const listed = refreshOutbox(); flushOutbox(); return listed; });
 }
 function refreshOutbox() {
-  return idbAll('outbox').then((items) => { OUT.items = items; renderNetStrip(); if (S.engineer) bgRedraw(); }, () => { /* no storage: nothing waiting */ });
+  // Owners and associates too: their site photos go through the outbox ("Sending from this device" on Site photos).
+  return idbAll('outbox').then((items) => { const had = OUT.items.length; OUT.items = items; renderNetStrip(); if (S.engineer || had || items.length) bgRedraw(); }, () => { /* no storage: nothing waiting */ });
 }
 // Items of one kind still waiting on this phone (drawn as "Sending…").
 function waiting(action) { return OUT.items.filter((x) => x.action === action && !x.error && S.me && x.email === S.me.email); }
@@ -2839,42 +2841,51 @@ function shrinkPhoto(file) {
 // Photos picked on the phone are saved here at once, so a reload (or the camera closing the app) can't lose them.
 S.drafts = []; S.thumbs = {}; S.photos = null; S.photoSel = '';
 function loadDrafts() { return idbAll('drafts').then((d) => { S.drafts = d; }, () => { S.drafts = []; }); }
+// Messages about photos being added and sent: the engineer's message bar, or the ledger's snack (owners, associates).
+function photoSay(text, error) { if (S.engineer) engSnack(text, error); else snack(text, { error: !!error }); }
+// At most a few names, then "+ N more" ("Marking 1, Marking 2, Marking 3 + 53 more").
+function fewNames(list, n) {
+  const max = n || 3, all = (list || []).filter(Boolean);
+  return all.length > max ? all.slice(0, max).join(', ') + ' + ' + (all.length - max) + ' more' : all.join(', ');
+}
 function addDraftFiles(files, project) {
   const list = Array.from(files || []);
-  if (!list.length) return;
-  engSnack('Getting ' + plural(list.length, 'photo', 'photos') + ' ready…');
+  if (!list.length || !project) return;
+  photoSay('Getting ' + plural(list.length, 'photo', 'photos') + ' ready…');
   // New photos start with the area of the photo before (usually the same room); each can still be changed.
   const prev = S.drafts.filter((d) => d.project === project && !d.purpose).sort((a, b) => a.createdAt - b.createdAt).pop();
   const area = (prev && prev.area) || '';
   let chain = Promise.resolve();
   list.forEach((f) => {
     chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, area: area, full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
-      (err) => engSnack(cleanErr(err.message), true));
+      (err) => photoSay(cleanErr(err.message), true));
   });
-  chain.then(loadDrafts).then(renderEng);
+  chain.then(loadDrafts).then(redraw);
 }
 function sendDrafts(project) {
   const drafts = S.drafts.filter((d) => d.project === project && !d.purpose);
   if (!drafts.length || S.sendingPhotos) return; // a second tap while sending does nothing
   const missing = drafts.find((d) => !String(d.area || '').trim());
-  if (missing) { engSnack('Pick or type an area for each photo.', true); return; }
+  if (missing) { photoSay('Pick or type an area for each photo.', true); return; }
   if (!confirmOtherProject(project) || !confirmNewAreas(project, drafts.map((d) => d.area))) return;
   const batch = newId();
   S.sendingPhotos = true;
   // New areas are offered straight away (Photos and Ask a question); the server keeps them for the project too.
-  const all = S.site.areas || (S.site.areas = {}), known = all[project] || (all[project] = []);
+  const host = S.engineer ? S.site : S.data;
+  const all = host.areas || (host.areas = {}), known = all[project] || (all[project] = []);
   drafts.forEach((d) => { const a = d.area.trim(); if (!known.some((x) => x.toLowerCase() === a.toLowerCase())) known.push(a); });
-  renderEng();
+  redraw();
   let chain = Promise.resolve();
   drafts.forEach((d) => {
     chain = chain.then(() => outboxAdd('uploadPhoto', [{ id: d.id, project: project, batchId: batch, area: d.area.trim(), caption: '', linkedTo: '', full: d.full, thumb: d.thumb }],
       'Photo · ' + d.area.trim())).then(() => idbDel('drafts', d.id));
   });
-  // After the batch (the outbox keeps the order): one alert to Shruthi and Savan for all of them.
+  // After the batch (the outbox keeps the order): one alert for all of them (owners, the project's associates and,
+  // for photos from an owner or associate, its site engineers).
   chain = chain.then(() => outboxAdd('photosDone', [project, batch], 'Photo alert'));
   chain.then(loadDrafts).finally(() => { S.sendingPhotos = false; }).then(() => {
-    engSnack(navigator.onLine ? 'Sending ' + plural(drafts.length, 'photo', 'photos') + '…' : 'Saved on your phone. ' + (drafts.length === 1 ? 'It' : 'They') + ' will send by ' + (drafts.length === 1 ? 'itself' : 'themselves') + ' when there’s signal.');
-    renderEng();
+    photoSay(navigator.onLine ? 'Sending ' + plural(drafts.length, 'photo', 'photos') + '…' : 'Saved on ' + (S.engineer ? 'your phone' : 'this device') + '. ' + (drafts.length === 1 ? 'It' : 'They') + ' will send by ' + (drafts.length === 1 ? 'itself' : 'themselves') + ' when there’s signal.');
+    redraw();
   });
 }
 function loadPhotos(project, then) {
@@ -3076,29 +3087,40 @@ function deletePhotoNow(id) {
 function engPhotosHtml() {
   const proj = S.engProject;
   if (proj && S.photosFor !== proj) { S.photosFor = proj; S.photos = null; S.photoSel = ''; loadPhotos(proj); }
-  const drafts = S.drafts.filter((d) => d.project === proj && !d.purpose);
-  const areas = ((S.site && S.site.areas) || {})[proj] || [];
   const mine = (S.photos && S.photos.photos.filter((p) => p.by === S.me.email)) || [];
   return outboxStatusHtml() + '<section class="card eng-card"><h2 class="eng-h2">Site photos · ' + esc(engProjName(proj)) + '</h2>' +
     '<p class="muted small eng-pad">' + (mine.length ? 'You last sent photos ' + esc(niceDay(photoDay(mine[0].at))) + '.' : 'No photos from you on this project yet.') + '</p>' +
-    '<div class="ph-pick eng-pad"><label class="btn-main ph-pick-btn">Take photos<input type="file" accept="image/*" capture="environment" data-ph-pick="1" hidden></label>' +
-    '<label class="btn-outline ph-pick-btn">From gallery<input type="file" accept="image/*" multiple data-ph-pick="1" hidden></label></div>' +
-    '<datalist id="areaList">' + areas.map((a) => '<option value="' + esc(a) + '">').join('') + '</datalist>' +
+    photoAddHtml(proj, true) + '</section>' +
+    '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' + pendingPhotosHtml(proj) +
+    (S.photos ? photoFeedHtml(S.photos.photos, { ask: true }) : '<p class="empty">Loading…</p>') + '</div></section>';
+}
+// Adding site photos: take or pick them, an area for each, then Send. They are saved on the device at once and go
+// through the outbox (no signal: they wait and send by themselves). The engineer's Photos tab, and (owners and
+// associates) the top of a project's Site photos. "Take photos" (the camera) only on phones and tablets.
+function photoAddHtml(proj, eng) {
+  const drafts = S.drafts.filter((d) => d.project === proj && !d.purpose);
+  const pc = eng ? '' : ' data-project="' + esc(proj) + '"';
+  const camera = eng || isTouchDevice() ? '<label class="btn-main ph-pick-btn">Take photos<input type="file" accept="image/*" capture="environment" data-ph-pick="1"' + pc + ' hidden></label>' : '';
+  return '<div class="ph-pick eng-pad' + (camera ? '' : ' one') + '">' + camera +
+    '<label class="' + (camera ? 'btn-outline' : 'btn-main') + ' ph-pick-btn">' + (camera ? 'From gallery' : 'Add photos') + '<input type="file" accept="image/*" multiple data-ph-pick="1"' + pc + ' hidden></label></div>' +
+    areaListHtml('areaList', proj) +
     (drafts.length ? '<p class="muted small eng-pad">' + plural(drafts.length, 'photo', 'photos') + ' · pick an area or type a new one. New areas are saved for this project.</p>' +
       drafts.map((d) => '<div class="ph-draft"><img src="data:image/jpeg;base64,' + d.thumb + '" alt="">' +
         '<label>Area · pick or type<input id="da-' + esc(d.id) + '" list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.area || '') + '" autocomplete="off"></label>' +
         '<button type="button" class="icon-btn" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove this photo">×</button></div>').join('') +
-      '<div class="eng-form"><button type="button" class="btn-save" data-act="ph-send"' + (S.sendingPhotos ? ' disabled' : '') + '>' + (S.sendingPhotos ? 'Sending…' : 'Send ' + plural(drafts.length, 'photo', 'photos')) + '</button>' +
-      '<span class="muted small">Shrunk before sending. No signal? They wait on the phone and send later.</span></div>'
-      : '') + '</section>' +
-    '<section class="card eng-card"><h2 class="eng-h2">Photos from site</h2><div class="eng-pad">' + pendingPhotosHtml(proj) +
-    (S.photos ? photoFeedHtml(S.photos.photos, { ask: true }) : '<p class="empty">Loading…</p>') + '</div></section>';
+      '<div class="eng-form"><button type="button" class="btn-save" data-act="ph-send"' + (eng ? '' : ' data-code="' + esc(proj) + '"') + (S.sendingPhotos ? ' disabled' : '') + '>' +
+        (S.sendingPhotos ? 'Sending…' : 'Send ' + plural(drafts.length, 'photo', 'photos')) + '</button>' +
+      '<span class="muted small">Shrunk before sending. No signal? They wait on ' + (eng ? 'the phone' : 'this device') + ' and send later.</span></div>'
+      : '');
 }
+function isTouchDevice() { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent); }
+// Owners and associates add site photos on their projects (an associate's data has only his projects).
+function canAddPhotos() { return !S.engineer && (isOwner() || isAssociate()); }
 // Photos on this phone still sending: shown at the top of the feed at once.
 function pendingPhotosHtml(proj) {
   const items = waiting('uploadPhoto').map((w) => w.args[0]).filter((p) => p.project === proj && !p.linkedTo);
   if (!items.length) return '';
-  return '<section class="ph-day"><div class="ph-day-h"><b>Sending from this phone</b><span class="muted">' + plural(items.length, 'photo', 'photos') + '</span></div><div class="ph-grid">' +
+  return '<section class="ph-day"><div class="ph-day-h"><b>Sending from this ' + (S.engineer ? 'phone' : 'device') + '</b><span class="muted">' + plural(items.length, 'photo', 'photos') + '</span></div><div class="ph-grid">' +
     items.map((p) => '<div class="ph-cell"><span class="ph-tile"><span class="ph-frame"><img class="ph-img" src="data:image/jpeg;base64,' + p.thumb + '" alt=""><span class="ph-badge sending">Sending…</span></span>' +
       '<span class="ph-area">' + esc(p.area || '—') + '</span></span></div>').join('') + '</div></section>';
 }
@@ -3118,9 +3140,11 @@ function projectSiteHtml(p) {
   if (S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; S.phPick = null; loadPhotos(p.code); }
   if (S.photosSeenWant === p.code && S.photos && S.photos.project === p.code) { S.photosSeenWant = ''; markPhotosSeen(p.code); }
   const pick = canSavePhotos() && S.phPick;
-  return '<div class="pgrid"><div class="pmain"><div class="sec-head"><h3>Photos from site</h3><span class="sec-btns">' +
+  const add = canAddPhotos() && !pick ? outboxStatusHtml() + '<section class="card ph-add"><h3>Add site photos</h3>' + photoAddHtml(p.code, false) + '</section>' : '';
+  return '<div class="pgrid"><div class="pmain">' + add + '<div class="sec-head"><h3>Photos from site</h3><span class="sec-btns">' +
     (canSavePhotos() && S.photos && S.photos.photos.length && !pick ? '<button type="button" class="btn-outline" data-act="ph-pick">Select</button>' : '') +
     '<button type="button" class="btn-outline" data-act="ph-reload">Refresh</button></span></div>' +
+    (canAddPhotos() ? pendingPhotosHtml(p.code) : '') +
     (S.photos ? photoFeedHtml(S.photos.photos, { cards: true, pick: pick }) : '<p class="empty">Loading…</p>') + (pick ? pickBarHtml() : '') + '</div>' +
     (photosInline() ? '' : '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div>') + '</div>';
 }
@@ -3577,7 +3601,7 @@ function photoClick(act, el) {
   else if (act === 'ph-delete') {
     if (S.confirmPhotoDel === el.dataset.id) deletePhotoNow(el.dataset.id); else { S.confirmPhotoDel = el.dataset.id; redraw(); }
   } else if (act === 'ph-reload') { if (S.photosFor) { if (!S.engineer) S.photosSeenWant = S.photosFor; S.thumbs = {}; THUMB_ASKED.clear(); loadPhotos(S.photosFor); } }
-  else if (act === 'ph-send') sendDrafts(S.engProject);
+  else if (act === 'ph-send') sendDrafts(S.engineer ? S.engProject : (el.dataset.code || S.photosFor));
   else if (act === 'ph-ask') askAboutPhoto(el.dataset.id);
   else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
   else if (act === 'out-drop') {
@@ -4743,8 +4767,8 @@ function needsFor(code) {
   const np = newPhotosOf(code);
   if (np) out.push({ box: 'new', kind: 'Photos', cls: 'blue', title: plural(np.n, 'new site photo', 'new site photos'), photo: np.lastId, who: (np.by[0] || '').split(/\s+/)[0], fresh: true,
     // "from Venky 2, Engineer Test 2": who sent how many, so the number adds up.
-    subHtml: esc(['from ' + np.by.map((b) => b + (np.byN && np.by.length > 1 ? ' ' + np.byN[b] : '')).join(', '), np.areas.join(', '), ageText(np.last) + ' ago'].filter(Boolean).join(' · ')),
-    short: np.areas.slice(0, 3).join(', '), act: 'np-open', id: code, label: 'Open', canAct: true });
+    subHtml: esc(['from ' + np.by.map((b) => b + (np.byN && np.by.length > 1 ? ' ' + np.byN[b] : '')).join(', '), fewNames(np.areas), ageText(np.last) + ' ago'].filter(Boolean).join(' · ')),
+    short: fewNames(np.areas), act: 'np-open', id: code, label: 'Open', canAct: true });
   // No site photos for 3 days (the 7:00 alert's rule: a started site in execution with a site engineer).
   const p = projInfo(code), last = S.data && S.data.lastPhotoAt && S.data.lastPhotoAt[code];
   if (p && p.stage === 'execution' && (p.day1 || (p.plannedStart && p.plannedStart <= t)) && engineersOf(code).length &&
