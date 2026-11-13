@@ -560,7 +560,7 @@ function engClick(act, el) {
     const unsent = S.drafts.filter((d) => d.project === S.engProject && !d.purpose);
     if (S.engTab === 'photos' && el.dataset.tab !== 'photos' && unsent.length &&
       window.confirm('You have ' + plural(unsent.length, 'photo', 'photos') + ' not sent. Send now?')) {
-      if (unsent.some((d) => !String(d.area || '').trim())) { engSnack('Pick or type an area for each photo, then Send.', true); return; }
+      if (unsent.some((d) => !String(d.area || '').trim())) { engSnack('Type what / where for the photos, then Send.', true); return; }
       sendDrafts(S.engProject);
     }
     if (el.dataset.proj && el.dataset.proj !== S.engProject) { S.engProject = el.dataset.proj; S.photosFor = ''; }
@@ -2853,12 +2853,11 @@ function addDraftFiles(files, project) {
   const list = Array.from(files || []);
   if (!list.length || !project) return;
   photoSay('Getting ' + plural(list.length, 'photo', 'photos') + ' ready…');
-  // New photos start with the area of the photo before (usually the same room); each can still be changed.
-  const prev = S.drafts.filter((d) => d.project === project && !d.purpose).sort((a, b) => a.createdAt - b.createdAt).pop();
-  const area = (prev && prev.area) || '';
+  // New photos take the batch's "What / where" (one label for all of them); any photo can still have its own.
+  const area = batchArea(project);
   let chain = Promise.resolve();
   list.forEach((f) => {
-    chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, area: area, full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
+    chain = chain.then(() => shrinkPhoto(f)).then((p) => idbPut('drafts', { id: newId(), project: project, area: area, own: false, full: p.full, thumb: p.thumb, bytes: p.bytes, createdAt: Date.now() }),
       (err) => photoSay(cleanErr(err.message), true));
   });
   chain.then(loadDrafts).then(redraw);
@@ -2867,8 +2866,8 @@ function sendDrafts(project) {
   const drafts = S.drafts.filter((d) => d.project === project && !d.purpose);
   if (!drafts.length || S.sendingPhotos) return; // a second tap while sending does nothing
   const missing = drafts.find((d) => !String(d.area || '').trim());
-  if (missing) { photoSay('Pick or type an area for each photo.', true); return; }
-  if (!confirmOtherProject(project) || !confirmNewAreas(project, drafts.map((d) => d.area))) return;
+  if (missing) { photoSay(drafts.length > 1 ? 'Type what / where for the photos.' : 'Type what / where for the photo.', true); return; }
+  if (!confirmOtherProject(project)) return;
   const batch = newId();
   S.sendingPhotos = true;
   // New areas are offered straight away (Photos and Ask a question); the server keeps them for the project too.
@@ -3099,20 +3098,30 @@ function engPhotosHtml() {
 // through the outbox (no signal: they wait and send by themselves). The engineer's Photos tab, and (owners and
 // associates) the top of a project's Site photos. "Take photos" (the camera) only on phones and tablets.
 function photoAddHtml(proj, eng) {
-  const drafts = S.drafts.filter((d) => d.project === proj && !d.purpose);
+  const drafts = S.drafts.filter((d) => d.project === proj && !d.purpose), batch = batchArea(proj);
   const pc = eng ? '' : ' data-project="' + esc(proj) + '"';
   const camera = eng || isTouchDevice() ? '<label class="btn-main ph-pick-btn">Take photos<input type="file" accept="image/*" capture="environment" data-ph-pick="1"' + pc + ' hidden></label>' : '';
   return '<div class="ph-pick eng-pad' + (camera ? '' : ' one') + '">' + camera +
     '<label class="' + (camera ? 'btn-outline' : 'btn-main') + ' ph-pick-btn">' + (camera ? 'From gallery' : 'Add photos') + '<input type="file" accept="image/*" multiple data-ph-pick="1"' + pc + ' hidden></label></div>' +
     areaListHtml('areaList', proj) +
-    (drafts.length ? '<p class="muted small eng-pad">' + plural(drafts.length, 'photo', 'photos') + ' · pick an area or type a new one. New areas are saved for this project.</p>' +
+    (drafts.length ? '<label class="ph-batch eng-pad">What / where' + (drafts.length > 1 ? ' · all ' + drafts.length + ' photos' : '') +
+        '<input id="ba-' + esc(proj) + '" list="areaList" data-batch-area="' + esc(proj) + '" value="' + esc(batch) + '" placeholder="e.g. Reception ceiling" autocomplete="off"></label>' +
+      '<p class="muted small eng-pad">' + (drafts.length > 1 ? 'One label for all of them. Different for one photo? Type it under that photo.' : 'Pick a suggestion or type your own.') + '</p>' +
       drafts.map((d) => '<div class="ph-draft"><img src="data:image/jpeg;base64,' + d.thumb + '" alt="">' +
-        '<label>Area · pick or type<input id="da-' + esc(d.id) + '" list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.area || '') + '" autocomplete="off"></label>' +
+        (drafts.length > 1 ? '<label>This photo only<input id="da-' + esc(d.id) + '" list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.own ? d.area || '' : '') + '" placeholder="' + esc(batch || 'Same as above') + '" autocomplete="off"></label>'
+          : '<span class="muted small ph-batch-echo">' + esc((d.own ? d.area : batch) || 'Type what / where above') + '</span>') +
         '<button type="button" class="icon-btn" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove this photo">×</button></div>').join('') +
       '<div class="eng-form"><button type="button" class="btn-save" data-act="ph-send"' + (eng ? '' : ' data-code="' + esc(proj) + '"') + (S.sendingPhotos ? ' disabled' : '') + '>' +
         (S.sendingPhotos ? 'Sending…' : 'Send ' + plural(drafts.length, 'photo', 'photos')) + '</button>' +
       '<span class="muted small">Shrunk before sending. No signal? They wait on ' + (eng ? 'the phone' : 'this device') + ' and send later.</span></div>'
       : '');
+}
+// The batch's "What / where": the label every photo without its own carries (kept on each draft, so a reload keeps
+// it); before any photo is picked, or when every photo has its own, what was last typed in the box.
+S.batchMem = {};
+function batchArea(proj) {
+  const d = S.drafts.find((x) => x.project === proj && !x.purpose && !x.own);
+  return d ? d.area || '' : S.batchMem[proj] || '';
 }
 function isTouchDevice() { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent); }
 // Owners and associates add site photos on their projects (an associate's data has only his projects).
@@ -3141,13 +3150,85 @@ function projectSiteHtml(p) {
   if (S.photosFor !== p.code) { S.photosFor = p.code; S.photos = null; S.photoSel = ''; S.phPick = null; loadPhotos(p.code); }
   if (S.photosSeenWant === p.code && S.photos && S.photos.project === p.code) { S.photosSeenWant = ''; markPhotosSeen(p.code); }
   const pick = canSavePhotos() && S.phPick;
-  const add = canAddPhotos() && !pick ? outboxStatusHtml() + '<section class="card ph-add"><h3>Add site photos</h3>' + photoAddHtml(p.code, false) + '</section>' : '';
+  const tidy = isOwner() && S.tidy && S.tidy.project === p.code;
+  const add = tidy ? tidyHtml(p) : canAddPhotos() && !pick ? outboxStatusHtml() + '<section class="card ph-add"><h3>Add site photos</h3>' + photoAddHtml(p.code, false) + '</section>' : '';
   return '<div class="pgrid"><div class="pmain">' + add + '<div class="sec-head"><h3>Photos from site</h3><span class="sec-btns">' +
+    (isOwner() && !tidy && !pick ? '<button type="button" class="btn-outline" data-act="tidy-open" data-code="' + esc(p.code) + '">Tidy labels</button>' : '') +
     (canSavePhotos() && S.photos && S.photos.photos.length && !pick ? '<button type="button" class="btn-outline" data-act="ph-pick">Select</button>' : '') +
     '<button type="button" class="btn-outline" data-act="ph-reload">Refresh</button></span></div>' +
     (canAddPhotos() ? pendingPhotosHtml(p.code) : '') +
     (S.photos ? photoFeedHtml(S.photos.photos, { cards: true, pick: pick }) : '<p class="empty">Loading…</p>') + (pick ? pickBarHtml() : '') + '</div>' +
     (photosInline() ? '' : '<div class="pside"><section class="card ph-side" id="phPanel">' + photoPanelHtml() + '</section></div>') + '</div>';
+}
+// Owners → Site → Tidy labels: merge "What / where" labels that mean the same thing ("Marking 1"…"Marking 56" →
+// "Site marking"). Find narrows the list; tick, type the label to keep, Merge. The server moves the project's photos,
+// questions and change register lines to it, and the old names stop being suggested.
+S.tidy = null;
+function tidyUse(l) {
+  const bits = [l.photos ? plural(l.photos, 'photo', 'photos') : '', l.queries ? plural(l.queries, 'question', 'questions') : '', l.changes ? plural(l.changes, 'change', 'changes') : ''].filter(Boolean);
+  return bits.length ? bits.join(' · ') : 'not used yet';
+}
+function tidyPicked() { const T = S.tidy; return T ? Object.keys(T.sel).filter((k) => T.sel[k]) : []; }
+function tidyShown() {
+  const T = S.tidy, f = String(T.find || '').trim().toLowerCase();
+  return (T.labels || []).filter((l) => !f || l.name.toLowerCase().indexOf(f) >= 0)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+}
+function tidyHtml(p) {
+  const T = S.tidy;
+  const head = '<div class="sec-head"><h3 id="tidyH">Tidy labels · ' + esc(projName(p.code)) + '</h3><span class="sec-btns"><button type="button" class="btn-outline" data-act="tidy-close">Close</button></span></div>';
+  if (!T.labels) return '<section class="card tidy" aria-labelledby="tidyH">' + head + '<p class="empty">' + (T.err ? esc(T.err) : 'Loading…') + '</p></section>';
+  const shown = tidyShown(), picked = tidyPicked(), n = picked.length;
+  return '<section class="card tidy" aria-labelledby="tidyH">' + head +
+    '<p class="muted small">Tick the labels that mean the same thing, then type the one to keep. Their photos, questions and change register lines move to it, and the old names stop being suggested. Drive file names keep their old label.</p>' +
+    '<div class="tidy-bar"><label>Find<input id="tidyFind" data-tidy="find" value="' + esc(T.find || '') + '" placeholder="e.g. Marking" autocomplete="off"></label>' +
+    '<button type="button" class="btn-outline" data-act="tidy-all"' + (shown.length ? '' : ' disabled') + '>Tick all ' + shown.length + ' shown</button>' +
+    (n ? '<button type="button" class="link-btn" data-act="tidy-none">Untick all</button>' : '') + '</div>' +
+    (shown.length ? '<ul class="tidy-list">' + shown.map((l) => '<li><label><input type="checkbox" data-tidy-pick="' + esc(l.name) + '"' + (T.sel[l.name] ? ' checked' : '') + '>' +
+      '<span class="tidy-name">' + esc(l.name) + '</span><span class="muted small">' + esc(tidyUse(l)) + '</span></label></li>').join('') + '</ul>'
+      : '<p class="empty">' + ((T.labels || []).length ? 'No label has “' + esc(T.find) + '” in it.' : 'No labels on this project yet.') + '</p>') +
+    '<div class="tidy-go"><label>Keep this label<input id="tidyTo" list="tidyToList" data-tidy="to" value="' + esc(T.to || '') + '" placeholder="e.g. Site marking" autocomplete="off">' + areaListHtml('tidyToList', p.code) + '</label>' +
+    '<button type="button" class="btn-save" data-act="tidy-merge"' + (n && !T.busy ? '' : ' disabled') + '>' + (T.busy ? 'Merging…' : n ? 'Merge ' + plural(n, 'label', 'labels') : 'Tick labels to merge') + '</button></div>' +
+    (T.err ? '<p class="err" role="alert">' + esc(T.err) + '</p>' : '') + '</section>';
+}
+function tidyLoad(code) {
+  api('areaUsage', [code]).then((res) => { if (S.tidy && S.tidy.project === code) { S.tidy.labels = res.labels; S.tidy.err = ''; renderAll(); } },
+    (err) => { if (S.tidy) { S.tidy.err = cleanErr(err.message); renderAll(); } });
+}
+function tidyMerge() {
+  const T = S.tidy, picked = tidyPicked(), to = String(T.to || '').trim();
+  if (!picked.length || T.busy) return;
+  if (!to) { T.err = 'Type the label to keep (or pick one).'; renderAll(); return; }
+  const use = (T.labels || []).filter((l) => picked.indexOf(l.name) >= 0).reduce((s, l) => s + l.photos + l.queries + l.changes, 0);
+  if (!window.confirm('Merge ' + plural(picked.length, 'label', 'labels') + ' into “' + to + '”?\n\n' + plural(use, 'photo, question or change line moves', 'photos, questions and change lines move') +
+    ' to “' + to + '”. The old names stop being suggested.')) return;
+  T.busy = true; T.err = ''; renderAll();
+  api('mergeAreas', [T.project, picked, to]).then((res) => {
+    T.busy = false; T.labels = res.labels; T.sel = {}; T.to = ''; T.find = '';
+    if (S.data) (S.data.areas || (S.data.areas = {}))[T.project] = res.areas;
+    const m = res.moved || {};
+    snack('Merged into “' + res.to + '”: ' + [plural(m.photos || 0, 'photo', 'photos'), plural(m.queries || 0, 'question', 'questions'), plural(m.changes || 0, 'change line', 'change lines')].join(', ') + '.');
+    loadPhotos(T.project);
+    renderAll();
+  }, (err) => { T.busy = false; T.err = cleanErr(err.message); renderAll(); });
+}
+function tidyClick(act, el) {
+  if (act === 'tidy-open') { S.tidy = { project: el.dataset.code, labels: null, sel: {}, find: '', to: '', busy: false, err: '' }; S.phPick = null; tidyLoad(el.dataset.code); renderAll(); }
+  else if (act === 'tidy-close') { S.tidy = null; renderAll(); }
+  else if (act === 'tidy-all') { tidyShown().forEach((l) => { S.tidy.sel[l.name] = true; }); tidyFillTo(); renderAll(); }
+  else if (act === 'tidy-none') { S.tidy.sel = {}; renderAll(); }
+  else if (act === 'tidy-merge') tidyMerge();
+  else return false;
+  return true;
+}
+// The first ticked label is offered as the one to keep until something is typed.
+function tidyFillTo() { const T = S.tidy, p = tidyPicked(); if (T && !T.toTyped) T.to = p.length ? p.slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))[0] : ''; }
+
+// Every account of the signed-in person: theirs, plus any sharing their team code (Shruthi's three share SN).
+function myAccounts() {
+  const me = S.me && S.me.email, all = (S.data && S.data.users) || [];
+  const u = all.find((x) => x.email === me);
+  return u && u.code ? all.filter((x) => x.code === u.code).map((x) => x.email).concat([me]) : [me];
 }
 // "N new site photos" clears for this person once they have opened the project's Site photos.
 function markPhotosSeen(code) {
@@ -3163,7 +3244,8 @@ function newPhotosOf(code) {
   if (!seen) return np && np.n ? np : null;
   if (!S.photos || S.photos.project !== code) return null;
   // Counted as the server counts them: not your own, not finished-work photos (those come with their task's Check).
-  const fresh = S.photos.photos.filter((x) => x.at > seen && x.by !== S.me.email && !/^done:/.test(x.linkedTo || ''));
+  const mine = myAccounts();
+  const fresh = S.photos.photos.filter((x) => x.at > seen && mine.indexOf(x.by) < 0 && !/^done:/.test(x.linkedTo || ''));
   if (!fresh.length) return null;
   const uniq = (a) => Array.from(new Set(a.filter(Boolean)));
   const byN = {};
@@ -3577,6 +3659,7 @@ function pickSave() {
 
 // Photo buttons, the same for owners and engineers. Returns true when it handled the click.
 function photoClick(act, el) {
+  if (!S.engineer && tidyClick(act, el)) return true;
   const redraw = () => { if (S.engineer) renderEng(); else renderAll(); };
   if (act === 'ph-open' && S.phPick) { const id = el.dataset.id; pickToggle([id], S.phPick.ids.indexOf(id) < 0); redraw(); }
   else if (act === 'ph-pick') { S.phPick = S.phPick ? null : { ids: [], full: {}, asked: {} }; S.photoSel = ''; redraw(); }
@@ -4236,7 +4319,7 @@ function changeOutcomeHtml(q) {
     : '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       ((S.queries && S.queries.causes) || []).map((x) => chip('co-cause', x, c.cause === x, x)).join('') + '</div>' +
       '<label>What was approved<input id="coText" data-co="changeText" value="' + esc(c.changeText) + '" placeholder="Change colour to white"></label>' +
-      '<div class="q-row2"><label>Area · pick or type<input data-co="area" list="coAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3">' + areaListHtml('coAreaList', q.project) + '</label>' +
+      '<div class="q-row2"><label>What / where<input data-co="area" list="coAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3">' + areaListHtml('coAreaList', q.project) + '</label>' +
       '<label>Date<input type="date" data-co="date" value="' + esc(c.date) + '"></label>' +
       '<label>Cost to us (optional)<input data-co="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000"></label></div></div>';
   return '<div class="q-compose q-reclose">' + body + (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
@@ -4328,7 +4411,7 @@ function ownerComposerHtml(q) {
     (c.outcome === 'change' ? '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       causes.map((x) => chip('qc-cause', x, c.cause === x, x)).join('') + '</div>' +
       '<label>What was approved <span class="req">(needed: it goes in the change register and starts the task)</span><input id="qcChange" data-qc="changeText" value="' + esc(c.changeText) + '" placeholder="Paint the cabin wall white"></label>' +
-      '<div class="q-row2"><label>Area · pick or type<input data-qc="area" list="qcAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off">' + areaListHtml('qcAreaList', q.project) + '</label>' +
+      '<div class="q-row2"><label>What / where<input data-qc="area" list="qcAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off">' + areaListHtml('qcAreaList', q.project) + '</label>' +
       '<label>Cost to us (optional)<input data-qc="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000" autocomplete="off"></label></div>' +
       '<span class="muted small">If the client asked for it and will pay, it belongs in Extras instead (comes with Budget).</span></div>' : '') +
     (c.outcome === 'answered' || c.outcome === 'change' ? '<div class="q-taskbox' + (c.task ? ' on' : '') + '"><label class="pcheck"><input type="checkbox" data-qc-check="task"' + (c.task ? ' checked' : '') + '> <b>Make it a task</b>' +
@@ -4398,7 +4481,6 @@ function ownerSend(photoAsk) {
     if (c.outcome === 'change' && !changeText) { c.err = 'Type what was approved: it goes in the change register and starts the task.'; redraw(); return; }
     if (c.task && !taskNote.trim()) { c.err = 'Type what the task is.'; redraw(); return; }
     if (c.task && !c.taskWho) { c.err = 'Pick who the task is for.'; redraw(); return; }
-    if (c.outcome === 'change' && !confirmNewAreas(q0.project, [c.area])) return;
     req = withAtt((ids) => api('closeQuery', [c.qid, {
       outcome: c.outcome, reply: text, cause: c.cause, cost: c.cost, area: c.area, changeText: changeText, answerTag: c.outcome === 'answered' ? c.answerTag || '' : '',
       photoIds: ids,
@@ -4485,7 +4567,7 @@ function engQueriesHtml() {
     (drafts.length || a.photoIds.length ? '<div class="q-photos">' +
       a.photoIds.map((id) => '<span class="q-photo">' + (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="">' : '<span class="ph-wait"></span>') + '<button type="button" class="q-x" data-act="ask-unattach" data-id="' + esc(id) + '" aria-label="Remove photo">×</button></span>').join('') +
       drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
-    '<label>Area · pick or type<input id="askArea" list="askAreaList" data-ask="area" value="' + esc(a.area || '') + '" placeholder="e.g. Cabin 3"></label>' +
+    '<label>What / where<input id="askArea" list="askAreaList" data-ask="area" value="' + esc(a.area || '') + '" placeholder="e.g. Cabin 3 ceiling" autocomplete="off"></label>' +
     '<datalist id="askAreaList">' + areas.map((x) => '<option value="' + esc(x) + '">').join('') + '</datalist>' +
     '<label>Your question<textarea id="askText" data-ask="text" rows="3">' + esc(a.text) + '</textarea></label>' +
     '<div><span class="lbl">Meanwhile, the work is</span><div class="q-chips2">' + chip('work', 'hold', 'On hold', true) + chip('work', 'continuing', 'Continuing') + '</div>' +
@@ -4523,14 +4605,14 @@ function engSendAsk() {
   const a = S.ask, proj = S.engProject, text = String(a.text || '').trim();
   if (a.sending) return; // a second tap while sending does nothing
   const area = String(a.area || '').trim();
-  if (!area) { engSnack('Pick or type the area.', true); return; }
+  if (!area) { engSnack('Type what / where.', true); return; }
   if (!text) { engSnack('Type your question.', true); return; }
   if (a.other === 'yes' && !a.team) { engSnack('Pick which team needs to come in.', true); return; }
   if (a.other === 'yes' && a.team === TEAM_OTHER && !String(a.which || '').trim()) { engSnack('Type the team’s name.', true); return; }
   const teamCode = a.other === 'yes' && a.team !== TEAM_OTHER ? a.team : '';
   const teamPerson = teamCode && ((S.site && S.site.people) || []).find((p) => p.code === teamCode);
   const which = a.other !== 'yes' ? '' : teamPerson ? teamPerson.name + (teamPerson.trade ? ' · ' + teamPerson.trade : '') : String(a.which || '').trim();
-  if (!confirmOtherProject(proj) || !confirmNewAreas(proj, [area])) return;
+  if (!confirmOtherProject(proj)) return;
   a.sending = true;
   renderEng();
   const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
@@ -4575,7 +4657,7 @@ function registerRowsHtml(all, showCost, editable, screen) {
   const note = voided.length ? '<p class="muted small reg-void">Numbers not used: ' + esc(voided.map((r) => r.no).join(', ')) + ' (changed to Answered).</p>' : '';
   if (!rows.length) return '<p class="empty">No changes approved yet.</p>' + note;
   const cols = 7 + (editable ? 1 : 0);
-  return '<div class="table-box"><table class="ptable reg"><thead><tr><th>No.</th><th>Date</th><th>Area</th><th>Change</th><th>Approved by</th><th>Raised from</th><th>Why' + (showCost ? ' · cost to us' : '') + '</th>' +
+  return '<div class="table-box"><table class="ptable reg"><thead><tr><th>No.</th><th>Date</th><th>What / where</th><th>Change</th><th>Approved by</th><th>Raised from</th><th>Why' + (showCost ? ' · cost to us' : '') + '</th>' +
     (editable ? '<th><span class="sr-only">Edit</span></th>' : '') + '</tr></thead><tbody>' +
     rows.map((r) => {
       const ed = editable && S.regEdit && S.regEdit.project === r.project && S.regEdit.no === r.no;
@@ -4586,30 +4668,35 @@ function registerRowsHtml(all, showCost, editable, screen) {
         (ed ? '<tr class="reg-form"><td colspan="' + cols + '">' + registerFormHtml(S.regEdit) + '</td></tr>' : '');
     }).join('') + '</tbody></table></div>' + note;
 }
-// Every Area box picks from the project's areas (the ones on its photos and questions) or takes a new one; the server
-// saves any capitals as the project's own spelling ("reception" → "Reception").
-function areaOptions(project) { return (((S.data && S.data.areas) || (S.site && S.site.areas) || {})[project]) || []; }
+// Every "What / where" box is free text, with suggestions while typing: this week's schedule activities, then the
+// labels used before on the project. Anything else typed is kept as it is (no question asked); the server saves any
+// capitals as the project's own spelling ("reception" → "Reception"). Owners tidy old labels with Tidy labels.
+function areaOptions(project) {
+  const used = (((S.data && S.data.areas) || (S.site && S.site.areas) || {})[project]) || [];
+  const out = [], seen = {};
+  const add = (a) => { const t = String(a || '').trim(), k = t.toLowerCase(); if (t && !seen[k]) { seen[k] = 1; out.push(t); } };
+  weekActNames(project).forEach(add);
+  used.forEach(add);
+  return out;
+}
+// The activities the plan has running this week (as in the weekly log), by name.
+function weekActNames(project) {
+  try {
+    const p = schedProj(project), sc = schedAll()[project], d1 = p && day1Of(p);
+    if (!d1 || !sc || !sc.acts || !sc.acts.length) return [];
+    return LC.weekList(sc.acts, sc.progress || [], d1, LC.weekMonday(todayIso())).map((x) => x.act.name).filter(Boolean);
+  } catch (_) { return []; }
+}
 function areaListHtml(id, project) { return '<datalist id="' + id + '">' + areaOptions(project).map((a) => '<option value="' + esc(a) + '">').join('') + '</datalist>'; }
 // Engineers: a question or photos on a project he isn't on (Venky's question landed on House Brindhavan) asks first.
 function confirmOtherProject(project) {
   if (!S.engineer || (engMe().projects || []).indexOf(project) >= 0) return true;
   return window.confirm('You’re not on ' + engProjName(project) + '. Send here anyway?\n\nOK sends it to ' + engProjName(project) + '. Cancel lets you pick your project at the top.');
 }
-// A typed area the project doesn't have yet is asked about before it's saved ("Cabin 20" when "Cabin 2" was meant).
-// OK: it is added; Cancel: nothing is sent, to change it. Returns true to go on.
-function confirmNewAreas(project, typed) {
-  const known = areaOptions(project).map((a) => String(a).toLowerCase());
-  const fresh = Array.from(new Set((typed || []).map((a) => String(a || '').trim()).filter((a) => a && known.indexOf(a.toLowerCase()) < 0)));
-  if (!fresh.length) return true;
-  const near = fresh.map((a) => areaOptions(project).find((k) => { const x = k.toLowerCase(), y = a.toLowerCase(); return y.indexOf(x) === 0 || x.indexOf(y) === 0 || editDistance(x, y) <= 2; })).filter(Boolean);
-  const name = S.engineer ? engProjName(project) : projName(project);
-  return window.confirm((fresh.length === 1 ? 'Add new area “' + fresh[0] + '” to ' + name + '?' : 'Add new areas ' + fresh.map((a) => '“' + a + '”').join(', ') + ' to ' + name + '?') +
-    (near.length ? '\n\nThere is already ' + Array.from(new Set(near)).map((a) => '“' + a + '”').join(', ') + '.' : '') + '\n\nOK adds it. Cancel lets you change it.');
-}
 function registerFormHtml(f) {
   const causes = (S.queries && S.queries.causes) || [];
   return '<div class="dform"><div class="fld" style="flex:2 1 260px"><label for="regText">What was approved</label><input id="regText" data-reg="text" value="' + esc(f.text) + '"></div>' +
-    '<div class="fld"><label for="regArea">Area · pick or type</label><input id="regArea" data-reg="area" list="regAreaList" value="' + esc(f.area) + '" placeholder="Cabin 3">' + areaListHtml('regAreaList', f.project) + '</div>' +
+    '<div class="fld"><label for="regArea">What / where</label><input id="regArea" data-reg="area" list="regAreaList" value="' + esc(f.area) + '" placeholder="Cabin 3" autocomplete="off">' + areaListHtml('regAreaList', f.project) + '</div>' +
     '<div class="fld"><label for="regCause">Why</label><select id="regCause" data-reg="cause">' + causes.map((c) => '<option' + (c === f.cause ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></div>' +
     '<div class="fld"><label for="regCost">Cost to us (optional)</label><input id="regCost" data-reg="cost" value="' + esc(f.cost) + '" inputmode="numeric" placeholder="₹3,000"></div>' +
     '<button type="button" class="btn-accent" data-act="reg-save">Save</button><button type="button" class="btn-outline" data-act="reg-cancel">Cancel</button>' +
@@ -5851,6 +5938,13 @@ function onAct(el) {
 document.addEventListener('input', (ev) => {
   const t = ev.target;
   if (t.dataset.actnote !== undefined) { if (S.actNote) { S.actNote.text = t.value; S.actNote.err = ''; } return; }
+  if (S.tidy && (t.dataset.tidy || t.dataset.tidyPick !== undefined)) {
+    S.tidy.err = '';
+    if (t.dataset.tidyPick !== undefined) { S.tidy.sel[t.dataset.tidyPick] = t.checked; tidyFillTo(); renderAll(); }
+    else if (t.dataset.tidy === 'find') { S.tidy.find = t.value; renderAll(); }
+    else { S.tidy.to = t.value; S.tidy.toTyped = !!t.value.trim(); const b = document.querySelector('[data-act="tidy-merge"]'); if (b) b.disabled = !tidyPicked().length || S.tidy.busy; }
+    return;
+  }
   if (t.id === 'code') {
     S.code = t.value; S.armed = ''; S.saveErr = '';
     renderCodebar();
@@ -5911,9 +6005,24 @@ document.addEventListener('input', (ev) => {
     S.ask[t.dataset.ask] = t.value;
   } else if (t.dataset.er && S.engReply) {
     S.engReply[t.dataset.er] = t.value;
+  } else if (t.dataset.batchArea) {
+    // One label for the whole batch: every photo without its own follows it; the boxes under them show it greyed.
+    const proj = t.dataset.batchArea;
+    S.batchMem[proj] = t.value;
+    const ds = S.drafts.filter((d) => d.project === proj && !d.purpose);
+    if (ds.length === 1) ds[0].own = false; // one photo: the box above is its label
+    ds.filter((d) => !d.own).forEach((d) => { d.area = t.value; idbPut('drafts', d).catch(() => { /* kept in memory until sent */ }); });
+    document.querySelectorAll('input[data-draft-area]').forEach((el) => { el.placeholder = t.value || 'Same as above'; });
+    document.querySelectorAll('.ph-batch-echo').forEach((el) => { el.textContent = t.value || 'Type what / where above'; });
   } else if (t.dataset.draftArea) {
+    // A photo's own label; cleared, it goes back to the batch's.
     const d = S.drafts.find((x) => x.id === t.dataset.draftArea);
-    if (d) { d.area = t.value; idbPut('drafts', d).catch(() => { /* kept in memory until sent */ }); }
+    if (d) {
+      const batch = batchArea(d.project);
+      d.own = !!t.value.trim();
+      d.area = d.own ? t.value : batch;
+      idbPut('drafts', d).catch(() => { /* kept in memory until sent */ });
+    }
   } else if (t.dataset.phCaption) {
     S.photoCaption = t.value;
   } else if (t.dataset.pc) {

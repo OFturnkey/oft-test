@@ -1197,3 +1197,19 @@ body.pv-on { overflow: hidden }
 .ph-pick.one { grid-template-columns: minmax(0, 260px); }
 .ph-add .ph-draft { max-width: 640px; }
 .ph-add .eng-form { max-width: 640px; }
+/* Areas release: one "What / where" for the whole batch, and owners' Tidy labels (merge). */
+.ph-batch { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: #1C1E1D; margin: 6px 0 4px; max-width: 640px; box-sizing: border-box; }
+.ph-batch input { border: 1px solid #C9CAC3; border-radius: 8px; padding: 0 10px; min-height: 44px; font: inherit; font-size: 15px; font-weight: 400; color: #1C1E1D; }
+.ph-batch-echo { flex: 1 1 auto; min-width: 0; }
+.tidy { padding: 14px 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
+.tidy h3 { margin: 0; font-size: 16px; }
+.tidy p { margin: 0; }
+.tidy-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.tidy-bar label, .tidy-go label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #5E605C; flex: 1 1 200px; min-width: 0; max-width: 320px; }
+.tidy-bar input, .tidy-go input { border: 1px solid #C9CAC3; border-radius: 8px; padding: 0 10px; min-height: 40px; font: inherit; font-size: 14px; color: #1C1E1D; }
+.tidy-list { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow-y: auto; border: 1px solid #E6E7E2; border-radius: 10px; }
+.tidy-list li + li { border-top: 1px solid #EFEFEA; }
+.tidy-list label { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; flex-wrap: wrap; }
+.tidy-list input { width: 18px; height: 18px; flex: none; margin: 0; }
+.tidy-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.tidy-go { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
