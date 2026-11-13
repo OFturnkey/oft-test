@@ -2222,7 +2222,7 @@ const SCHEDULE_LABEL = { full: 'Full schedule', light: 'Light schedule', none: '
 const SECTIONS = {
   design: [['overview', 'Overview', true], ['drawings', 'Drawings', true], ['queries', 'Queries', true]],
   execution: [['overview', 'Overview', true], ['schedule', 'Schedule', true], ['site', 'Site', true], ['queries', 'Queries', true],
-    ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', true], ['visits', 'Site visits', false]],
+    ['budget', 'Budget', false], ['bills', 'Bills', false], ['drawings', 'Drawings', true]],
   handover: [['overview', 'Overview', true]],
   archive: [['overview', 'Overview', true]]
 };
