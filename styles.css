@@ -1213,3 +1213,14 @@ body.pv-on { overflow: hidden }
 .tidy-list input { width: 18px; height: 18px; flex: none; margin: 0; }
 .tidy-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .tidy-go { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+/* Areas fixes: the app's own suggestion list (ranked; same on Android), the Undo bar and the merge history. */
+.sugg { position: absolute; z-index: 2000; background: #FFFFFF; border: 1px solid #C9CAC3; border-radius: 10px; box-shadow: 0 6px 20px rgba(28, 30, 29, 0.16); padding: 4px; display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; box-sizing: border-box; }
+.sugg[hidden] { display: none; }
+.sugg button { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 6px 12px; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 15px; color: #1C1E1D; text-align: left; cursor: pointer; }
+.sugg button:hover, .sugg button.on { background: #EEF1E8; }
+.sugg-tag { flex: none; font-size: 11px; font-weight: 600; color: #455B28; background: #E2EAD6; border-radius: 999px; padding: 1px 8px; }
+.tidy-done { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; background: #EEF1E8; border: 1px solid #C9D6B5; border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.tidy-hist h4 { margin: 6px 0 6px; font-size: 14px; }
+.tidy-hist ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid #EFEFEA; }
+.tidy-hist li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 0; border-bottom: 1px solid #EFEFEA; }
+.tidy-hist li > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }

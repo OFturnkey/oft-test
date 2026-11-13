@@ -693,6 +693,7 @@ function renderEng() {
     const el = $(fid);
     if (el && document.activeElement !== el) { el.focus({ preventScroll: true }); try { if (s0 !== null) el.setSelectionRange(s0, s1); } catch (_) { /* ignore */ } }
   }
+  suggAfterRedraw();
 }
 function renderEngInner() {
   // The bottom bar first, and on its own: nothing below can stop it showing.
@@ -3103,12 +3104,11 @@ function photoAddHtml(proj, eng) {
   const camera = eng || isTouchDevice() ? '<label class="btn-main ph-pick-btn">Take photos<input type="file" accept="image/*" capture="environment" data-ph-pick="1"' + pc + ' hidden></label>' : '';
   return '<div class="ph-pick eng-pad' + (camera ? '' : ' one') + '">' + camera +
     '<label class="' + (camera ? 'btn-outline' : 'btn-main') + ' ph-pick-btn">' + (camera ? 'From gallery' : 'Add photos') + '<input type="file" accept="image/*" multiple data-ph-pick="1"' + pc + ' hidden></label></div>' +
-    areaListHtml('areaList', proj) +
     (drafts.length ? '<label class="ph-batch eng-pad">What / where' + (drafts.length > 1 ? ' · all ' + drafts.length + ' photos' : '') +
-        '<input id="ba-' + esc(proj) + '" list="areaList" data-batch-area="' + esc(proj) + '" value="' + esc(batch) + '" placeholder="e.g. Reception ceiling" autocomplete="off"></label>' +
+        '<input id="ba-' + esc(proj) + '" data-sugg="' + esc(proj) + '" data-batch-area="' + esc(proj) + '" value="' + esc(batch) + '" placeholder="e.g. Reception ceiling" autocomplete="off"></label>' +
       '<p class="muted small eng-pad">' + (drafts.length > 1 ? 'One label for all of them. Different for one photo? Type it under that photo.' : 'Pick a suggestion or type your own.') + '</p>' +
       drafts.map((d) => '<div class="ph-draft"><img src="data:image/jpeg;base64,' + d.thumb + '" alt="">' +
-        (drafts.length > 1 ? '<label>This photo only<input id="da-' + esc(d.id) + '" list="areaList" data-draft-area="' + esc(d.id) + '" value="' + esc(d.own ? d.area || '' : '') + '" placeholder="' + esc(batch || 'Same as above') + '" autocomplete="off"></label>'
+        (drafts.length > 1 ? '<label>This photo only<input id="da-' + esc(d.id) + '" data-sugg="' + esc(proj) + '" data-draft-area="' + esc(d.id) + '" value="' + esc(d.own ? d.area || '' : '') + '" placeholder="' + esc(batch || 'Same as above') + '" autocomplete="off"></label>'
           : '<span class="muted small ph-batch-echo">' + esc((d.own ? d.area : batch) || 'Type what / where above') + '</span>') +
         '<button type="button" class="icon-btn" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove this photo">×</button></div>').join('') +
       '<div class="eng-form"><button type="button" class="btn-save" data-act="ph-send"' + (eng ? '' : ' data-code="' + esc(proj) + '"') + (S.sendingPhotos ? ' disabled' : '') + '>' +
@@ -3179,7 +3179,10 @@ function tidyHtml(p) {
   const head = '<div class="sec-head"><h3 id="tidyH">Tidy labels · ' + esc(projName(p.code)) + '</h3><span class="sec-btns"><button type="button" class="btn-outline" data-act="tidy-close">Close</button></span></div>';
   if (!T.labels) return '<section class="card tidy" aria-labelledby="tidyH">' + head + '<p class="empty">' + (T.err ? esc(T.err) : 'Loading…') + '</p></section>';
   const shown = tidyShown(), picked = tidyPicked(), n = picked.length;
-  return '<section class="card tidy" aria-labelledby="tidyH">' + head +
+  // Right after a merge: what it did, with Undo (until this screen is left; later, from the list of merges below).
+  const last = T.last ? '<div class="tidy-done" role="status"><span>Merged ' + esc(fewNames(T.last.labels)) + ' into “' + esc(T.last.to) + '” · ' + esc(moveText(T.last.moved)) + '.</span>' +
+    '<button type="button" class="btn-outline" data-act="tidy-undo" data-id="' + esc(T.last.id) + '"' + (T.busy ? ' disabled' : '') + '>Undo</button></div>' : '';
+  return '<section class="card tidy" aria-labelledby="tidyH">' + head + last +
     '<p class="muted small">Tick the labels that mean the same thing, then type the one to keep. Their photos, questions and change register lines move to it, and the old names stop being suggested. Drive file names keep their old label.</p>' +
     '<div class="tidy-bar"><label>Find<input id="tidyFind" data-tidy="find" value="' + esc(T.find || '') + '" placeholder="e.g. Marking" autocomplete="off"></label>' +
     '<button type="button" class="btn-outline" data-act="tidy-all"' + (shown.length ? '' : ' disabled') + '>Tick all ' + shown.length + ' shown</button>' +
@@ -3187,37 +3190,74 @@ function tidyHtml(p) {
     (shown.length ? '<ul class="tidy-list">' + shown.map((l) => '<li><label><input type="checkbox" data-tidy-pick="' + esc(l.name) + '"' + (T.sel[l.name] ? ' checked' : '') + '>' +
       '<span class="tidy-name">' + esc(l.name) + '</span><span class="muted small">' + esc(tidyUse(l)) + '</span></label></li>').join('') + '</ul>'
       : '<p class="empty">' + ((T.labels || []).length ? 'No label has “' + esc(T.find) + '” in it.' : 'No labels on this project yet.') + '</p>') +
-    '<div class="tidy-go"><label>Keep this label<input id="tidyTo" list="tidyToList" data-tidy="to" value="' + esc(T.to || '') + '" placeholder="e.g. Site marking" autocomplete="off">' + areaListHtml('tidyToList', p.code) + '</label>' +
+    '<div class="tidy-go"><label>Keep this label<input id="tidyTo" data-sugg="' + esc(p.code) + '" data-tidy="to" value="' + esc(T.to || '') + '" placeholder="e.g. Site marking" autocomplete="off"></label>' +
     '<button type="button" class="btn-save" data-act="tidy-merge"' + (n && !T.busy ? '' : ' disabled') + '>' + (T.busy ? 'Merging…' : n ? 'Merge ' + plural(n, 'label', 'labels') : 'Tick labels to merge') + '</button></div>' +
-    (T.err ? '<p class="err" role="alert">' + esc(T.err) + '</p>' : '') + '</section>';
+    (T.err ? '<p class="err" role="alert">' + esc(T.err) + '</p>' : '') + tidyHistoryHtml(T) + '</section>';
+}
+// "5 photos, 1 question" (only what is there; "nothing yet" when nothing uses them).
+function moveText(m) {
+  m = m || {};
+  const bits = [m.photos ? plural(m.photos, 'photo', 'photos') : '', m.queries ? plural(m.queries, 'question', 'questions') : '', m.changes ? plural(m.changes, 'change line', 'change lines') : ''].filter(Boolean);
+  return bits.length ? bits.join(', ') : 'nothing used them yet';
+}
+// "yyyy-mm-dd hh:mm" as "Fri 13 Nov, 9:12 pm".
+function when12(stamp) {
+  const s = String(stamp || '');
+  if (s.length < 16) return s;
+  const h = Number(s.slice(11, 13)), m = s.slice(14, 16);
+  return niceDay(s.slice(0, 10)) + ', ' + ((h % 12) || 12) + ':' + m + ' ' + (h < 12 ? 'am' : 'pm');
+}
+// Every merge on the project, newest first, each with Undo (or when it was undone).
+function tidyHistoryHtml(T) {
+  const list = T.merges || [];
+  if (!list.length) return '';
+  return '<div class="tidy-hist"><h4>Merges on this project</h4><ul>' + list.map((m) => '<li><span><b>' + esc(fewNames(m.labels)) + ' → “' + esc(m.to) + '”</b>' +
+    '<span class="muted small">' + esc(moveText(m.counts)) + ' · ' + esc(m.by) + ' · ' + esc(when12(m.at)) + (m.undoneAt ? ' · undone by ' + esc(m.undoneBy) + ', ' + esc(when12(m.undoneAt)) : '') + '</span></span>' +
+    (m.undoneAt ? '' : '<button type="button" class="btn-outline btn-sm" data-act="tidy-undo" data-id="' + esc(m.id) + '"' + (T.busy ? ' disabled' : '') + '>Undo</button>') + '</li>').join('') + '</ul></div>';
 }
 function tidyLoad(code) {
-  api('areaUsage', [code]).then((res) => { if (S.tidy && S.tidy.project === code) { S.tidy.labels = res.labels; S.tidy.err = ''; renderAll(); } },
+  api('areaUsage', [code]).then((res) => { if (S.tidy && S.tidy.project === code) { S.tidy.labels = res.labels; S.tidy.merges = res.merges || []; S.tidy.err = ''; renderAll(); } },
     (err) => { if (S.tidy) { S.tidy.err = cleanErr(err.message); renderAll(); } });
 }
 function tidyMerge() {
   const T = S.tidy, picked = tidyPicked(), to = String(T.to || '').trim();
   if (!picked.length || T.busy) return;
   if (!to) { T.err = 'Type the label to keep (or pick one).'; renderAll(); return; }
-  const use = (T.labels || []).filter((l) => picked.indexOf(l.name) >= 0).reduce((s, l) => s + l.photos + l.queries + l.changes, 0);
-  if (!window.confirm('Merge ' + plural(picked.length, 'label', 'labels') + ' into “' + to + '”?\n\n' + plural(use, 'photo, question or change line moves', 'photos, questions and change lines move') +
-    ' to “' + to + '”. The old names stop being suggested.')) return;
+  const sum = { photos: 0, queries: 0, changes: 0 };
+  (T.labels || []).filter((l) => picked.indexOf(l.name) >= 0).forEach((l) => { sum.photos += l.photos; sum.queries += l.queries; sum.changes += l.changes; });
+  if (!window.confirm('Merge ' + plural(picked.length, 'label', 'labels') + ' (' + moveText(sum) + ') into “' + to + '”?\n\nThe old names stop being suggested. You can undo it afterwards in Tidy labels.')) return;
   T.busy = true; T.err = ''; renderAll();
   api('mergeAreas', [T.project, picked, to]).then((res) => {
-    T.busy = false; T.labels = res.labels; T.sel = {}; T.to = ''; T.find = '';
+    T.busy = false; T.labels = res.labels; T.merges = res.merges || []; T.sel = {}; T.to = ''; T.toTyped = false; T.find = '';
+    T.last = { id: res.id, to: res.to, labels: picked, moved: res.moved };
     if (S.data) (S.data.areas || (S.data.areas = {}))[T.project] = res.areas;
-    const m = res.moved || {};
-    snack('Merged into “' + res.to + '”: ' + [plural(m.photos || 0, 'photo', 'photos'), plural(m.queries || 0, 'question', 'questions'), plural(m.changes || 0, 'change line', 'change lines')].join(', ') + '.');
+    snack('Merged into “' + res.to + '”: ' + moveText(res.moved) + '.');
+    loadPhotos(T.project);
+    renderAll();
+  }, (err) => { T.busy = false; T.err = cleanErr(err.message); renderAll(); });
+}
+// Undo a merge: each photo, question and change line goes back to its old label.
+function tidyUndo(id) {
+  const T = S.tidy;
+  if (!T || T.busy) return;
+  T.busy = true; T.err = ''; renderAll();
+  api('undoAreaMerge', [id]).then((res) => {
+    T.busy = false; T.labels = res.labels; T.merges = res.merges || [];
+    if (T.last && T.last.id === id) T.last = null;
+    if (S.data) (S.data.areas || (S.data.areas = {}))[T.project] = res.areas;
+    snack('Undone: ' + moveText(res.back) + ' back to ' + (Object.values(res.back || {}).reduce((s, n) => s + n, 0) === 1 ? 'its old label' : 'their old labels') + '.' +
+      (res.skipped ? ' ' + plural(res.skipped, 'item was', 'items were') + ' changed since and left as ' + (res.skipped === 1 ? 'it is' : 'they are') + '.' : ''));
     loadPhotos(T.project);
     renderAll();
   }, (err) => { T.busy = false; T.err = cleanErr(err.message); renderAll(); });
 }
 function tidyClick(act, el) {
-  if (act === 'tidy-open') { S.tidy = { project: el.dataset.code, labels: null, sel: {}, find: '', to: '', busy: false, err: '' }; S.phPick = null; tidyLoad(el.dataset.code); renderAll(); }
+  if (act === 'tidy-open') { S.tidy = { project: el.dataset.code, labels: null, merges: [], sel: {}, find: '', to: '', busy: false, err: '', last: null }; S.phPick = null; tidyLoad(el.dataset.code); renderAll(); }
   else if (act === 'tidy-close') { S.tidy = null; renderAll(); }
   else if (act === 'tidy-all') { tidyShown().forEach((l) => { S.tidy.sel[l.name] = true; }); tidyFillTo(); renderAll(); }
   else if (act === 'tidy-none') { S.tidy.sel = {}; renderAll(); }
   else if (act === 'tidy-merge') tidyMerge();
+  else if (act === 'tidy-undo') tidyUndo(el.dataset.id);
   else return false;
   return true;
 }
@@ -4319,7 +4359,7 @@ function changeOutcomeHtml(q) {
     : '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       ((S.queries && S.queries.causes) || []).map((x) => chip('co-cause', x, c.cause === x, x)).join('') + '</div>' +
       '<label>What was approved<input id="coText" data-co="changeText" value="' + esc(c.changeText) + '" placeholder="Change colour to white"></label>' +
-      '<div class="q-row2"><label>What / where<input data-co="area" list="coAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3">' + areaListHtml('coAreaList', q.project) + '</label>' +
+      '<div class="q-row2"><label>What / where<input id="coArea" data-co="area" data-sugg="' + esc(q.project) + '" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off"></label>' +
       '<label>Date<input type="date" data-co="date" value="' + esc(c.date) + '"></label>' +
       '<label>Cost to us (optional)<input data-co="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000"></label></div></div>';
   return '<div class="q-compose q-reclose">' + body + (c.err ? '<p class="err" role="alert">' + esc(c.err) + '</p>' : '') +
@@ -4411,7 +4451,7 @@ function ownerComposerHtml(q) {
     (c.outcome === 'change' ? '<div class="q-change"><div class="muted small">Why did this change? (for the handover report)</div><div class="chip-group">' +
       causes.map((x) => chip('qc-cause', x, c.cause === x, x)).join('') + '</div>' +
       '<label>What was approved <span class="req">(needed: it goes in the change register and starts the task)</span><input id="qcChange" data-qc="changeText" value="' + esc(c.changeText) + '" placeholder="Paint the cabin wall white"></label>' +
-      '<div class="q-row2"><label>What / where<input data-qc="area" list="qcAreaList" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off">' + areaListHtml('qcAreaList', q.project) + '</label>' +
+      '<div class="q-row2"><label>What / where<input id="qcArea" data-qc="area" data-sugg="' + esc(q.project) + '" value="' + esc(c.area) + '" placeholder="Cabin 3" autocomplete="off"></label>' +
       '<label>Cost to us (optional)<input data-qc="cost" value="' + esc(c.cost) + '" inputmode="numeric" placeholder="₹3,000" autocomplete="off"></label></div>' +
       '<span class="muted small">If the client asked for it and will pay, it belongs in Extras instead (comes with Budget).</span></div>' : '') +
     (c.outcome === 'answered' || c.outcome === 'change' ? '<div class="q-taskbox' + (c.task ? ' on' : '') + '"><label class="pcheck"><input type="checkbox" data-qc-check="task"' + (c.task ? ' checked' : '') + '> <b>Make it a task</b>' +
@@ -4567,8 +4607,7 @@ function engQueriesHtml() {
     (drafts.length || a.photoIds.length ? '<div class="q-photos">' +
       a.photoIds.map((id) => '<span class="q-photo">' + (S.thumbs[id] ? '<img src="' + S.thumbs[id] + '" alt="">' : '<span class="ph-wait"></span>') + '<button type="button" class="q-x" data-act="ask-unattach" data-id="' + esc(id) + '" aria-label="Remove photo">×</button></span>').join('') +
       drafts.map((d) => '<span class="q-photo"><img src="data:image/jpeg;base64,' + d.thumb + '" alt=""><button type="button" class="q-x" data-act="draft-del" data-id="' + esc(d.id) + '" aria-label="Remove photo">×</button></span>').join('') + '</div>' : '') +
-    '<label>What / where<input id="askArea" list="askAreaList" data-ask="area" value="' + esc(a.area || '') + '" placeholder="e.g. Cabin 3 ceiling" autocomplete="off"></label>' +
-    '<datalist id="askAreaList">' + areas.map((x) => '<option value="' + esc(x) + '">').join('') + '</datalist>' +
+    '<label>What / where<input id="askArea" data-sugg="' + esc(proj) + '" data-ask="area" value="' + esc(a.area || '') + '" placeholder="e.g. Cabin 3 ceiling" autocomplete="off"></label>' +
     '<label>Your question<textarea id="askText" data-ask="text" rows="3">' + esc(a.text) + '</textarea></label>' +
     '<div><span class="lbl">Meanwhile, the work is</span><div class="q-chips2">' + chip('work', 'hold', 'On hold', true) + chip('work', 'continuing', 'Continuing') + '</div>' +
     '<span class="muted small">' + (a.work === 'hold' ? 'Shows in red for Shruthi and Savan until someone replies.' : 'They will reply when they can.') + '</span></div>' +
@@ -4669,16 +4708,90 @@ function registerRowsHtml(all, showCost, editable, screen) {
     }).join('') + '</tbody></table></div>' + note;
 }
 // Every "What / where" box is free text, with suggestions while typing: this week's schedule activities, then the
-// labels used before on the project. Anything else typed is kept as it is (no question asked); the server saves any
-// capitals as the project's own spelling ("reception" → "Reception"). Owners tidy old labels with Tidy labels.
+// labels used before on the project. Anything else typed is kept as it is (no question asked); the server files any
+// capitals or spacing under the project's own spelling ("reception " → "Reception"). Owners tidy old labels with
+// Tidy labels. The list is the app's own (not the browser's), so it ranks the same on laptops and Android phones.
+function normLabel(s) { return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
 function areaOptions(project) {
   const used = (((S.data && S.data.areas) || (S.site && S.site.areas) || {})[project]) || [];
   const out = [], seen = {};
-  const add = (a) => { const t = String(a || '').trim(), k = t.toLowerCase(); if (t && !seen[k]) { seen[k] = 1; out.push(t); } };
-  weekActNames(project).forEach(add);
-  used.forEach(add);
+  const add = (a, act) => { const t = String(a || '').trim().replace(/\s+/g, ' '), k = normLabel(t); if (t && !seen[k]) { seen[k] = 1; out.push({ name: t, act: act }); } };
+  weekActNames(project).forEach((a) => add(a, true));
+  used.forEach((a) => add(a, false));
   return out;
 }
+// Ranked: labels where a word STARTS with what was typed, then labels with it inside a word ("te": "Test C" before
+// "Site marking"); this week's activities first within each group. An exact match isn't offered again.
+function rankLabels(items, typed) {
+  const t = normLabel(typed);
+  if (!t) return items.slice();
+  const re = new RegExp('(^|[\\s\\-/,.()&+_:;#])' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const g = [[], [], [], []];
+  items.forEach((it) => {
+    const n = normLabel(it.name);
+    if (n === t) return;
+    if (re.test(n)) g[it.act ? 0 : 1].push(it);
+    else if (n.indexOf(t) >= 0) g[it.act ? 2 : 3].push(it);
+  });
+  return g[0].concat(g[1], g[2], g[3]);
+}
+if (CONFIG.env === 'test') window.oftRank = rankLabels; // the automated checks test the ranking directly
+var SUGG = { el: null, input: null, items: [], idx: -1, picking: false }; // var: a redraw may run before this line
+function suggBox() {
+  if (SUGG.el) return SUGG.el;
+  const d = document.createElement('div');
+  d.id = 'sugg'; d.className = 'sugg'; d.setAttribute('role', 'listbox'); d.hidden = true;
+  // Tapping a suggestion must not take the focus (and the keyboard) away from the box.
+  d.addEventListener('pointerdown', (ev) => ev.preventDefault());
+  d.addEventListener('mousedown', (ev) => ev.preventDefault());
+  d.addEventListener('click', (ev) => { const b = ev.target.closest('[data-sugg-pick]'); if (b) suggPick(Number(b.dataset.suggPick)); });
+  document.body.appendChild(d);
+  return (SUGG.el = d);
+}
+function suggShow(input) {
+  if (SUGG.picking || !input || !input.isConnected) return;
+  const box = suggBox(), items = rankLabels(areaOptions(input.dataset.sugg), input.value).slice(0, 8);
+  SUGG.input = input; SUGG.items = items; SUGG.idx = -1;
+  if (!items.length) { box.hidden = true; return; }
+  box.innerHTML = items.map((it, i) => '<button type="button" role="option" data-sugg-pick="' + i + '">' + esc(it.name) +
+    (it.act ? '<span class="sugg-tag">this week</span>' : '') + '</button>').join('');
+  const r = input.getBoundingClientRect(), w = Math.min(Math.max(r.width, 220), window.innerWidth - 16);
+  box.style.width = w + 'px';
+  box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + window.scrollX + 'px';
+  box.style.top = r.bottom + window.scrollY + 2 + 'px';
+  box.hidden = false;
+}
+function suggHide() { if (SUGG.el) SUGG.el.hidden = true; SUGG.input = null; SUGG.idx = -1; }
+// After a redraw: the list follows the box (same id, focus put back), or closes when the box is gone.
+function suggAfterRedraw() {
+  if (!SUGG || !SUGG.input || SUGG.input.isConnected) return;
+  const a = document.activeElement;
+  if (a && a.dataset && a.dataset.sugg !== undefined) suggShow(a); else suggHide();
+}
+function suggPick(i) {
+  const it = SUGG.items[i], input = SUGG.input;
+  if (!it || !input) return;
+  input.value = it.name;
+  suggHide();
+  SUGG.picking = true;
+  try { input.dispatchEvent(new Event('input', { bubbles: true })); } finally { SUGG.picking = false; }
+}
+function suggMark() { if (SUGG.el) Array.from(SUGG.el.children).forEach((b, i) => b.classList.toggle('on', i === SUGG.idx)); }
+document.addEventListener('focusin', (ev) => { if (ev.target.dataset && ev.target.dataset.sugg !== undefined) suggShow(ev.target); });
+document.addEventListener('input', (ev) => { if (ev.target.dataset && ev.target.dataset.sugg !== undefined) suggShow(ev.target); }, true);
+document.addEventListener('focusout', (ev) => {
+  if (ev.target === SUGG.input) setTimeout(() => { if (!SUGG.input || document.activeElement !== SUGG.input) suggHide(); }, 150);
+});
+document.addEventListener('keydown', (ev) => {
+  if (!SUGG.input || ev.target !== SUGG.input || !SUGG.el || SUGG.el.hidden) return;
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    const n = SUGG.items.length;
+    SUGG.idx = ev.key === 'ArrowDown' ? (SUGG.idx + 1) % n : (SUGG.idx - 1 + n) % n;
+    suggMark();
+  } else if (ev.key === 'Enter' && SUGG.idx >= 0) { ev.preventDefault(); ev.stopPropagation(); suggPick(SUGG.idx); }
+  else if (ev.key === 'Escape') suggHide();
+}, true);
 // The activities the plan has running this week (as in the weekly log), by name.
 function weekActNames(project) {
   try {
@@ -4687,7 +4800,6 @@ function weekActNames(project) {
     return LC.weekList(sc.acts, sc.progress || [], d1, LC.weekMonday(todayIso())).map((x) => x.act.name).filter(Boolean);
   } catch (_) { return []; }
 }
-function areaListHtml(id, project) { return '<datalist id="' + id + '">' + areaOptions(project).map((a) => '<option value="' + esc(a) + '">').join('') + '</datalist>'; }
 // Engineers: a question or photos on a project he isn't on (Venky's question landed on House Brindhavan) asks first.
 function confirmOtherProject(project) {
   if (!S.engineer || (engMe().projects || []).indexOf(project) >= 0) return true;
@@ -4696,7 +4808,7 @@ function confirmOtherProject(project) {
 function registerFormHtml(f) {
   const causes = (S.queries && S.queries.causes) || [];
   return '<div class="dform"><div class="fld" style="flex:2 1 260px"><label for="regText">What was approved</label><input id="regText" data-reg="text" value="' + esc(f.text) + '"></div>' +
-    '<div class="fld"><label for="regArea">What / where</label><input id="regArea" data-reg="area" list="regAreaList" value="' + esc(f.area) + '" placeholder="Cabin 3" autocomplete="off">' + areaListHtml('regAreaList', f.project) + '</div>' +
+    '<div class="fld"><label for="regArea">What / where</label><input id="regArea" data-reg="area" data-sugg="' + esc(f.project) + '" value="' + esc(f.area) + '" placeholder="Cabin 3" autocomplete="off"></div>' +
     '<div class="fld"><label for="regCause">Why</label><select id="regCause" data-reg="cause">' + causes.map((c) => '<option' + (c === f.cause ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></div>' +
     '<div class="fld"><label for="regCost">Cost to us (optional)</label><input id="regCost" data-reg="cost" value="' + esc(f.cost) + '" inputmode="numeric" placeholder="₹3,000"></div>' +
     '<button type="button" class="btn-accent" data-act="reg-save">Save</button><button type="button" class="btn-outline" data-act="reg-cancel">Cancel</button>' +
@@ -5011,6 +5123,7 @@ function renderAll() {
       try { if (s0 !== null) el.setSelectionRange(s0, s1); } catch (_) { /* ignore */ }
     }
   }
+  suggAfterRedraw();
 }
 
 /* ---------- Schedule (release 2) ----------
