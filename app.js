@@ -4531,7 +4531,6 @@ function ownerSend(photoAsk) {
     if (c.outcome === 'change' && !changeText) { c.err = 'Type what was approved: it goes in the change register and starts the task.'; redraw(); return; }
     if (c.task && !taskNote.trim()) { c.err = 'Type what the task is.'; redraw(); return; }
     if (c.task && !c.taskWho) { c.err = 'Pick who the task is for.'; redraw(); return; }
-    if (c.outcome === 'change') rememberLabel(q.project, c.area);
     req = withAtt((ids) => api('closeQuery', [c.qid, {
       outcome: c.outcome, reply: text, cause: c.cause, cost: c.cost, area: c.area, changeText: changeText, answerTag: c.outcome === 'answered' ? c.answerTag || '' : '',
       photoIds: ids,
@@ -4663,7 +4662,6 @@ function engSendAsk() {
   const teamPerson = teamCode && ((S.site && S.site.people) || []).find((p) => p.code === teamCode);
   const which = a.other !== 'yes' ? '' : teamPerson ? teamPerson.name + (teamPerson.trade ? ' · ' + teamPerson.trade : '') : String(a.which || '').trim();
   if (!confirmOtherProject(proj)) return;
-  rememberLabel(proj, area);
   a.sending = true;
   renderEng();
   const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
@@ -4724,8 +4722,9 @@ function registerRowsHtml(all, showCost, editable, screen) {
 // capitals or spacing under the project's own spelling ("reception " → "Reception"). Owners tidy old labels with
 // Tidy labels. The list is the app's own (not the browser's), so it ranks the same on laptops and Android phones.
 function normLabel(s) { return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
-// The last label used on each project in this session (photos sent, a question, closing, the register): offered as
-// the FIRST suggestion, one tap to reuse. Never filled in by itself. Kept in memory only (a reload forgets it).
+// The last PHOTO label used on each project in this session (the batch label of the photos last sent): offered as the
+// FIRST suggestion in every What / where box, one tap to reuse. Never filled in by itself. Questions, closing and the
+// register don't change it. Kept in memory only (a reload forgets it).
 S.lastLabel = {};
 function rememberLabel(project, label) { const t = String(label || '').trim().replace(/\s+/g, ' '); if (project && t) S.lastLabel[project] = t; }
 function areaOptions(project) {
@@ -4838,7 +4837,6 @@ function saveRegisterEdit() {
   const f = S.regEdit;
   if (!f) return;
   if (!String(f.text || '').trim()) { f.err = 'Type what was approved.'; redraw(); return; }
-  rememberLabel(f.project, f.area);
   api('editRegister', [f.project, f.no, { text: f.text, area: f.area, cause: f.cause, cost: f.cost }, f.base]).then((res) => {
     setQueries(res); S.regEdit = null;
     snack(f.no + ' saved. The change is logged.');
