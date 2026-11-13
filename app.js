@@ -2871,6 +2871,7 @@ function sendDrafts(project) {
   if (!confirmOtherProject(project)) return;
   const batch = newId();
   S.sendingPhotos = true;
+  delete S.batchMem[project]; // the next batch starts with an empty "What / where"
   // New areas are offered straight away (Photos and Ask a question); the server keeps them for the project too.
   const host = S.engineer ? S.site : S.data;
   const all = host.areas || (host.areas = {}), known = all[project] || (all[project] = []);
@@ -3727,7 +3728,14 @@ function photoClick(act, el) {
   } else if (act === 'ph-reload') { if (S.photosFor) { if (!S.engineer) S.photosSeenWant = S.photosFor; S.thumbs = {}; THUMB_ASKED.clear(); loadPhotos(S.photosFor); } }
   else if (act === 'ph-send') sendDrafts(S.engineer ? S.engProject : (el.dataset.code || S.photosFor));
   else if (act === 'ph-ask') askAboutPhoto(el.dataset.id);
-  else if (act === 'draft-del') idbDel('drafts', el.dataset.id).then(loadDrafts).then(redraw);
+  else if (act === 'draft-del') {
+    const gone = S.drafts.find((d) => d.id === el.dataset.id);
+    idbDel('drafts', el.dataset.id).then(loadDrafts).then(() => {
+      // The last photo of a batch removed: the next batch starts with an empty "What / where".
+      if (gone && !S.drafts.some((d) => d.project === gone.project && !d.purpose)) delete S.batchMem[gone.project];
+      redraw();
+    });
+  }
   else if (act === 'out-drop') {
     Promise.all(OUT.items.filter((x) => x.error).map((x) => idbDel('outbox', x.id))).then(refreshOutbox);
   } else if (act === 'out-retry') { OUT.fails = 0; flushOutbox(); }
