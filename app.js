@@ -2871,7 +2871,9 @@ function sendDrafts(project) {
   if (!confirmOtherProject(project)) return;
   const batch = newId();
   S.sendingPhotos = true;
-  delete S.batchMem[project]; // the next batch starts with an empty "What / where"
+  // The batch's label becomes the first suggestion next time; the next batch still starts with an empty box.
+  rememberLabel(project, (drafts.find((d) => !d.own) || drafts[drafts.length - 1]).area);
+  delete S.batchMem[project];
   // New areas are offered straight away (Photos and Ask a question); the server keeps them for the project too.
   const host = S.engineer ? S.site : S.data;
   const all = host.areas || (host.areas = {}), known = all[project] || (all[project] = []);
@@ -4529,6 +4531,7 @@ function ownerSend(photoAsk) {
     if (c.outcome === 'change' && !changeText) { c.err = 'Type what was approved: it goes in the change register and starts the task.'; redraw(); return; }
     if (c.task && !taskNote.trim()) { c.err = 'Type what the task is.'; redraw(); return; }
     if (c.task && !c.taskWho) { c.err = 'Pick who the task is for.'; redraw(); return; }
+    if (c.outcome === 'change') rememberLabel(q.project, c.area);
     req = withAtt((ids) => api('closeQuery', [c.qid, {
       outcome: c.outcome, reply: text, cause: c.cause, cost: c.cost, area: c.area, changeText: changeText, answerTag: c.outcome === 'answered' ? c.answerTag || '' : '',
       photoIds: ids,
@@ -4660,6 +4663,7 @@ function engSendAsk() {
   const teamPerson = teamCode && ((S.site && S.site.people) || []).find((p) => p.code === teamCode);
   const which = a.other !== 'yes' ? '' : teamPerson ? teamPerson.name + (teamPerson.trade ? ' · ' + teamPerson.trade : '') : String(a.which || '').trim();
   if (!confirmOtherProject(proj)) return;
+  rememberLabel(proj, area);
   a.sending = true;
   renderEng();
   const qid = newId(), drafts = S.drafts.filter((d) => d.purpose === 'query' && d.project === proj);
@@ -4720,28 +4724,35 @@ function registerRowsHtml(all, showCost, editable, screen) {
 // capitals or spacing under the project's own spelling ("reception " → "Reception"). Owners tidy old labels with
 // Tidy labels. The list is the app's own (not the browser's), so it ranks the same on laptops and Android phones.
 function normLabel(s) { return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
+// The last label used on each project in this session (photos sent, a question, closing, the register): offered as
+// the FIRST suggestion, one tap to reuse. Never filled in by itself. Kept in memory only (a reload forgets it).
+S.lastLabel = {};
+function rememberLabel(project, label) { const t = String(label || '').trim().replace(/\s+/g, ' '); if (project && t) S.lastLabel[project] = t; }
 function areaOptions(project) {
   const used = (((S.data && S.data.areas) || (S.site && S.site.areas) || {})[project]) || [];
-  const out = [], seen = {};
-  const add = (a, act) => { const t = String(a || '').trim().replace(/\s+/g, ' '), k = normLabel(t); if (t && !seen[k]) { seen[k] = 1; out.push({ name: t, act: act }); } };
-  weekActNames(project).forEach((a) => add(a, true));
+  const out = [], seen = {}, acts = weekActNames(project), actSet = {};
+  acts.forEach((a) => { actSet[normLabel(a)] = 1; });
+  const add = (a, act, last) => { const t = String(a || '').trim().replace(/\s+/g, ' '), k = normLabel(t); if (t && !seen[k]) { seen[k] = 1; out.push({ name: t, act: act || !!actSet[k], last: !!last }); } };
+  if (S.lastLabel[project]) add(S.lastLabel[project], false, true);
+  acts.forEach((a) => add(a, true));
   used.forEach((a) => add(a, false));
   return out;
 }
-// Ranked: labels where a word STARTS with what was typed, then labels with it inside a word ("te": "Test C" before
-// "Site marking"); this week's activities first within each group. An exact match isn't offered again.
+// Ranked: the last label used first (when it matches at all), then labels where a word STARTS with what was typed,
+// then labels with it inside a word ("te": "Test C" before "Site marking"); this week's activities first within each
+// group. An exact match isn't offered again.
 function rankLabels(items, typed) {
   const t = normLabel(typed);
-  if (!t) return items.slice();
+  const last = items.filter((it) => it.last), rest = items.filter((it) => !it.last);
+  if (!t) return last.concat(rest);
   const re = new RegExp('(^|[\\s\\-/,.()&+_:;#])' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const g = [[], [], [], []];
-  items.forEach((it) => {
+  const g = [[], [], [], [], []];
+  last.concat(rest).forEach((it) => {
     const n = normLabel(it.name);
-    if (n === t) return;
-    if (re.test(n)) g[it.act ? 0 : 1].push(it);
-    else if (n.indexOf(t) >= 0) g[it.act ? 2 : 3].push(it);
+    if (n === t || n.indexOf(t) < 0) return;
+    g[it.last ? 0 : re.test(n) ? (it.act ? 1 : 2) : (it.act ? 3 : 4)].push(it);
   });
-  return g[0].concat(g[1], g[2], g[3]);
+  return g[0].concat(g[1], g[2], g[3], g[4]);
 }
 if (CONFIG.env === 'test') window.oftRank = rankLabels; // the automated checks test the ranking directly
 var SUGG = { el: null, input: null, items: [], idx: -1, picking: false }; // var: a redraw may run before this line
@@ -4762,7 +4773,7 @@ function suggShow(input) {
   SUGG.input = input; SUGG.items = items; SUGG.idx = -1;
   if (!items.length) { box.hidden = true; return; }
   box.innerHTML = items.map((it, i) => '<button type="button" role="option" data-sugg-pick="' + i + '">' + esc(it.name) +
-    (it.act ? '<span class="sugg-tag">this week</span>' : '') + '</button>').join('');
+    (it.last ? '<span class="sugg-tag last">last used</span>' : it.act ? '<span class="sugg-tag">this week</span>' : '') + '</button>').join('');
   const r = input.getBoundingClientRect(), w = Math.min(Math.max(r.width, 220), window.innerWidth - 16);
   box.style.width = w + 'px';
   box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + window.scrollX + 'px';
@@ -4827,6 +4838,7 @@ function saveRegisterEdit() {
   const f = S.regEdit;
   if (!f) return;
   if (!String(f.text || '').trim()) { f.err = 'Type what was approved.'; redraw(); return; }
+  rememberLabel(f.project, f.area);
   api('editRegister', [f.project, f.no, { text: f.text, area: f.area, cause: f.cause, cost: f.cost }, f.base]).then((res) => {
     setQueries(res); S.regEdit = null;
     snack(f.no + ' saved. The change is logged.');

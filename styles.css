@@ -1223,4 +1223,4 @@ body.pv-on { overflow: hidden }
 .tidy-hist h4 { margin: 6px 0 6px; font-size: 14px; }
 .tidy-hist ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid #EFEFEA; }
 .tidy-hist li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 0; border-bottom: 1px solid #EFEFEA; }
-.tidy-hist li > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.tidy-hist li > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }.sugg-tag.last { color: #5E4500; background: #FFEDB3; }
