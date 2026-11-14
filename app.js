@@ -4795,7 +4795,20 @@ function suggPick(i) {
   try { input.dispatchEvent(new Event('input', { bubbles: true })); } finally { SUGG.picking = false; }
 }
 function suggMark() { if (SUGG.el) Array.from(SUGG.el.children).forEach((b, i) => b.classList.toggle('on', i === SUGG.idx)); }
-document.addEventListener('focusin', (ev) => { if (ev.target.dataset && ev.target.dataset.sugg !== undefined) suggShow(ev.target); });
+// Chrome's own list of things typed before (laptop and Android) must never open over the app's list. Every box with
+// the app's suggestions (and the trade / drawing boxes with a fixed list) gets autocomplete off and a name Chrome has
+// never seen, so Chrome has nothing of its own to offer there. New boxes are marked the moment they appear.
+var SUGG_SEQ = 0;
+function suggNoBrowserList() {
+  document.querySelectorAll('input[data-sugg]:not([data-no-ac]), input[list]:not([data-no-ac])').forEach((el) => {
+    el.setAttribute('autocomplete', 'off');
+    el.setAttribute('name', 'oft-' + Date.now().toString(36) + '-' + (++SUGG_SEQ));
+    el.setAttribute('data-no-ac', '1');
+  });
+}
+suggNoBrowserList();
+new MutationObserver(suggNoBrowserList).observe(document.documentElement, { childList: true, subtree: true });
+document.addEventListener('focusin', (ev) => { suggNoBrowserList(); if (ev.target.dataset && ev.target.dataset.sugg !== undefined) suggShow(ev.target); });
 document.addEventListener('input', (ev) => { if (ev.target.dataset && ev.target.dataset.sugg !== undefined) suggShow(ev.target); }, true);
 document.addEventListener('focusout', (ev) => {
   if (ev.target === SUGG.input) setTimeout(() => { if (!SUGG.input || document.activeElement !== SUGG.input) suggHide(); }, 150);
