@@ -3188,7 +3188,8 @@ function tidyHtml(p) {
   return '<section class="card tidy" aria-labelledby="tidyH">' + head + last +
     '<p class="muted small">Tick the labels that mean the same thing, then type the one to keep. Their photos, questions and change register lines move to it, and the old names stop being suggested. Drive file names keep their old label.</p>' +
     '<div class="tidy-bar"><label>Find<input id="tidyFind" data-tidy="find" value="' + esc(T.find || '') + '" placeholder="e.g. Marking" autocomplete="off"></label>' +
-    '<button type="button" class="btn-outline" data-act="tidy-all"' + (shown.length ? '' : ' disabled') + '>Tick all ' + shown.length + ' shown</button>' +
+    // Tick all only for what Find narrowed down: with Find empty it would tick every label on the project.
+    (String(T.find || '').trim() && shown.length ? '<button type="button" class="btn-outline" data-act="tidy-all">Tick all ' + shown.length + ' shown</button>' : '') +
     (n ? '<button type="button" class="link-btn" data-act="tidy-none">Untick all</button>' : '') + '</div>' +
     (shown.length ? '<ul class="tidy-list">' + shown.map((l) => '<li><label><input type="checkbox" data-tidy-pick="' + esc(l.name) + '"' + (T.sel[l.name] ? ' checked' : '') + '>' +
       '<span class="tidy-name">' + esc(l.name) + '</span><span class="muted small">' + esc(tidyUse(l)) + '</span></label></li>').join('') + '</ul>'
@@ -3197,11 +3198,10 @@ function tidyHtml(p) {
     '<button type="button" class="btn-save" data-act="tidy-merge"' + (n && !T.busy ? '' : ' disabled') + '>' + (T.busy ? 'Merging…' : n ? 'Merge ' + plural(n, 'label', 'labels') : 'Tick labels to merge') + '</button></div>' +
     (T.err ? '<p class="err" role="alert">' + esc(T.err) + '</p>' : '') + tidyHistoryHtml(T) + '</section>';
 }
-// "5 photos, 1 question" (only what is there; "nothing yet" when nothing uses them).
+// Every count, zeros too: "6 photos, 2 questions, 2 changes".
 function moveText(m) {
   m = m || {};
-  const bits = [m.photos ? plural(m.photos, 'photo', 'photos') : '', m.queries ? plural(m.queries, 'question', 'questions') : '', m.changes ? plural(m.changes, 'change line', 'change lines') : ''].filter(Boolean);
-  return bits.length ? bits.join(', ') : 'nothing used them yet';
+  return [plural(m.photos || 0, 'photo', 'photos'), plural(m.queries || 0, 'question', 'questions'), plural(m.changes || 0, 'change', 'changes')].join(', ');
 }
 // "yyyy-mm-dd hh:mm" as "Fri 13 Nov, 9:12 pm".
 function when12(stamp) {
@@ -3257,7 +3257,7 @@ function tidyUndo(id) {
 function tidyClick(act, el) {
   if (act === 'tidy-open') { S.tidy = { project: el.dataset.code, labels: null, merges: [], sel: {}, find: '', to: '', busy: false, err: '', last: null }; S.phPick = null; tidyLoad(el.dataset.code); renderAll(); }
   else if (act === 'tidy-close') { S.tidy = null; renderAll(); }
-  else if (act === 'tidy-all') { tidyShown().forEach((l) => { S.tidy.sel[l.name] = true; }); tidyFillTo(); renderAll(); }
+  else if (act === 'tidy-all') { if (String(S.tidy.find || '').trim()) tidyShown().forEach((l) => { S.tidy.sel[l.name] = true; }); tidyFillTo(); renderAll(); }
   else if (act === 'tidy-none') { S.tidy.sel = {}; renderAll(); }
   else if (act === 'tidy-merge') tidyMerge();
   else if (act === 'tidy-undo') tidyUndo(el.dataset.id);
