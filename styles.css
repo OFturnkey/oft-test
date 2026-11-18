@@ -1294,4 +1294,4 @@ body.pv-on { overflow: hidden }
 .sc-missline { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 13px; color: #3A3C39; }
 .sc-missline i { flex: none; width: 22px; height: 12px; border-radius: 3px; }
 .sc-missline.miss i { background: repeating-linear-gradient(135deg, #FFFFFF 0 3px, #A7AAA2 3px 5px); border: 1px dashed #8A8C86; }
-.sc-missline.moved i { background: repeating-linear-gradient(45deg, #FFFFFF 0 3px, #C3CFE0 3px 5px); border: 1px dotted #6B83A6; }
+.sc-missline.moved i { background: repeating-linear-gradient(45deg, #FFFFFF 0 3px, #C3CFE0 3px 5px); border: 1px dotted #6B83A6; }.wl-gs i.wl-arrow { display: inline; }
