@@ -5885,7 +5885,8 @@ function weekLogHtml(p, sc) {
       const worse = r.gap > r.prevGap;
       arrow = '<span class="wl-arrow ' + (worse ? 'worse' : 'better') + '" title="' + esc('Last week: ' + wlGapText(r.prevGap).toLowerCase()) + '">' + (worse ? '▼' : '▲') + ' was ' + esc(wlGapText(r.prevGap).toLowerCase()) + '</span>';
     }
-    return '<tr class="wl-' + r.tone + '"><td class="wl-act"><span class="wl-name">' + esc((r.act.no ? r.act.no + ' · ' : '') + r.act.name) + '</span>' +
+    return '<tr class="wl-' + r.tone + '"><td class="wl-act"><span class="wl-name">' + esc((r.act.no ? r.act.no + ' · ' : '') + r.act.name) +
+      (r.act.clientScope ? ' <span class="wl-client">Client’s scope</span>' : '') + '</span>' +
       (r.g && r.g.reason ? '<span class="wl-why">' + esc(r.g.reason) + '</span>' : '') + '</td>' +
       '<td class="num">' + r.plan + '%</td><td class="num">' + (r.logged === null ? '—' : r.logged + '%') + '</td>' +
       '<td class="wl-gap"><b>' + esc(wlGapText(r.gap)) + '</b>' + arrow + '</td></tr>';
