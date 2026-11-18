@@ -5846,12 +5846,19 @@ function timeShort(stamp) {
  * Gap = points behind or ahead. Green on track or ahead, amber behind, red 25+ points behind (LC.BEHIND), grey not
  * logged. ▲ / ▼: the gap is smaller / bigger than the week before. ‹ › step through the ended weeks. */
 S.wlWeek = {};
+// The plan a week was logged against: the copy kept by the first import after that week ended (sc.plans, from the
+// server), else today's plan. { acts, until (that import's time) or '' }.
+function planFor(sc, monday) {
+  const end = addDays(monday, 6) + ' 23:59', h = (sc.plans || []).find((x) => x.until > end);
+  return h ? { acts: h.acts, until: h.until } : { acts: sc.acts, until: '' };
+}
 function wlRows(p, sc, monday) {
   const d1 = day1Of(p), by = LC.progressBy(sc.progress), prevMon = addDays(monday, -7), prevEnd = schedDayOf(p, addDays(monday, -1));
-  return LC.weekList(sc.acts, sc.progress, d1, monday).map((x) => {
+  const prevPlan = LC.planSpans(planFor(sc, prevMon).acts);
+  return LC.weekList(planFor(sc, monday).acts, sc.progress, d1, monday).map((x) => {
     const logged = x.now ? x.now.pct : null, gap = logged === null ? null : x.plan - logged;
     const prev = monday > LC.firstWeek(d1) ? (by[x.act.id] || []).find((g) => g.week === prevMon) : null;
-    const prevGap = prev ? LC.planPct(x.span, prevEnd) - prev.pct : null;
+    const prevGap = prev ? LC.planPct(prevPlan[x.act.id] || x.span, prevEnd) - prev.pct : null;
     const tone = gap === null ? 'none' : gap >= LC.BEHIND ? 'far' : gap > 0 ? 'behind' : gap < 0 ? 'ahead' : 'ok';
     return { act: x.act, plan: x.plan, logged: logged, gap: gap, prevGap: prevGap, tone: tone, g: x.now };
   }).sort((a, b) => (a.gap === null) - (b.gap === null) || (b.gap || 0) - (a.gap || 0) || a.act.sort - b.act.sort);
@@ -5886,7 +5893,9 @@ function weekLogHtml(p, sc) {
   return '<section class="card wl" aria-labelledby="wl-h-' + esc(p.code) + '"><div class="wl-head">' + nav(i - 1, '‹', 'Week before') +
     '<div class="wl-title"><h3 id="wl-h-' + esc(p.code) + '">' + esc(weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + LC.nice(sp.from) + '–' + LC.nice(sp.to)) + '</h3>' +
     '<span class="muted small">' + esc(who) + '</span></div>' + nav(i + 1, '›', 'Week after') + '</div>' +
-    (rows.length ? '<div class="wl-sum">' + esc(wlCountText(c)) + '</div><table class="wl-table"><thead><tr><th>Activity</th><th class="num">Should be at</th><th class="num">Logged</th><th>Gap</th></tr></thead><tbody>' + body + '</tbody></table>'
+    (rows.length ? '<div class="wl-sum">' + esc(wlCountText(c)) + '</div>' +
+      (planFor(sc, monday).until ? '<p class="muted small wl-plan">' + esc('“Should be at” is from the plan as it was that week, before the planner import of ' + when12(planFor(sc, monday).until) + '.') + '</p>' : '') +
+      '<table class="wl-table"><thead><tr><th>Activity</th><th class="num">Should be at</th><th class="num">Logged</th><th>Gap</th></tr></thead><tbody>' + body + '</tbody></table>'
       : '<p class="muted">Nothing planned that week.</p>') + '</section>';
 }
 // Phone Schedule: the week list, or the whole chart with a hint to turn the phone.

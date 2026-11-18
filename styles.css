@@ -1266,4 +1266,4 @@ body.pv-on { overflow: hidden }
 .sc-act, .sc-over { top: 24px; height: 4px; }
 .sc-legend .lg-fill { background: linear-gradient(to right, #6F8A45 0 55%, #DCE4CC 55%); border: 1px solid #9DB07A; }
 .sc-done.behind { color: #8A5A00; font-weight: 600; }
-.sc-done.far { color: #A3271B; font-weight: 600; }
+.sc-done.far { color: #A3271B; font-weight: 600; }.wl-plan { margin: 0 0 6px; }
