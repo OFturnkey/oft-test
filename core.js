@@ -460,20 +460,38 @@ function LedgerCore() {
   }
   function lastBefore(list, monday) { var v = null; (list || []).forEach(function (p) { if (p.week < monday) v = p; }); return v; }
   // The list for one week's log: what the plan has running that week, plus anything started and not finished.
+  // From the week of ASK_ALL_FROM on (her rule, 18 Nov), also every activity that should have started by that Sunday
+  // and isn't logged as finished (a bar that ended unfinished, or one a planner import moved earlier), so nothing due
+  // drops off the list. Weeks before it keep the list they were logged with.
   // Each: { act, plan (% expected by the week's Sunday), before (last week's value or null), now (this week's, if logged) }.
+  var ASK_ALL_FROM = '2026-11-16';
   function weekList(acts, progress, day1, monday, sundayOff) {
     var spans = planSpans(acts), by = progressBy(progress), span = weekSpan(day1, monday);
-    var a0 = planDay(day1, span.from, sundayOff), a1 = planDay(day1, span.to, sundayOff);
+    var a0 = planDay(day1, span.from, sundayOff), a1 = planDay(day1, span.to, sundayOff), askAll = monday >= ASK_ALL_FROM;
     var out = [];
     acts.forEach(function (a) {
       if (!loggable(a, spans)) return;
       var s = spans[a.id], before = lastBefore(by[a.id], monday);
       var now = (by[a.id] || []).filter(function (p) { return p.week === monday; })[0] || null;
       if (before && before.pct === 100 && !now) return;
-      var running = s.start <= a1 && s.end >= a0, going = before && before.pct > 0 && before.pct < 100;
-      if (running || going || now) out.push({ act: a, span: s, plan: planPct(s, a1), before: before, now: now });
+      var running = s.start <= a1 && s.end >= a0, going = before && before.pct > 0 && before.pct < 100, due = askAll && s.start <= a1;
+      if (running || going || due || now) out.push({ act: a, span: s, plan: planPct(s, a1), before: before, now: now });
     });
     return out;
+  }
+  // A week's log in one line, our work and the client's apart (her line, 18 Nov): "Our scope: 0 behind · Client’s
+  // scope: 4 behind (up to 100 points)". rows: [{ gap (points behind the plan, below 0 ahead, null not logged), client }].
+  function scopeText(rows) {
+    var part = function (label, list) {
+      var n = function (f) { return list.filter(f).length; }, worst = 0;
+      list.forEach(function (r) { if (r.gap !== null && r.gap > worst) worst = r.gap; });
+      var behind = n(function (r) { return r.gap !== null && r.gap > 0; }), ahead = n(function (r) { return r.gap !== null && r.gap < 0; });
+      var ok = n(function (r) { return r.gap === 0; }), none = n(function (r) { return r.gap === null; });
+      return label + ': ' + behind + ' behind' + (behind ? ' (up to ' + worst + ' points)' : '') +
+        [ahead ? ahead + ' ahead' : '', ok ? ok + ' on track' : '', none ? none + ' not logged' : ''].filter(Boolean).map(function (x) { return ', ' + x; }).join('');
+    };
+    var ours = rows.filter(function (r) { return !r.client; }), theirs = rows.filter(function (r) { return r.client; });
+    return part('Our scope', ours) + (theirs.length ? ' · ' + part('Client’s scope', theirs) : '');
   }
   // Started in the first week logged above 0%, finished in the week it reached 100% (week by week).
   function actualOf(list, day1) {
@@ -626,7 +644,7 @@ function LedgerCore() {
   }
 
   return {
-    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, needsWhy: needsWhy, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
+    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, needsWhy: needsWhy, ASK_ALL_FROM: ASK_ALL_FROM, scopeText: scopeText, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
     weekMonday: weekMonday, firstWeek: firstWeek, weekNo: weekNo, weekSpan: weekSpan, planSpans: planSpans, planPct: planPct,
     loggable: loggable, progressBy: progressBy, weekList: weekList, actualOf: actualOf, parsePlanner: parsePlanner, schedMatch: schedMatch, schedBase: schedBase,
     DWG_TYPES: DWG_TYPES, parseDwgName: parseDwgName, dwgPrefixIs: dwgPrefixIs,

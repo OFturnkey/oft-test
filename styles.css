@@ -1268,3 +1268,30 @@ body.pv-on { overflow: hidden }
 .sc-done.behind { color: #8A5A00; font-weight: 600; }
 .sc-done.far { color: #A3271B; font-weight: 600; }.wl-plan { margin: 0 0 6px; }
 .wl-client { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: #E3E9F2; color: #1F3A5F; font-size: 11px; font-weight: 600; vertical-align: 1px; white-space: nowrap; }
+/* Weekly log view, round 2 (her answers 18 Nov): our scope / client's scope groups, Copy for client, phone gap. */
+.wl-grp-h th { padding: 12px 8px 4px; text-align: left; font-size: 13px; font-weight: 700; color: #1C1E1D; background: none; }
+.wl-grp-h th .wl-grp-t { margin-right: 10px; }
+.wl-copy { min-height: 36px; padding: 0 12px; font-size: 13px; font-weight: 500; vertical-align: middle; }
+.wl-gs { display: none; }
+.wl-gs b { display: block; font-weight: 700; white-space: nowrap; }
+.wl-gs i { font-style: normal; font-size: 12px; }
+.wl-gs small { display: block; font-size: 11px; color: #5E605C; white-space: nowrap; }
+.wl-ok .wl-gs b, .wl-ahead .wl-gs b { color: #455B28; }
+.wl-behind .wl-gs b { color: #8A5A00; }
+.wl-far .wl-gs b { color: #A3271B; }
+.wl-gs i.worse { color: #A3271B; }
+.wl-gs i.better { color: #455B28; }
+@media (max-width: 699px) {
+  .wl-gl { display: none; }
+  .wl-gs { display: block; }
+  .wl-gap { white-space: nowrap; }
+  .wl-table th.num { white-space: normal; }
+}
+/* Chart: a stretch that wasn't in that week's log list (a later import moved the plan): lighter, dotted. */
+.sc-moved { position: absolute; top: 7px; height: 16px; box-sizing: border-box; border-radius: 3px; pointer-events: none;
+  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.7) 0 4px, rgba(31, 58, 95, 0.18) 4px 6px); border: 1px dotted #6B83A6; }
+.sc-legend .lg-moved { background: repeating-linear-gradient(45deg, #FFFFFF 0 3px, #C3CFE0 3px 5px); border: 1px dotted #6B83A6; }
+.sc-missline { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 13px; color: #3A3C39; }
+.sc-missline i { flex: none; width: 22px; height: 12px; border-radius: 3px; }
+.sc-missline.miss i { background: repeating-linear-gradient(135deg, #FFFFFF 0 3px, #A7AAA2 3px 5px); border: 1px dashed #8A8C86; }
+.sc-missline.moved i { background: repeating-linear-gradient(45deg, #FFFFFF 0 3px, #C3CFE0 3px 5px); border: 1px dotted #6B83A6; }

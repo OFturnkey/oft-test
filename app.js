@@ -5270,18 +5270,11 @@ function schedChartHtml(p, sc, compact) {
   // Section names typed in capitals read as ordinary words: "IN-SITU - FRAME WORK" → "In-situ - frame work".
   const secName = (n) => (n === n.toUpperCase() ? n.charAt(0) + n.slice(1).toLowerCase() : n);
   const sel = S.schedSel[p.code];
-  // Weeks that have ended (they can be logged), as plan days: a planned row with nothing logged for one of them shows
-  // that stretch hatched, so a missed log stands out. The week still running is never hatched.
-  const ended = d1 ? endedWeeks(p).map((m) => ({ m: m, a: schedDayOf(p, LC.weekSpan(d1, m).from), b: schedDayOf(p, addDays(m, 6)) })) : [];
-  const missed = (a, s) => {
-    if (!s || !LC.loggable(a, spans)) return [];
-    const list = by[a.id] || [], out = [];
-    ended.forEach((w) => {
-      if (s.start > w.b || s.end < w.a || list.some((g) => g.week === w.m || (g.week < w.m && g.pct === 100))) return;
-      out.push(w);
-    });
-    return out;
-  };
+  // Ended weeks with nothing logged where the bar is: hatched, so a missed log stands out ("Not logged"), or lighter
+  // when that week's log list never had it ("Plan moved": a later planner import put it there). missedWeeks.
+  const ended = d1 ? endedWeeks(p) : [];
+  const missed = (a, s) => missedWeeks(p, sc, a, s, spans, by);
+  let anyMoved = false;
   let sec = null, rows = '';
   acts.forEach((a) => {
     if (a.kind === 'section') {
@@ -5307,7 +5300,7 @@ function schedChartHtml(p, sc, compact) {
     const lgap = logs && d1 ? LC.planPct(s, schedDayOf(p, addDays(last.week, 6))) - last.pct : 0;
     const doneTone = lgap >= LC.BEHIND ? ' far' : lgap > 0 ? ' behind' : '';
     const miss = missed(a, s);
-    miss.forEach((w) => { track += bar(Math.max(s.start, w.a), Math.min(s.end, w.b), 'sc-unlog'); });
+    miss.forEach((w) => { if (w.kind === 'moved') anyMoved = true; track += bar(Math.max(s.start, w.a), Math.min(s.end, w.b), w.kind === 'moved' ? 'sc-moved' : 'sc-unlog'); });
     // The team (agency) beside its bar: after it, or before it when the bar ends near the right edge.
     const tm = actTeam(a, sc.acts), team = tm.name, inh = tm.from ? ' team-inh' : '';
     // Phones: the team sits under the name (it stays put while the bars scroll); laptops: beside the bar.
@@ -5324,7 +5317,7 @@ function schedChartHtml(p, sc, compact) {
       actText = act.finish ? ' · done ' + LC.nice(act.finish) : ' · ' + act.pct + '% by ' + LC.nice(addDays(act.week, 6));
     }
     const tip = a.name + (s ? ' · plan ' + dayRange(p, s.start, s.end) : ' · no days yet') + actText +
-      (miss.length ? ' · not logged: ' + miss.map((w) => 'Wk ' + LC.weekNo(d1, w.m)).join(', ') : '');
+      miss.map((w) => ' · ' + missedWhy(p, sc, w)).join('');
     rows += '<button type="button" class="sc-row lv' + a.level + (sel === a.id ? ' on' : '') + (a.status === 'gone' ? ' gone' : '') + '" data-act="sc-pick" data-code="' + esc(p.code) +
       '" data-id="' + esc(a.id) + '" title="' + esc(tip) + '"><span class="sc-no">' + esc(a.no) + '</span><span class="sc-name" title="' + esc(a.name + (team ? ' · ' + team : '')) + '">' +
       (compact ? '<span class="sc-n1">' + esc(a.name) + '</span>' + (team ? '<span class="sc-n2' + inh + '">' + esc(team) + '</span>' : '') : esc(a.name)) + '</span>' +
@@ -5333,7 +5326,7 @@ function schedChartHtml(p, sc, compact) {
     if (sel === a.id) rows += '<div class="sc-inline">' + schedDetailHtml(p, sc, a.id) + '</div>';
   });
   const legend = '<span class="sc-legend"><span><i class="lg-plan"></i>Plan</span><span><i class="lg-fill"></i>Done</span><span><i class="lg-act"></i>Actual</span><span><i class="lg-over"></i>Over plan</span>' +
-    (ended.length ? '<span><i class="lg-unlog"></i>Not logged</span>' : '') +
+    (ended.length ? '<span><i class="lg-unlog"></i>Not logged</span>' : '') + (anyMoved ? '<span><i class="lg-moved"></i>Plan moved</span>' : '') +
     (compact ? '' : '<span><i class="lg-buy"></i>Purchase</span>') + '</span>';
   return '<div class="sc-scroll" data-key="' + esc(p.code) + '" data-n="' + N + '"><div class="sc-chart' + (compact ? ' compact' : '') + '" style="--sc-wk:' + grad + '">' +
     '<div class="sc-row sc-head"><span class="sc-no"></span><span class="sc-name">' + legend + '</span>' + (compact ? '' : '<span class="sc-team">Team</span>') +
@@ -5396,6 +5389,8 @@ function schedDetailHtml(p, sc, id) {
     (a.status === 'gone' ? '<p class="warn-line">Not in the planner any more. Kept because progress was logged for it.</p>' : '') +
     '<dl class="pdl"><dt>Plan</dt><dd>' + esc(plan) + '</dd>' + (actual ? '<dt>Done</dt><dd>' + esc(actual) + '</dd>' : '') + (a.note ? '<dt>Remark</dt><dd>' + esc(a.note) + ' <span class="muted small">(planner)</span></dd>' : '') + '</dl>' +
     (weeks ? '<table class="sc-weeks"><thead><tr><th>Week</th><th class="num">Plan</th><th class="num">Done</th><th>Why behind</th><th>By</th></tr></thead><tbody>' + weeks + '</tbody></table>' : '') +
+    // The striped stretches on its bar, each said in words: his miss, or a plan that moved after the week.
+    missedWeeks(p, sc, a, s, spans, LC.progressBy(sc.progress)).map((w) => '<p class="sc-missline ' + w.kind + '"><i></i>' + esc(missedWhy(p, sc, w)) + '</p>').join('') +
     // Owners: where what they saw and what was logged are 25+ points apart.
     (S.engineer || !isOwner() ? '' : list.map((g) => { const t = seenGap(sc, g); return t ? '<p class="warn-line an-gap">' + esc(weekLabel(p, g.week).replace(/ · .*/, '') + ': ' + t) + '</p>' : ''; }).join('')) +
     actHistoryHtml(p, sc, a) + (isOwner() && !S.engineer ? actOwnerHtml(p, sc, a, spans) : '') + '</div>';
@@ -5638,7 +5633,7 @@ function logFormHtml(p, monday, forEngineer, only) {
         '<div class="sl-chips"><button type="button" class="sl-chip" data-act="sc-lower-fix" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" data-v="' + x.before.pct + '">Fix it</button>' +
         '<button type="button" class="sl-chip' + (x.redone ? ' on' : '') + '" data-act="sc-lower-ok" data-code="' + c + '" data-week="' + w + '" data-id="' + id + '" aria-pressed="' + x.redone + '">Yes, it was redone</button></div></div>' : '') + '</div>';
   }).join('');
-  const add = r.others.length ? '<label class="sl-add"><span class="sr-only">Add an activity</span><select data-sladd="' + c + '" data-week="' + w + '"><option value="">+ Add an activity done this week</option>' +
+  const add = r.others.length ? '<label class="sl-add"><span class="sr-only">Add an activity</span><select data-sladd="' + c + '" data-week="' + w + '"><option value="">+ Add an activity (started early, or not on this list)</option>' +
     r.others.map((a) => '<option value="' + esc(a.id) + '">' + esc((a.no ? a.no + ' · ' : '') + a.name) + '</option>').join('') + '</select></label>' : '';
   // The button names the project and week, so the wrong site can't be saved by mistake.
   const sp = LC.weekSpan(day1Of(p), monday);
@@ -5816,11 +5811,10 @@ function logSummaryFor(code) {
   const rows = sc.progress.filter((g) => g.week === monday && byId[g.activity] && roleOfEmail(g.by) === 'site_engineer');
   if (!rows.length) return null;
   const last = rows.slice().sort((x, y) => (x.at < y.at ? 1 : -1))[0], who = firstName(last.by);
-  const c = wlCounts(wlRows(p, sc, monday));
   // Logged values 25+ points from what an owner saw on site that week (the flag she tested on 7 Nov stays).
   const gaps = rows.map((g) => { const t = seenGap(sc, g); return t ? '<span class="ls-line far ls-gap">' + esc(byId[g.activity].name + ': ' + t) + '</span>' : ''; }).join('');
   return { box: 'new', kind: 'Log', cls: 'blue', fresh: true, who: who,
-    title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + timeShort(last.at) + ' · ' + wlCountText(c),
+    title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + timeShort(last.at) + ' · ' + wlScope(wlRows(p, sc, monday)),
     subHtml: '<span class="ls"><span class="ls-line">' + esc((p.name || code) + ' · plan against what was logged, most behind first') + '</span>' + gaps + '</span>',
     short: '', act: 'sc-logsum', id: code, week: monday, label: 'Open', canAct: true };
 }
@@ -5852,6 +5846,40 @@ function planFor(sc, monday) {
   const end = addDays(monday, 6) + ' 23:59', h = (sc.plans || []).find((x) => x.until > end);
   return h ? { acts: h.acts, until: h.until } : { acts: sc.acts, until: '' };
 }
+// That week's log list as it was (the plan in force when the week ended): ids, and when that plan was replaced.
+const ASKED = new WeakMap();
+function askedIn(p, sc, monday) {
+  let c = ASKED.get(sc);
+  if (!c) { c = {}; ASKED.set(sc, c); }
+  if (!c[monday]) {
+    const pf = planFor(sc, monday);
+    c[monday] = { ids: new Set(LC.weekList(pf.acts, sc.progress, day1Of(p), monday).map((x) => x.act.id)), until: pf.until, spans: LC.planSpans(pf.acts) };
+  }
+  return c[monday];
+}
+// A row's ended weeks with nothing logged where its bar is (and not finished before): { m, a, b (plan days), kind,
+// until, old }. kind 'miss': it was in that week's log list and wasn't filled in; 'moved': it wasn't in the list (a
+// later planner import put it in that week), so not the engineer's miss.
+function missedWeeks(p, sc, a, s, spans, by) {
+  const d1 = day1Of(p);
+  if (!d1 || !s || !LC.loggable(a, spans)) return [];
+  const list = by[a.id] || [];
+  return endedWeeks(p).map((m) => ({ m: m, a: schedDayOf(p, LC.weekSpan(d1, m).from), b: schedDayOf(p, addDays(m, 6)) }))
+    .filter((w) => !(s.start > w.b || s.end < w.a || list.some((g) => g.week === w.m || (g.week < w.m && g.pct === 100))))
+    .map((w) => {
+      const k = askedIn(p, sc, w.m);
+      return Object.assign(w, { kind: k.ids.has(a.id) ? 'miss' : 'moved', until: k.until, old: k.spans[a.id] || null });
+    });
+}
+// "In Venky’s Week 1 list, not logged." / "Not in Venky’s Week 2 list; the planner import on Wed 18 Nov moved it earlier."
+function missedWhy(p, sc, w) {
+  const logger = sc.progress.filter((g) => g.week === w.m && roleOfEmail(g.by) === 'site_engineer').map((g) => g.by)[0];
+  const whose = S.engineer ? 'your' : (logger ? firstName(logger) : engNamesOf(p.code) || 'the site engineer') + '’s';
+  const wk = 'Week ' + LC.weekNo(day1Of(p), w.m);
+  if (w.kind === 'miss') return 'In ' + whose + ' ' + wk + ' list, not logged.';
+  const how = !w.old ? 'added it' : w.old.start > w.b ? 'moved it earlier' : 'changed its dates';
+  return 'Not in ' + whose + ' ' + wk + ' list; ' + (w.until ? 'the planner import on ' + niceDay(w.until.slice(0, 10)) + ' ' + how + '.' : 'the plan didn’t have it that week.');
+}
 function wlRows(p, sc, monday) {
   const d1 = day1Of(p), by = LC.progressBy(sc.progress), prevMon = addDays(monday, -7), prevEnd = schedDayOf(p, addDays(monday, -1));
   const prevPlan = LC.planSpans(planFor(sc, prevMon).acts);
@@ -5863,40 +5891,68 @@ function wlRows(p, sc, monday) {
     return { act: x.act, plan: x.plan, logged: logged, gap: gap, prevGap: prevGap, tone: tone, g: x.now };
   }).sort((a, b) => (a.gap === null) - (b.gap === null) || (b.gap || 0) - (a.gap || 0) || a.act.sort - b.act.sort);
 }
-function wlCounts(rows) {
-  const n = (f) => rows.filter(f).length;
-  return { behind: n((r) => r.tone === 'behind' || r.tone === 'far'), ahead: n((r) => r.tone === 'ahead'), ok: n((r) => r.tone === 'ok'), none: n((r) => r.tone === 'none') };
-}
-function wlCountText(c) { return c.behind + ' behind, ' + c.ahead + ' ahead, ' + c.ok + ' on track' + (c.none ? ', ' + c.none + ' not logged' : ''); }
+// "Our scope: 0 behind · Client’s scope: 4 behind (up to 100 points)" (LC.scopeText, the same as the 12:00 alert).
+function wlScope(rows) { return LC.scopeText(rows.map((r) => ({ gap: r.gap, client: !!r.act.clientScope }))); }
 function wlGapText(gap) { return gap === null ? 'Not logged' : gap > 0 ? gap + ' behind' : gap < 0 ? -gap + ' ahead' : 'On track'; }
+// Phones: "−93" behind, "+10" ahead, "0" on track, "—" not logged.
+function wlGapShort(gap) { return gap === null ? '—' : gap > 0 ? '−' + gap : gap < 0 ? '+' + -gap : '0'; }
+function wlWeekOf(p) {
+  const weeks = endedWeeks(p);
+  return weeks.indexOf(S.wlWeek[p.code]) >= 0 ? S.wlWeek[p.code] : weeks[weeks.length - 1];
+}
+// "Copy for client" (owners): the client's-scope rows behind plan that week, plain text for WhatsApp or email.
+function wlClientText(p, sc, monday) {
+  const rows = wlRows(p, sc, monday).filter((r) => r.act.clientScope && r.gap !== null && r.gap > 0), sp = LC.weekSpan(day1Of(p), monday);
+  if (!rows.length) return '';
+  return (p.name || p.code) + ' · your scope of work, behind plan by ' + niceDay(sp.to) + ' (' + weekLabel(p, monday).replace(/ · .*/, '') + ', ' + LC.nice(sp.from) + '–' + LC.nice(sp.to) + ')\n' +
+    rows.map((r) => '• ' + r.act.name + ': planned ' + r.plan + '%, done ' + r.logged + '% · waiting on your team').join('\n');
+}
+function copyText(text, then) {
+  S.lastCopy = text; // the test app's checks read it (oftDebug)
+  const fallback = () => {
+    const t = document.createElement('textarea');
+    t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    t.remove();
+    then(ok);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => then(true), fallback);
+  else fallback();
+}
 function weekLogHtml(p, sc) {
   const weeks = endedWeeks(p);
   if (!weeks.length || !sc.acts.length) return '';
-  let monday = S.wlWeek[p.code];
-  if (weeks.indexOf(monday) < 0) monday = weeks[weeks.length - 1];
-  const i = weeks.indexOf(monday), rows = wlRows(p, sc, monday), c = wlCounts(rows), sp = LC.weekSpan(day1Of(p), monday);
+  const monday = wlWeekOf(p);
+  const i = weeks.indexOf(monday), rows = wlRows(p, sc, monday), sp = LC.weekSpan(day1Of(p), monday);
   const saved = rows.filter((r) => r.g).map((r) => r.g).sort((x, y) => (x.at < y.at ? 1 : -1));
   const who = saved.length ? firstName(saved[0].by) + ' logged it ' + when12(saved[0].at) : 'Not logged yet';
-  const nav = (j, txt, lbl) => (j >= 0 && j < weeks.length ? '<button type="button" class="btn-outline wl-nav" data-act="sc-wlweek"data-code="' + esc(p.code) + '" data-week="' + esc(weeks[j]) + '" aria-label="' + esc(lbl) + '">' + txt + '</button>'
+  const nav = (j, txt, lbl) => (j >= 0 && j < weeks.length ? '<button type="button" class="btn-outline wl-nav" data-act="sc-wlweek" data-code="' + esc(p.code) + '" data-week="' + esc(weeks[j]) + '" aria-label="' + esc(lbl) + '">' + txt + '</button>'
     : '<span class="wl-nav wl-nav-off" aria-hidden="true">' + txt + '</span>');
-  const body = rows.map((r) => {
-    let arrow = '';
-    if (r.gap !== null && r.prevGap !== null && r.gap !== r.prevGap) {
-      const worse = r.gap > r.prevGap;
-      arrow = '<span class="wl-arrow ' + (worse ? 'worse' : 'better') + '" title="' + esc('Last week: ' + wlGapText(r.prevGap).toLowerCase()) + '">' + (worse ? '▼' : '▲') + ' was ' + esc(wlGapText(r.prevGap).toLowerCase()) + '</span>';
-    }
-    return '<tr class="wl-' + r.tone + '"><td class="wl-act"><span class="wl-name">' + esc((r.act.no ? r.act.no + ' · ' : '') + r.act.name) +
-      (r.act.clientScope ? ' <span class="wl-client">Client’s scope</span>' : '') + '</span>' +
+  // The gap, two ways: laptops "93 behind / ▼ was 47 behind"; phones "−93 ▼ / was −47" (CSS shows one).
+  const row = (r) => {
+    const moved = r.gap !== null && r.prevGap !== null && r.gap !== r.prevGap, worse = moved && r.gap > r.prevGap;
+    const arrow = moved ? '<span class="wl-arrow ' + (worse ? 'worse' : 'better') + '">' + (worse ? '▼' : '▲') + ' was ' + esc(wlGapText(r.prevGap).toLowerCase()) + '</span>' : '';
+    const short = '<span class="wl-gs"><b>' + esc(wlGapShort(r.gap)) + (moved ? ' <i class="wl-arrow ' + (worse ? 'worse' : 'better') + '">' + (worse ? '▼' : '▲') + '</i>' : '') + '</b>' +
+      (r.prevGap !== null && r.gap !== null ? '<small>was ' + esc(wlGapShort(r.prevGap)) + '</small>' : '') + '</span>';
+    return '<tr class="wl-' + r.tone + '" data-id="' + esc(r.act.id) + '"><td class="wl-act"><span class="wl-name">' + esc((r.act.no ? r.act.no + ' · ' : '') + r.act.name) + '</span>' +
       (r.g && r.g.reason ? '<span class="wl-why">' + esc(r.g.reason) + '</span>' : '') + '</td>' +
       '<td class="num">' + r.plan + '%</td><td class="num">' + (r.logged === null ? '—' : r.logged + '%') + '</td>' +
-      '<td class="wl-gap"><b>' + esc(wlGapText(r.gap)) + '</b>' + arrow + '</td></tr>';
-  }).join('');
+      '<td class="wl-gap"><span class="wl-gl"><b>' + esc(wlGapText(r.gap)) + '</b>' + arrow + '</span>' + short + '</td></tr>';
+  };
+  // Two groups, our work then the client's, each most behind first (wlRows' order). "Copy for client": owners only.
+  const ours = rows.filter((r) => !r.act.clientScope), theirs = rows.filter((r) => r.act.clientScope);
+  const copy = isOwner() && !S.engineer && wlClientText(p, sc, monday)
+    ? '<button type="button" class="btn-outline wl-copy" data-act="sc-wlcopy" data-code="' + esc(p.code) + '" data-week="' + esc(monday) + '">Copy for client</button>' : '';
+  const group = (label, list, extra) => (list.length ? '<tbody class="wl-grp"><tr class="wl-grp-h"><th colspan="4"><span class="wl-grp-t">' + esc(label) + '</span>' + (extra || '') + '</th></tr>' + list.map(row).join('') + '</tbody>' : '');
   return '<section class="card wl" aria-labelledby="wl-h-' + esc(p.code) + '"><div class="wl-head">' + nav(i - 1, '‹', 'Week before') +
     '<div class="wl-title"><h3 id="wl-h-' + esc(p.code) + '">' + esc(weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + LC.nice(sp.from) + '–' + LC.nice(sp.to)) + '</h3>' +
     '<span class="muted small">' + esc(who) + '</span></div>' + nav(i + 1, '›', 'Week after') + '</div>' +
-    (rows.length ? '<div class="wl-sum">' + esc(wlCountText(c)) + '</div>' +
+    (rows.length ? '<div class="wl-sum">' + esc(wlScope(rows)) + '</div>' +
       (planFor(sc, monday).until ? '<p class="muted small wl-plan">' + esc('“Should be at” is from the plan as it was that week, before the planner import of ' + when12(planFor(sc, monday).until) + '.') + '</p>' : '') +
-      '<table class="wl-table"><thead><tr><th>Activity</th><th class="num">Should be at</th><th class="num">Logged</th><th>Gap</th></tr></thead><tbody>' + body + '</tbody></table>'
+      '<table class="wl-table"><thead><tr><th>Activity</th><th class="num">Should be at</th><th class="num">Logged</th><th>Gap</th></tr></thead>' +
+      group('Our scope', ours) + group('Client’s scope', theirs, copy) + '</table>'
       : '<p class="muted">Nothing planned that week.</p>') + '</section>';
 }
 // Phone Schedule: the week list, or the whole chart with a hint to turn the phone.
@@ -5925,6 +5981,11 @@ function schedClick(act, el) {
   if (act === 'sc-fold') { const k = code + '|' + id; S.schedFold[k] = !S.schedFold[k]; }
   else if (act === 'sc-pick') S.schedSel[code] = S.schedSel[code] === id ? '' : id;
   else if (act === 'sc-wlweek') S.wlWeek[code] = week;
+  else if (act === 'sc-wlcopy') {
+    const p = schedProj(code), text = p ? wlClientText(p, schedOf(code), week) : '';
+    if (text) copyText(text, (ok) => snack(ok ? 'Copied for the client: ' + plural(text.split('\n').length - 1, 'activity', 'activities') + '. Paste it into WhatsApp or email.' : 'Couldn’t copy here. Select the text and copy it yourself.'));
+    return true;
+  }
   else if (act === 'sc-step') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); delete st.rework[id]; st.err = ''; }
   else if (act === 'sc-why') { const st = logState(code, week); st.why[id] = el.dataset.v; st.err = ''; }
   else if (act === 'sc-lower-fix') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); st.rework[id] = false; st.err = ''; }
@@ -5980,7 +6041,7 @@ document.addEventListener('click', (ev) => {
 const CLICKS = [];
 if (CONFIG.env === 'test') window.oftLogDue = engLogDue; // the "not red before 10:00" check calls it with a test time
 if (CONFIG.env === 'test') window.oftDebug =() => ({ clicks: CLICKS.slice(-10), inflight: JSON.parse(JSON.stringify(INFLIGHT)), qc: S.qc && { qid: S.qc.qid, outcome: S.qc.outcome, task: S.qc.task, sending: S.qc.sending, err: S.qc.err }, qSel: S.qSel,
-  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab, vis: document.visibilityState, dwgStamp: S.dwgStamp, dwgKeys: S.dwgKeys, poll: POLLDBG, autoSaving: autoSaving });
+  lastInvite: S.lastInvite || '', tab: S.tab, projTab: S.projTab, engTab: S.engTab, vis: document.visibilityState, dwgStamp: S.dwgStamp, dwgKeys: S.dwgKeys, poll: POLLDBG, autoSaving: autoSaving, lastCopy: S.lastCopy || '' });
 function onAct(el) {
   const act = el.dataset.act, id = el.dataset.id, kind = el.dataset.kind, code = el.dataset.code;
   // Buttons on the opening / sign-in screens work before any ledger data has loaded.
