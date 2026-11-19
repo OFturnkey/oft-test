@@ -481,17 +481,26 @@ function LedgerCore() {
   }
   // A week's log in one line, our work and the client's apart (her line, 18 Nov): "Our scope: 0 behind · Client’s
   // scope: 4 behind (up to 100 points)". rows: [{ gap (points behind the plan, below 0 ahead, null not logged), client }].
-  function scopeText(rows) {
+  // Each scope apart, for lines one under another (her layout, 19 Nov): [{ label, text, tone }]. Nothing behind and
+  // nothing unlogged: "all on track ✓" (also when none of our work was in that week's list). tone: ok, behind (amber),
+  // far (25+ points behind, red), none (only unlogged rows). The client's part only when the client has rows.
+  function scopeParts(rows) {
     var part = function (label, list) {
       var n = function (f) { return list.filter(f).length; }, worst = 0;
       list.forEach(function (r) { if (r.gap !== null && r.gap > worst) worst = r.gap; });
       var behind = n(function (r) { return r.gap !== null && r.gap > 0; }), ahead = n(function (r) { return r.gap !== null && r.gap < 0; });
       var ok = n(function (r) { return r.gap === 0; }), none = n(function (r) { return r.gap === null; });
-      return label + ': ' + behind + ' behind' + (behind ? ' (up to ' + worst + ' points)' : '') +
-        [ahead ? ahead + ' ahead' : '', ok ? ok + ' on track' : '', none ? none + ' not logged' : ''].filter(Boolean).map(function (x) { return ', ' + x; }).join('');
+      if (!behind && !none) return { label: label, text: 'all on track ✓' + (ahead ? ' (' + ahead + ' ahead)' : ''), tone: 'ok' };
+      return { label: label, tone: worst >= BEHIND ? 'far' : behind ? 'behind' : 'none',
+        text: [behind ? behind + ' behind (up to ' + worst + ' points)' : '', ahead ? ahead + ' ahead' : '', ok ? ok + ' on track' : '', none ? none + ' not logged' : ''].filter(Boolean).join(', ') };
     };
     var ours = rows.filter(function (r) { return !r.client; }), theirs = rows.filter(function (r) { return r.client; });
-    return part('Our scope', ours) + (theirs.length ? ' · ' + part('Client’s scope', theirs) : '');
+    return [part('Our scope', ours)].concat(theirs.length ? [part('Client’s scope', theirs)] : []);
+  }
+  // The same in one line ("Our scope: all on track ✓ · Client’s scope: 4 behind (up to 100 points)"), or with sep
+  // ('\n') one under another.
+  function scopeText(rows, sep) {
+    return scopeParts(rows).map(function (p) { return p.label + ': ' + p.text; }).join(sep || ' · ');
   }
   // Started in the first week logged above 0%, finished in the week it reached 100% (week by week).
   function actualOf(list, day1) {
@@ -644,7 +653,7 @@ function LedgerCore() {
   }
 
   return {
-    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, needsWhy: needsWhy, ASK_ALL_FROM: ASK_ALL_FROM, scopeText: scopeText, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
+    REASONS: REASONS, STEPS: STEPS, BEHIND: BEHIND, needsWhy: needsWhy, ASK_ALL_FROM: ASK_ALL_FROM, scopeText: scopeText, scopeParts: scopeParts, addDaysIso: addDaysIso, dayDiff: dayDiff, planDate: planDate, planDay: planDay,
     weekMonday: weekMonday, firstWeek: firstWeek, weekNo: weekNo, weekSpan: weekSpan, planSpans: planSpans, planPct: planPct,
     loggable: loggable, progressBy: progressBy, weekList: weekList, actualOf: actualOf, parsePlanner: parsePlanner, schedMatch: schedMatch, schedBase: schedBase,
     DWG_TYPES: DWG_TYPES, parseDwgName: parseDwgName, dwgPrefixIs: dwgPrefixIs,

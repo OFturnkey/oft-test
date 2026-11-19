@@ -89,13 +89,14 @@ function myCode() { const u = ((S.data && S.data.users) || []).find((x) => x.ema
 // Whose task: the person it was given to (@), else whoever added it.
 function isMine(e) { return e.assignee ? !!myCode() && e.assignee === myCode() : e.added_by === (S.data && S.data.user); }
 // Whose task, in words, as on the phone: "for Engineer Test · from Shruthi". Nothing on my own task.
-function taskWho(e) {
+function taskWhoText(e) {
   const owner = e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by);
   const bits = [];
   if (!isMine(e)) bits.push('for ' + owner);
   if (e.assignee && e.added_by && userName(e.added_by) !== owner) bits.push('from ' + userName(e.added_by));
-  return bits.length ? '<span class="for-tag">' + esc(bits.join(' · ')) + '</span>' : '';
+  return bits.join(' · ');
 }
+function taskWho(e) { const t = taskWhoText(e); return t ? '<span class="for-tag">' + esc(t) + '</span>' : ''; }
 function withWho(e) { const w = taskWho(e); return w ? ' · ' + w : ''; }
 function inFilter(e) { return !S.project || e.project === S.project; }
 function norm(s) { return String(s || '').trim().split(/\s+/).filter(Boolean).join(' '); }
@@ -4130,15 +4131,16 @@ function workText(q, lower) {
   return (q.workOnHold ? (lower ? 'work on hold' : 'Work on hold') : (lower ? 'work continuing' : 'Work continuing')) + (team ? ' · ' + team : '');
 }
 // What happened last on a query: "New photo from Venky · 2 min ago".
-function lastText(q) {
+// noAge: without " · 22 days ago" (Needs you, when its status line already says "waiting 22 days").
+function lastText(q, noAge) {
   const l = q.last;
-  if (!l) return nameOfEmail(q.askedBy) + ' · ' + ageText(q.askedAt) + ' ago';
+  if (!l) return nameOfEmail(q.askedBy) + (noAge ? '' : ' · ' + ageText(q.askedAt) + ' ago');
   const me = l.by === (S.me && S.me.email), who = me ? 'you' : nameOfEmail(l.by);
   const t = l.what === 'photo' ? (me ? 'You sent a photo' : 'New photo from ' + who) : l.what === 'reply' ? (me ? 'You replied' : 'Reply from ' + who)
     : l.what === 'suggest' ? 'Suggested answer from ' + who + (q.status !== 'closed' && !S.engineer && isOwner() ? ' · needs your OK' : '')
     : l.what === 'photo_request' ? (me ? 'You' : who) + ' asked for a clearer photo'
     : l.what === 'closed' ? (q.outcome === 'change' ? 'Change approved by ' : 'Answered by ') + who : 'Asked by ' + who;
-  return t + ' · ' + ageText(l.at) + ' ago';
+  return t + (noAge ? '' : ' · ' + ageText(l.at) + ' ago');
 }
 // Something happened on it (by someone else) since I last opened it: highlighted until opened. "Seen" is a
 // fingerprint of the thread as it was when opened (latest time, number of messages, state).
@@ -4969,14 +4971,16 @@ function needsFor(code) {
   const ourMove = (q) => { const r = roleOfEmail(lastMover(q)); return r !== 'owner' && r !== 'associate'; };
   const open = qs.filter((q) => q.status === 'open' && ourMove(q) && !myWaitingSuggestion(q)).sort(byLastActivity);
   open.filter((q) => q.workOnHold).concat(open.filter((q) => !q.workOnHold)).forEach((q) => {
-    const sug = isOwner() ? pendingSuggestion(q) : null;
+    const sug = isOwner() ? pendingSuggestion(q) : null, wd = waitDays(q);
+    const team = q.otherTeam === 'yes' ? 'needs ' + teamLabel(q) : q.otherTeam === 'not_sure' ? 'another team? not sure' : '';
     out.push({
       // Box: on hold (red, with a blue dot while new) · new and unseen · waiting.
       box: q.workOnHold ? 'hold' : isNewQ(q) ? 'new' : 'late',
-      kind: q.workOnHold ? 'On hold' : 'Query', cls: q.workOnHold ? 'bad' : 'wait', red: q.workOnHold || !!waitDays(q), title: q.text, fresh: isNewQ(q), photo: q.lastPhotoId, who: firstName(q.askedBy),
-      subHtml: esc([lastText(q), q.area].filter(Boolean).join(' · ')) + ' · ' + workHtml(q) + (waitDays(q) ? ' · ' + waitRed(q) : '') +
-        (q.status === 'waiting_photo' ? ' · waiting for a new photo' : ''),
-      short: [q.workOnHold ? 'work on hold' : '', waitDays(q) ? 'waiting ' + plural(waitDays(q), 'day', 'days') : ''].filter(Boolean).join(' · '),
+      kind: q.workOnHold ? 'On hold' : 'Query', cls: q.workOnHold ? 'bad' : 'wait', title: q.text, fresh: isNewQ(q), photo: q.lastPhotoId, who: firstName(q.askedBy),
+      // "22 days ago" is left out when the status line says "waiting 22 days" (her rule, 19 Nov: no repeats).
+      ctx: [lastText(q, !!wd), q.area, q.workOnHold ? '' : 'work continuing', team],
+      status: [[q.workOnHold ? { t: 'work on hold', tone: 'red' } : null, wd ? { t: 'waiting ' + plural(wd, 'day', 'days'), tone: 'red' } : null,
+        q.status === 'waiting_photo' ? { t: 'waiting for a new photo', tone: 'amber' } : null]],
       buttonsHtml: sug ? '<div class="review"><span class="small">' + esc(firstName(sug.by)) + ' suggests: “' + esc(sug.text.slice(0, 140)) + '”</span>' +
         '<button type="button" class="btn-accent" data-act="qc-approve" data-id="' + esc(sug.id) + '">Approve ✓</button></div>' : '',
       act: 'needs-query', id: q.id, label: 'Reply', canAct: canWrite() || isAssociate()
@@ -4985,28 +4989,30 @@ function needsFor(code) {
   // An associate's "Answered": owners check it, until one of them opens it.
   if (isOwner()) qs.filter((q) => q.status === 'closed' && q.outcome === 'answered' && isNewQ(q) && roleOfEmail(q.closedBy) === 'associate').forEach((q) => {
     const m = S.queries.messages.filter((x) => x.queryId === q.id && x.by === q.closedBy && x.text).pop();
-    out.push({ box: 'new', kind: 'Check', cls: 'blue', title: q.text, fresh: true, who: firstName(q.closedBy), short: 'answered by ' + firstName(q.closedBy),
-      subHtml: esc('Answered by ' + nameOfEmail(q.closedBy) + (m ? ': ' + m.text.slice(0, 140) : '')), act: 'needs-query', id: q.id, label: 'Open', canAct: true });
+    out.push({ box: 'new', kind: 'Check', cls: 'blue', title: q.text, fresh: true, who: firstName(q.closedBy),
+      ctx: ['Answered by ' + nameOfEmail(q.closedBy), q.area], noteHtml: m ? '<span class="done-note">' + esc(m.text.slice(0, 140)) + '</span>' : '',
+      act: 'needs-query', id: q.id, label: 'Open', canAct: true });
   });
   // Work done with a photo, waiting for an owner's "Looks good" or "Redo".
   if (isOwner()) live().filter((e) => e.project === code && needsReview(e)).forEach((e) => {
     const ph = String(e.done_photo || '').split(',').filter(Boolean)[0];
     out.push({ box: 'new', kind: 'Check', cls: 'blue', title: LC.taskTitle(S.dir, e), src: e.source, photo: ph, id: e.id, who: e.assignee ? LC.teamName(S.dir, e.assignee).split(/\s+/)[0] : '',
-      short: e.review === 'redo' ? 'redone' : 'done, with photo', fresh: true,
-      subHtml: esc((e.review === 'redo' ? 'Redone' : 'Done, with photo') + doneByText(e)) + doneNoteHtml(e), buttonsHtml: reviewHtml(e) });
+      fresh: true, ctx: [doneByText(e).replace(/^ · /, '')], status: [[{ t: e.review === 'redo' ? 'Redone' : 'Done, with photo', tone: 'blue' }]],
+      noteHtml: doneNoteHtml(e), buttonsHtml: reviewHtml(e) });
   });
   // New site photos from others since this person last opened the project's Site photos (clears per person).
   const np = newPhotosOf(code);
   if (np) out.push({ box: 'new', kind: 'Photos', cls: 'blue', title: plural(np.n, 'new site photo', 'new site photos'), photo: np.lastId, who: (np.by[0] || '').split(/\s+/)[0], fresh: true,
     // "from Venky 2, Engineer Test 2": who sent how many, so the number adds up.
-    subHtml: esc(['from ' + np.by.map((b) => b + (np.byN && np.by.length > 1 ? ' ' + np.byN[b] : '')).join(', '), fewNames(np.areas), ageText(np.last) + ' ago'].filter(Boolean).join(' · ')),
-    short: fewNames(np.areas), act: 'np-open', id: code, label: 'Open', canAct: true });
+    ctx: ['from ' + np.by.map((b) => b + (np.byN && np.by.length > 1 ? ' ' + np.byN[b] : '')).join(', '), fewNames(np.areas), ageText(np.last) + ' ago'],
+    act: 'np-open', id: code, label: 'Open', canAct: true });
   // No site photos for 3 days (the 7:00 alert's rule: a started site in execution with a site engineer).
   const p = projInfo(code), last = S.data && S.data.lastPhotoAt && S.data.lastPhotoAt[code];
   if (p && p.stage === 'execution' && (p.day1 || (p.plannedStart && p.plannedStart <= t)) && engineersOf(code).length &&
       (!last || Math.round((LC.fromIso(t) - LC.fromIso(last.slice(0, 10))) / 86400000) >= 3)) {
-    out.push({ box: 'late', kind: 'Photos', cls: 'wait', title: last ? 'No site photos from ' + (p.name || code) + ' for ' + plural(Math.round((LC.fromIso(t) - LC.fromIso(last.slice(0, 10))) / 86400000), 'day', 'days') : 'No site photos from ' + (p.name || code) + ' yet',
-      subHtml: esc(last ? 'Last photos ' + niceDay(last.slice(0, 10)) : 'Ask the site engineer for photos'), short: '', who: '' });
+    // The project is on the line under the title (no "Nest" twice).
+    out.push({ box: 'late', kind: 'Photos', cls: 'wait', title: last ? 'No site photos for ' + plural(Math.round((LC.fromIso(t) - LC.fromIso(last.slice(0, 10))) / 86400000), 'day', 'days') : 'No site photos yet',
+      ctx: [last ? 'last photos ' + niceDay(last.slice(0, 10)) : 'ask the site engineer for photos'], who: '' });
   }
   // The engineer's weekly log, once it's in: one line until an owner opens it.
   const ls = isOwner() || isAssociate() ? logSummaryFor(code) : null;
@@ -5015,8 +5021,9 @@ function needsFor(code) {
   live().filter((e) => isTask(e) && !e.done && e.project === code && e.due <= t).sort(byDue).forEach((e) => out.push({
     box: e.due < t ? 'late' : 'today',
     kind: e.due < t ? 'Late' : 'Today', cls: e.due < t ? 'bad' : 'wait', title: LC.taskTitle(S.dir, e), src: e.source, fresh: isNewTask(e, myCode()),
-    who: isMine(e) ? 'You' : (e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by)).split(/\s+/)[0], short: LC.dueText(e.due, t).text,
-    subHtml: (taskWho(e) || 'Yours') + redoLine(e), dueHtml: dueChip(e), act: 'done', id: e.id, label: 'Done', canAct: canTick(e)
+    who: isMine(e) ? 'You' : (e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by)).split(/\s+/)[0],
+    ctx: [taskWhoText(e) || 'yours'], status: [[{ t: LC.dueText(e.due, t).text, tone: e.due < t ? 'red' : 'amber' }]],
+    noteHtml: redoLine(e), act: 'done', id: e.id, label: 'Done', canAct: canTick(e)
   }));
   return out;
 }
@@ -5030,24 +5037,32 @@ function lastMover(q) {
   });
   return by;
 }
-// One Needs you line (project overview and Today): tag, what, latest activity or whose task, where it came from.
-function needLineHtml(n, btnAct, code, all) {
+/* Every Needs you / Today card, laptop and phone (her rule, 19 Nov): line 1 the title (bold); line 2 the context in
+ * grey (project · who · label); then the status on its own line, red or amber (work on hold · waiting 22 days, late…).
+ * n.ctx: plain strings; n.status: lines, each a list of { t, tone: red | amber | green | blue, cls }. */
+function needCtxText(n) { return [n.code ? projName(n.code) : ''].concat(n.ctx || []).filter(Boolean).join(' · '); }
+function needStatusHtml(n) {
+  return (n.status || []).map((l) => (l || []).filter(Boolean)).filter((l) => l.length).map((l) => '<span class="need-st">' +
+    l.map((s) => '<span class="' + (s.tone === 'red' ? 'hold-txt' : 'st-' + (s.tone || 'plain')) + (s.cls ? ' ' + s.cls : '') + '">' + esc(s.t) + '</span>').join(' · ') + '</span>').join('');
+}
+function needLineHtml(n, btnAct, code) {
   if (n.photo) wantThumb(n.photo);
+  const ctx = needCtxText(n);
   return '<div class="need' + (n.fresh ? ' new' : '') + (n.buttonsHtml ? ' need-check' : '') + '"><span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span>' +
     (n.photo ? '<button type="button" class="need-thumb" data-act="lightbox" data-id="' + esc(n.photo) + '">' + (S.thumbs[n.photo] ? '<img src="' + S.thumbs[n.photo] + '" alt="">' : '<span class="ph-wait"></span>') + '</button>' : '') +
-    '<span class="need-text"><b>' + (n.fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(n.title) + '</b><span class="muted small">' + (all && n.code ? '<b class="need-proj">' + esc(projName(n.code)) + '</b> · ' : '') +
-    n.subHtml + (n.dueHtml ? ' · ' + n.dueHtml : '') + '</span>' +
+    '<span class="need-text"><b>' + (n.fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(n.title) + '</b>' +
+    (ctx ? '<span class="muted small need-ctx">' + esc(ctx) + '</span>' : '') + needStatusHtml(n) + (n.noteHtml || '') +
     (n.src ? taskSourceHtml(n.src, n.id) : '') + (n.buttonsHtml || '') + '</span>' +
     (n.canAct ? '<button type="button" class="btn-outline" data-act="' + btnAct + '" data-id="' + esc(n.id) + '"' + (code ? ' data-code="' + esc(code) + '"' : '') + '>' + esc(n.label) + '</button>' : '') + '</div>';
 }
-// Phone Today: one compact row per item (tag, short text, who on the right; red stays red), the whole row opens it.
-function needRowHtml(n, code, all) {
+// Phone Today: the same three lines in a row that opens it when tapped.
+function needRowHtml(n, code) {
   const act = n.act === 'needs-query' ? 'today-query' : n.act === 'np-open' || n.act === 'sc-logsum' ? n.act : 'proj-tab';
   const id = n.act === 'needs-query' ? n.id : code;
-  const short = [all ? projName(code) : '', n.short].filter(Boolean).join(' · ');
+  const ctx = needCtxText(n);
   return '<button type="button" class="need-row' + (n.fresh ? ' new' : '') + '" data-act="' + act + '" data-id="' + esc(id) + '" data-code="' + esc(code) + '">' +
     '<span class="need-tag tag-' + n.cls + '">' + esc(n.kind) + '</span><span class="nr-text"><b>' + (n.fresh ? '<span class="new-dot" aria-label="New"></span>' : '') + esc(n.title) + '</b>' +
-    (short ? '<span class="small' + (n.cls === 'bad' || n.red ? ' hold-txt' : ' muted') + '">' + esc(short) + '</span>' : '') + '</span><span class="nr-who">' + esc(n.who || '') + '</span></button>';
+    (ctx ? '<span class="small muted need-ctx">' + esc(ctx) + '</span>' : '') + needStatusHtml(n) + '</span></button>';
 }
 // Needs you (a project) and Today (all projects): five boxes, in this order, each item in one box only. Empty boxes are
 // one line; Done recently stays closed ("Done recently · 4") until opened.
@@ -5058,9 +5073,9 @@ function needsHtml(code) {
 // opts.all: items from every project (each says which); opts.compact: phone rows.
 function boxesHtml(items, done, opts) {
   const line = (n) => {
-    if (opts.compact) return needRowHtml(n, n.code, opts.all);
+    if (opts.compact) return needRowHtml(n, n.code);
     const btn = opts.all ? (n.act === 'needs-query' ? 'today-query' : n.act === 'np-open' || n.act === 'sc-logsum' ? n.act : 'done') : n.act;
-    return needLineHtml(n, btn, opts.all ? n.code : '', opts.all);
+    return needLineHtml(n, btn, opts.all ? n.code : '');
   };
   const boxes = NEED_BOXES.map((b) => {
     const list = items.filter((n) => n.box === b[0]);
@@ -5078,7 +5093,11 @@ S.doneOpen = {};
 // When a task was ticked: its done_at (since 27 Oct), else when it last changed.
 function doneAt(e) { return e.done_at || e.updated_at || ''; }
 function stampMs(st) { const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(st || '')); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : 0; }
-function whenText(st) { const day = String(st).slice(0, 10); return (day === todayIso() ? 'today' : niceDay(day)) + ' ' + String(st).slice(11, 16); }
+// "today 5:45 pm", "Mon 16 Nov 10:50 am" (12-hour, her rule).
+function whenText(st) {
+  const s = String(st || ''), day = s.slice(0, 10), h = Number(s.slice(11, 13));
+  return (day === todayIso() ? 'today' : niceDay(day)) + (s.length >= 16 ? ' ' + ((h % 12) || 12) + ':' + s.slice(14, 16) + ' ' + (h < 12 ? 'am' : 'pm') : '');
+}
 // " · Venky · today 17:45"
 function doneByText(e) {
   const who = e.done_by ? userName(e.done_by) : e.assignee ? LC.teamName(S.dir, e.assignee) : userName(e.added_by);
@@ -5096,8 +5115,8 @@ function doneLineHtml(e, all) {
   if (ph) wantThumb(ph);
   return '<div class="need need-done"><span class="need-tag tag-ok">Done</span>' +
     (ph ? '<button type="button" class="need-thumb" data-act="lightbox" data-id="' + esc(ph) + '">' + (S.thumbs[ph] ? '<img src="' + S.thumbs[ph] + '" alt="">' : '<span class="ph-wait"></span>') + '</button>' : '') +
-    '<span class="need-text"><b>' + esc(LC.taskTitle(S.dir, e)) + '</b><span class="muted small">' + (all ? esc(projName(e.project)) + ' · ' : '') +
-    esc((e.done_photo ? 'Done, with photo' : 'Done, no photo') + doneByText(e)) + '</span>' + doneNoteHtml(e) +
+    '<span class="need-text"><b>' + esc(LC.taskTitle(S.dir, e)) + '</b><span class="muted small need-ctx">' + esc(projName(e.project) + doneByText(e)) + '</span>' +
+    needStatusHtml({ status: [[{ t: e.done_photo ? 'Done, with photo' : 'Done, no photo', tone: 'green' }]] }) + doneNoteHtml(e) +
     taskSourceHtml(e.source, e.id) + reviewHtml(e, true) + '</span></div>';
 }
 // Associates: their suggested answers still waiting for Shruthi or Savan.
@@ -5107,8 +5126,8 @@ function waitingMineHtml(code) {
   if (!list.length) return '';
   return '<section class="card needs"><div class="sec-head"><h3>Waiting for an answer <span class="muted">· ' + list.length + '</span></h3>' +
     '<span class="sec-note">Your suggested answers, waiting for Shruthi or Savan</span></div>' +
-    list.map((q) => '<div class="need"><span class="need-tag tag-wait">Suggested</span><span class="need-text"><b>' + esc(q.text) + '</b><span class="muted small">' +
-      esc([q.area, 'waiting ' + ageText(q.last.at)].filter(Boolean).join(' · ')) + '</span></span>' +
+    list.map((q) => '<div class="need"><span class="need-tag tag-wait">Suggested</span><span class="need-text"><b>' + esc(q.text) + '</b><span class="muted small need-ctx">' +
+      esc([projName(q.project), q.area].filter(Boolean).join(' · ')) + '</span>' + needStatusHtml({ status: [[{ t: 'waiting ' + ageText(q.last.at), tone: 'amber' }]] }) + '</span>' +
       '<button type="button" class="btn-outline" data-act="today-query" data-id="' + esc(q.id) + '" data-code="' + esc(q.project) + '">Open</button></div>').join('') + '</section>';
 }
 function hasNeeds(code) { return needsFor(code).length > 0; }
@@ -5435,8 +5454,9 @@ function projectScheduleHtml(p) {
   if (S.imp && S.imp.project === p.code) return importPreviewHtml(p);
   const sc = schedOf(p.code), d1 = day1Of(p), owner = isOwner(), li = sc.lastImport;
   const today = d1 ? schedDayOf(p, todayIso()) : null;
-  const info = li ? (li.undone ? 'Draft plan · the last import (' + (li.file || 'Excel') + ') was undone' :
-    'Draft plan · imported ' + niceDay(li.at.slice(0, 10)) + ' ' + li.at.slice(11, 16) + ' by ' + firstName(li.by) + (li.file ? ' from ' + li.file : '')) : '';
+  // "Current plan": the one in use ("Draft" comes back with plan versions in B1). 12-hour time.
+  const info = li ? (li.undone ? 'Current plan · the last import (' + (li.file || 'Excel') + ') was undone' :
+    'Current plan · imported ' + when12(li.at) + ' by ' + firstName(li.by) + (li.file ? ' from ' + li.file : '')) : '';
   const start = !d1 ? 'No start date yet: set the planned start in Directory → Projects → Stage & dates to see dates.'
     : 'Day 1 = ' + niceY(d1) + (p.day1 ? ' (site start)' : ' (planned start)') + (today >= 1 ? ' · today is Day ' + today + ', Week ' + LC.weekNo(d1, todayIso())
       : ' · the site starts in ' + plural(1 - today, 'day', 'days') + '; the green “Today” line shows on the chart from then');
@@ -5452,8 +5472,7 @@ function projectScheduleHtml(p) {
     (btns ? '<div class="sc-btns">' + btns + '</div>' : '') + '</div>';
   const logPanel = owner && S.ownerLog && S.ownerLog.code === p.code ? ownerLogHtml(p) : '';
   if (!sc.acts.length) return top + '<section class="card"><p class="empty">No plan yet.' + (owner ? ' Import the planner Excel: you’ll see every row with its days and dates before anything is saved.' : ' Shruthi or Savan imports it.') + '</p></section>';
-  return top + logPanel + weekLogHtml(p, sc) + (phone.matches ? schedPhoneHtml(p, sc) : schedChartHtml(p, sc, false)) + '<p class="muted small sc-foot">Tap a row to see its plan and each week’s progress.' +
-    (owner ? ' The plan is a draft until you call the planner final (that saves v2, in the next step).' : '') + '</p>';
+  return top + logPanel + weekLogHtml(p, sc) + (phone.matches ? schedPhoneHtml(p, sc) : schedChartHtml(p, sc, false)) + '<p class="muted small sc-foot">Tap a row to see its plan and each week’s progress.</p>';
 }
 
 /* Import: the file is read here, matched against the saved plan (LedgerCore.schedMatch, the same rule the server
@@ -5812,11 +5831,13 @@ function logSummaryFor(code) {
   if (!rows.length) return null;
   const last = rows.slice().sort((x, y) => (x.at < y.at ? 1 : -1))[0], who = firstName(last.by);
   // Logged values 25+ points from what an owner saw on site that week (the flag she tested on 7 Nov stays).
-  const gaps = rows.map((g) => { const t = seenGap(sc, g); return t ? '<span class="ls-line far ls-gap">' + esc(byId[g.activity].name + ': ' + t) + '</span>' : ''; }).join('');
+  const gaps = rows.map((g) => { const t = seenGap(sc, g); return t ? [{ t: byId[g.activity].name + ': ' + t, tone: 'red', cls: 'ls-gap' }] : null; }).filter(Boolean);
+  // Her layout (19 Nov): who and when; the project; then each scope on its own line, coloured.
   return { box: 'new', kind: 'Log', cls: 'blue', fresh: true, who: who,
-    title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + timeShort(last.at) + ' · ' + wlScope(wlRows(p, sc, monday)),
-    subHtml: '<span class="ls"><span class="ls-line">' + esc((p.name || code) + ' · plan against what was logged, most behind first') + '</span>' + gaps + '</span>',
-    short: '', act: 'sc-logsum', id: code, week: monday, label: 'Open', canAct: true };
+    title: who + ' logged ' + weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + timeShort(last.at),
+    ctx: ['plan against what was logged, most behind first'],
+    status: wlScopeParts(wlRows(p, sc, monday)).map((x) => [{ t: x.label + ': ' + x.text, tone: SCOPE_TONE[x.tone], cls: 'ls-scope' }]).concat(gaps),
+    act: 'sc-logsum', id: code, week: monday, label: 'Open', canAct: true };
 }
 // Opens the project's Schedule on that week's table (phones: the upright view, where the table sits on top).
 function openLogSummary(code, week) {
@@ -5893,6 +5914,9 @@ function wlRows(p, sc, monday) {
 }
 // "Our scope: 0 behind · Client’s scope: 4 behind (up to 100 points)" (LC.scopeText, the same as the 12:00 alert).
 function wlScope(rows) { return LC.scopeText(rows.map((r) => ({ gap: r.gap, client: !!r.act.clientScope }))); }
+// Each scope on its own line (her layout, 19 Nov): [{ label, text, tone: ok | behind | far | none }].
+function wlScopeParts(rows) { return LC.scopeParts(rows.map((r) => ({ gap: r.gap, client: !!r.act.clientScope }))); }
+const SCOPE_TONE = { ok: 'green', behind: 'amber', far: 'red', none: '' };
 function wlGapText(gap) { return gap === null ? 'Not logged' : gap > 0 ? gap + ' behind' : gap < 0 ? -gap + ' ahead' : 'On track'; }
 // Phones: "−93" behind, "+10" ahead, "0" on track, "—" not logged.
 function wlGapShort(gap) { return gap === null ? '—' : gap > 0 ? '−' + gap : gap < 0 ? '+' + -gap : '0'; }
@@ -5900,12 +5924,35 @@ function wlWeekOf(p) {
   const weeks = endedWeeks(p);
   return weeks.indexOf(S.wlWeek[p.code]) >= 0 ? S.wlWeek[p.code] : weeks[weeks.length - 1];
 }
-// "Copy for client" (owners): the client's-scope rows behind plan that week, plain text for WhatsApp or email.
+/* "Copy for client" (owners): a message about the client's-scope rows behind plan that week, shown in a box she can
+ * change before copying (her text, 19 Nov). Client name from Projects (else the site name), the date of that week's
+ * log, the handover date (the target set in Projects, else the plan's last day), and the sender's own first name.
+ * "Electrical & Networking - counduiting" reads "Electrical & Networking (counduiting)"; spelling stays as planned. */
 function wlClientText(p, sc, monday) {
-  const rows = wlRows(p, sc, monday).filter((r) => r.act.clientScope && r.gap !== null && r.gap > 0), sp = LC.weekSpan(day1Of(p), monday);
+  const all = wlRows(p, sc, monday), rows = all.filter((r) => r.act.clientScope && r.gap !== null && r.gap > 0);
   if (!rows.length) return '';
-  return (p.name || p.code) + ' · your scope of work, behind plan by ' + niceDay(sp.to) + ' (' + weekLabel(p, monday).replace(/ · .*/, '') + ', ' + LC.nice(sp.from) + '–' + LC.nice(sp.to) + ')\n' +
-    rows.map((r) => '• ' + r.act.name + ': planned ' + r.plan + '%, done ' + r.logged + '% · waiting on your team').join('\n');
+  const at = all.filter((r) => r.g).map((r) => r.g.at).sort().pop(), asOf = at ? at.slice(0, 10) : addDays(monday, 7);
+  const last = p.handoverDay || planLastDay(p.code), hand = last && day1Of(p) ? dayDate(p, last) : '';
+  const nm = (n) => String(n).replace(/\s+-\s+(.+)$/, ' ($1)');
+  const should = (v) => (v >= 100 ? 'should be complete' : 'should be ' + v + '% done'), done = (v) => (v > 0 ? v + '% done' : 'not started');
+  const me = (S.me && firstName(S.me.email)) || 'O F Turnkey';
+  return ['Hi ' + (p.client || p.name || p.code) + ' team,',
+    'Quick update on ' + (p.name || p.code) + ', as of ' + niceDay(asOf) + '.',
+    'These items in your team’s scope are behind plan:']
+    .concat(rows.map((r) => '• ' + nm(r.act.name) + ': ' + should(r.plan) + ', ' + done(r.logged)))
+    .concat(['Our next stages depend on these. Could you share expected start and finish dates for each' + (hand ? ', so we can keep the handover on ' + niceDay(hand) : '') + '?',
+      'Regards,', me + ' · O F Turnkey']).join('\n');
+}
+S.wlCopy = null; // { code, week, text }: the "Copy for client" box while open
+function wlCopyBoxHtml(p, monday) {
+  const b = S.wlCopy;
+  if (!b || b.code !== p.code || b.week !== monday) return '';
+  const n = b.text.split('\n').length;
+  return '<div class="wl-copybox"><label for="wlCopyText">Message for the client · change anything before you copy it</label>' +
+    '<textarea id="wlCopyText" data-wlcopy="1" rows="' + Math.min(16, n + 1) + '" maxlength="4000">' + esc(b.text) + '</textarea>' +
+    '<div class="an-btns"><button type="button" class="btn-accent" data-act="sc-wlcopy-go" data-code="' + esc(p.code) + '" data-week="' + esc(monday) + '">Copy</button>' +
+    '<button type="button" class="btn-outline" data-act="sc-wlcopy-cancel" data-code="' + esc(p.code) + '">Cancel</button></div>' +
+    '<span class="muted small">Nothing is sent from here: paste it into WhatsApp or email yourself.</span></div>';
 }
 function copyText(text, then) {
   S.lastCopy = text; // the test app's checks read it (oftDebug)
@@ -5942,17 +5989,23 @@ function weekLogHtml(p, sc) {
       '<td class="wl-gap"><span class="wl-gl"><b>' + esc(wlGapText(r.gap)) + '</b>' + arrow + '</span>' + short + '</td></tr>';
   };
   // Two groups, our work then the client's, each most behind first (wlRows' order). "Copy for client": owners only.
+  // Our scope always shows (her rule, 19 Nov): with none of our work in that week's list, "All on track ✓".
   const ours = rows.filter((r) => !r.act.clientScope), theirs = rows.filter((r) => r.act.clientScope);
   const copy = isOwner() && !S.engineer && wlClientText(p, sc, monday)
     ? '<button type="button" class="btn-outline wl-copy" data-act="sc-wlcopy" data-code="' + esc(p.code) + '" data-week="' + esc(monday) + '">Copy for client</button>' : '';
-  const group = (label, list, extra) => (list.length ? '<tbody class="wl-grp"><tr class="wl-grp-h"><th colspan="4"><span class="wl-grp-t">' + esc(label) + '</span>' + (extra || '') + '</th></tr>' + list.map(row).join('') + '</tbody>' : '');
+  const head = (label, extra) => '<tr class="wl-grp-h"><th colspan="4"><span class="wl-grp-t">' + esc(label) + '</span>' + (extra || '') + '</th></tr>';
+  const group = (label, list, extra) => (list.length ? '<tbody class="wl-grp">' + head(label, extra) + list.map(row).join('') + '</tbody>' : '');
+  const oursHtml = ours.length ? group('Our scope', ours)
+    : '<tbody class="wl-grp">' + head('Our scope') + '<tr class="wl-ok wl-empty"><td colspan="4">All on track ✓ <span class="muted small">· none of our work was due that week</span></td></tr></tbody>';
+  // Each scope on its own line, coloured (her layout, 19 Nov), as on the Needs you card.
+  const sum = wlScopeParts(rows).map((x) => '<span class="wl-sline st-' + (SCOPE_TONE[x.tone] || 'plain') + '">' + esc(x.label + ': ' + x.text) + '</span>').join('');
   return '<section class="card wl" aria-labelledby="wl-h-' + esc(p.code) + '"><div class="wl-head">' + nav(i - 1, '‹', 'Week before') +
     '<div class="wl-title"><h3 id="wl-h-' + esc(p.code) + '">' + esc(weekLabel(p, monday).replace(/ · .*/, '') + ' · ' + LC.nice(sp.from) + '–' + LC.nice(sp.to)) + '</h3>' +
     '<span class="muted small">' + esc(who) + '</span></div>' + nav(i + 1, '›', 'Week after') + '</div>' +
-    (rows.length ? '<div class="wl-sum">' + esc(wlScope(rows)) + '</div>' +
+    (rows.length ? '<div class="wl-sum">' + sum + '</div>' +
       (planFor(sc, monday).until ? '<p class="muted small wl-plan">' + esc('“Should be at” is from the plan as it was that week, before the planner import of ' + when12(planFor(sc, monday).until) + '.') + '</p>' : '') +
       '<table class="wl-table"><thead><tr><th>Activity</th><th class="num">Should be at</th><th class="num">Logged</th><th>Gap</th></tr></thead>' +
-      group('Our scope', ours) + group('Client’s scope', theirs, copy) + '</table>'
+      oursHtml + group('Client’s scope', theirs, copy) + '</table>' + wlCopyBoxHtml(p, monday)
       : '<p class="muted">Nothing planned that week.</p>') + '</section>';
 }
 // Phone Schedule: the week list, or the whole chart with a hint to turn the phone.
@@ -5981,9 +6034,24 @@ function schedClick(act, el) {
   if (act === 'sc-fold') { const k = code + '|' + id; S.schedFold[k] = !S.schedFold[k]; }
   else if (act === 'sc-pick') S.schedSel[code] = S.schedSel[code] === id ? '' : id;
   else if (act === 'sc-wlweek') S.wlWeek[code] = week;
+  // "Copy for client" opens the message in a box first; Copy copies what is in the box (changes and all).
   else if (act === 'sc-wlcopy') {
     const p = schedProj(code), text = p ? wlClientText(p, schedOf(code), week) : '';
-    if (text) copyText(text, (ok) => snack(ok ? 'Copied for the client: ' + plural(text.split('\n').length - 1, 'activity', 'activities') + '. Paste it into WhatsApp or email.' : 'Couldn’t copy here. Select the text and copy it yourself.'));
+    S.wlCopy = text ? { code: code, week: week, text: text } : null;
+    redraw();
+    const box = document.getElementById('wlCopyText');
+    if (box) { box.closest('.wl-copybox').scrollIntoView({ block: 'nearest' }); box.focus({ preventScroll: true }); }
+    return true;
+  }
+  else if (act === 'sc-wlcopy-cancel') S.wlCopy = null;
+  else if (act === 'sc-wlcopy-go') {
+    const b = S.wlCopy, box = document.getElementById('wlCopyText'), text = box ? box.value : b ? b.text : '';
+    if (!String(text).trim()) { snack('The message is empty.'); return true; }
+    const n = text.split('\n').filter((l) => /^\s*•/.test(l)).length;
+    copyText(text, (ok) => {
+      snack(ok ? 'Copied for the client' + (n ? ': ' + plural(n, 'activity', 'activities') : '') + '. Paste it into WhatsApp or email.' : 'Couldn’t copy here. Select the text in the box and copy it yourself.');
+      if (ok) { S.wlCopy = null; redraw(); }
+    });
     return true;
   }
   else if (act === 'sc-step') { const st = logState(code, week); st.vals[id] = Number(el.dataset.v); delete st.rework[id]; st.err = ''; }
@@ -6215,6 +6283,7 @@ function onAct(el) {
 document.addEventListener('input', (ev) => {
   const t = ev.target;
   if (t.dataset.actnote !== undefined) { if (S.actNote) { S.actNote.text = t.value; S.actNote.err = ''; } return; }
+  if (t.dataset.wlcopy !== undefined) { if (S.wlCopy) S.wlCopy.text = t.value; return; }
   if (S.tidy && (t.dataset.tidy || t.dataset.tidyPick !== undefined)) {
     S.tidy.err = '';
     if (t.dataset.tidyPick !== undefined) { S.tidy.sel[t.dataset.tidyPick] = t.checked; tidyFillTo(); renderAll(); }
